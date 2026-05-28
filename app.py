@@ -197,13 +197,29 @@ chartOptions = {
 }
 
 # הצגת הגרף
-chart_data = get_chart_data(selected_ticker)
-renderLightweightCharts([
-    {
-        "chart": chartOptions,
-        "series": [{"type": "Candlestick", "data": chart_data}]
-    }
-], "lightweight-charts")
+def get_chart_data(ticker):
+    # משיכת נתונים
+    df = yf.download(ticker, period="1mo", interval="1d", progress=False)
+    
+    # בדיקה אם הדאטה תקין ולא ריק
+    if df.empty:
+        return []
+        
+    df.reset_index(inplace=True)
+    
+    # המרה בטוחה למספרים (תוך טיפול בערכים ריקים אם יש)
+    data = []
+    for _, row in df.iterrows():
+        try:
+            data.append({
+                "time": str(row['Date']).split(' ')[0], 
+                "open": float(row['Open']), 
+                "high": float(row['High']), 
+                "low": float(row['Low']), 
+                "close": float(row['Close'])
+            })
+        except:
+            continue
+    return data
 
-st.info("💡 טיפ: ניתן לגרור את הגרף עם האצבע ולבצע זום (צביטה) כדי לראות פרטים.")
 
