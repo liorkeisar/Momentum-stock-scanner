@@ -184,8 +184,49 @@ def get_chart_data(ticker):
     ]
 
 # בחירת מניות להצגה
-tickers = ["NVDA", "TSLA", "AAPL"]
-selected_ticker = st.selectbox("בחר מניה להצגה:", tickers)
+import streamlit as st
+import yfinance as yf
+from streamlit_lightweight_charts import renderLightweightCharts
+
+st.set_page_config(layout="wide", page_title="Pro Trader Radar")
+st.title("🏹 Momentum Pro Radar")
+
+# תיבת קלט לסימבול
+ticker = st.text_input("הכנס סימבול מניה (למשל: NVDA):", value="NVDA").upper()
+
+if st.button("סרוק מניה"):
+    # 1. משיכת נתונים
+    df = yf.download(ticker, period="6mo", interval="1d", progress=False)
+    if df.empty:
+        st.error("לא נמצאו נתונים עבור הסימבול הזה.")
+    else:
+        # 2. חישוב אינדיקטורים (כמו בקוד הראשון שלנו)
+        df['EMA50'] = df['Close'].ewm(span=50, adjust=False).mean()
+        
+        # 3. הכנת נתונים לגרף TradingView
+        df.reset_index(inplace=True)
+        chart_data = [
+            {"time": str(row['Date']).split(' ')[0], "open": float(row['Open']), 
+             "high": float(row['High']), "low": float(row['Low']), "close": float(row['Close'])}
+            for _, row in df.iterrows()
+        ]
+
+        # 4. הצגת הגרף
+        st.subheader(f"ניתוח עבור {ticker}")
+        renderLightweightCharts([
+            {
+                "chart": {"layout": {"background": {"color": "#0E1117"}, "textColor": "#DDD"}, "height": 400},
+                "series": [{"type": "Candlestick", "data": chart_data}]
+            }
+        ], "chart")
+
+        # 5. כאן אפשר להוסיף את הלוגיקה שלך ל-Buy/Sell/Signal
+        st.write(f"מחיר נוכחי: ${df['Close'].iloc[-1]:.2f}")
+        if df['Close'].iloc[-1] > df['EMA50'].iloc[-1]:
+            st.success("המניה מעל ממוצע 50 - מומנטום חיובי")
+        else:
+            st.warning("המניה מתחת לממוצע 50 - מומנטום שלילי")
+
 
 # עיצוב הגרף
 chartOptions = {
