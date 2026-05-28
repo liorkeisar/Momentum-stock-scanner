@@ -155,3 +155,55 @@ if st.button("🚀 הרץ סריקת שוק ויצירת גרפים", type="prim
                 st.info("לא נמצאו איתותים חדשים כעת.")
         except Exception as e:
             st.error(f"שגיאה בהרצה: {e}")
+            import streamlit as st
+import yfinance as yf
+from streamlit_lightweight_charts import renderLightweightCharts
+
+# הגדרת הדף למראה רחב
+st.set_page_config(layout="wide", page_title="Pro Trader Radar")
+
+st.title("🏹 Momentum Pro Radar - TradingView Style")
+st.write("סורק מניות עם גרפים אינטראקטיביים ברמה מקצועית.")
+
+# פונקציה להכנת הנתונים למבנה ש-TradingView דורש
+def get_chart_data(ticker):
+    # משיכת נתונים מהחודש האחרון
+    df = yf.download(ticker, period="1mo", interval="1d", progress=False)
+    df.reset_index(inplace=True)
+    
+    # המרת הנתונים לפורמט של TradingView
+    return [
+        {
+            "time": str(row['Date']).split(' ')[0], 
+            "open": float(row['Open']), 
+            "high": float(row['High']), 
+            "low": float(row['Low']), 
+            "close": float(row['Close'])
+        }
+        for _, row in df.iterrows()
+    ]
+
+# בחירת מניות להצגה
+tickers = ["NVDA", "TSLA", "AAPL"]
+selected_ticker = st.selectbox("בחר מניה להצגה:", tickers)
+
+# עיצוב הגרף
+chartOptions = {
+    "layout": {"background": {"color": "#0E1117"}, "textColor": "#DDD"},
+    "grid": {"vertLines": {"color": "#2B2B43"}, "horzLines": {"color": "#2B2B43"}},
+    "priceScale": {"borderColor": "#555"},
+    "timeScale": {"borderColor": "#555"},
+    "height": 400
+}
+
+# הצגת הגרף
+chart_data = get_chart_data(selected_ticker)
+renderLightweightCharts([
+    {
+        "chart": chartOptions,
+        "series": [{"type": "Candlestick", "data": chart_data}]
+    }
+], "lightweight-charts")
+
+st.info("💡 טיפ: ניתן לגרור את הגרף עם האצבע ולבצע זום (צביטה) כדי לראות פרטים.")
+
