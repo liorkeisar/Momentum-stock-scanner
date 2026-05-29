@@ -2,129 +2,69 @@ import streamlit as st
 import yfinance as yf
 import pandas as pd
 import numpy as np
+import plotly.graph_objects as go
 
-# הגדרת דף
-st.set_page_config(layout="wide", page_title="Scored ATR Radar")
-st.title("🏹 Scored ATR Trading Radar")
+st.set_page_config(layout="wide", page_title="Algo Momentum Radar")
+st.title("🏹 Momentum Pro Radar - סורק מניות מושלם")
 
+# רשימת 150 המניות שלך
 target_stocks = [
     "NVDA", "AMD", "SMCI", "AVGO", "ARM", "TSM", "ASML", "MU", "LRCX", "AMAT",
     "PLTR", "SOUN", "BBAI", "AI", "INTC", "QCOM", "TXN", "ADI", "MRVL", "KLAC",
     "SNPS", "CDNS", "CRWD", "PANW", "FTNT", "NET", "DDOG", "SNOW", "WDAY", "TEAM",
     "MDB", "ZS", "OKTA", "PATH", "NOW", "ORCL", "CRM", "HUBS", "ANET", "COIN",
     "MARA", "RIOT", "CLSK", "MSTR", "WULF", "HOOD", "SQ", "PYPL", "AFRM", "SOFI",
-    "UPST", "COF", "NU", "MELI", "SE", "SHOP", "CHWY", "AMZN", "TSLA", "RIVN"
+    "UPST", "COF", "NU", "MELI", "SE", "SHOP", "CHWY", "AMZN", "TSLA", "RIVN",
+    "LCID", "NIO", "LI", "XPEV", "FSLR", "ENPH", "WMT", "TGT", "COST", "LLY",
+    "NVO", "MRNA", "CRSP", "BNTX", "VRTX", "AMGN", "GILD", "REGN", "META", "GOOGL",
+    "SPOT", "ROKU", "DIS", "NFLX", "SNAP", "PINS", "TTD", "RBLX", "CMG", "CELH",
+    "ELF", "LULU", "NKE", "SBUX", "MNST", "CAT", "DE", "GE", "BA", "UBER",
+    "CIFR", "WEX", "PAYC", "PCTY", "RUN", "BLNK", "CHPT", "QS", "BE", "NEE",
+    "GEV", "SEDG", "CSIQ", "ARRY", "SHLS", "STEM", "JOBY", "ACHR", "LUNR", "RKLB",
+    "TCOM", "W", "ANF", "GAP", "URBN", "JWN", "EXAS", "NVAX", "EDIT", "BEAM",
+    "NTLA", "LYV", "NYT", "WMG", "IMAX", "AMC", "SKX", "TPR", "PVH", "RL",
+    "DRI", "TXRH", "UAL", "AAL", "DAL", "LUV", "RCL", "CCL", "NCLH", "LYFT"
 ]
 
-if st.button("🚀 הרץ סריקת מומנטום"):
-    with st.spinner("סורק מניות ומדרג איכות..."):
+if st.button("🚀 הרץ סריקה מקיפה", type="primary"):
+    with st.spinner("סורק מניות ומחשב ציוני מומנטום..."):
         all_data = yf.download(target_stocks, period="100d", group_by='ticker', progress=False)
-        signals = []
-
-        for ticker in target_stocks:
-            try:
-                data = all_data[ticker].dropna() if isinstance(all_data.columns, pd.MultiIndex) else all_data.dropna()
-                if len(data) < 60: continue
-
-                # חישוב אינדיקטורים (לפי הלוגיקה שלך)
-                data['EMA50'] = data['Close'].ewm(span=50, adjust=False).mean()
-                delta = data['Close'].diff()
-                gain = (delta.where(delta > 0, 0)).rolling(14).mean()
-                loss = (-delta.where(delta < 0, 0)).rolling(14).mean()
-                rs = gain / (loss + 1e-9)
-                data['RSI'] = 100 - (100 / (1 + rs))
-                
-                tr = pd.concat([data['High']-data['Low'], abs(data['High']-data['Close'].shift()), abs(data['Low']-data['Close'].shift())], axis=1).max(axis=1)
-                data['ATR'] = tr.rolling(14).mean()
-
-                curr = data.iloc[-1]
-                highest_20 = data['High'].iloc[-21:-1].max()
-                lowest_20 = data['Low'].iloc[-21:-1].min()
-                avg_vol = data['Volume'].iloc[-21:-1].mean()
-
-                # בדיקת איתותים
-                score = 0
-                direction = ""
-                
-                if curr['Close'] > highest_20 and curr['Volume'] > (avg_vol * 1.2) and curr['Close'] > curr['EMA50'] and 50 < curr['RSI'] < 70:
-                    direction = "BUY 🟢"
-                    if curr['Volume'] > (avg_vol * 2.0): score += 1
-                    if 55 <= curr['RSI'] <= 65: score += 1
-                    if (curr['Close'] - curr['EMA50']) / curr['EMA50'] < 0.05: score += 1
-                
-                elif curr['Close'] < lowest_20 and curr['Volume'] > (avg_vol * 1.2) and curr['Close'] < curr['EMA50'] and 30 < curr['RSI'] < 50:
-                    direction = "SELL 🔴"
-                    if curr['Volume'] > (avg_vol * 2.0): score += 1
-                    if 35 <= curr['RSI'] <= 45: score += 1
-                    if (curr['EMA50'] - curr['Close']) / curr['EMA50'] < 0.05: score += 1
-
-                if direction:
-                    signals.append({
-                        "Ticker": ticker, "Dir": direction, "Price": round(curr['Close'], 2),
-                        "Score": f"{score}/3", "TP": round(curr['Close'] + (4 * curr['ATR']), 2),
-                        "SL": round(curr['Close'] - (2 * curr['ATR']), 2)
-                    })
-            except: continue
-
-        if signals:
-            st.table(pd.DataFrame(signals))
-        else:
-            st.write("לא נמצאו איתותים כרגע.")
-import streamlit as st
-import yfinance as yf
-import pandas as pd
-import numpy as np
-
-# הגדרת דף
-st.set_page_config(layout="wide")
-st.title("🏹 Scored ATR Trading Radar")
-
-# רשימת המניות
-target_stocks = ["NVDA", "AMD", "SMCI", "AVGO", "PLTR", "TSLA", "META", "AMZN", "COIN", "MSTR"]
-
-if st.button("🚀 הרץ סריקה"):
-    with st.spinner("סורק נתונים..."):
-        # איסוף נתונים לכל המניות
-        all_data = yf.download(target_stocks, period="100d", group_by='ticker', progress=False)
-        
         results = []
+
         for ticker in target_stocks:
             try:
-                # חילוץ נתונים למניה בודדת
                 df = all_data[ticker].dropna() if isinstance(all_data.columns, pd.MultiIndex) else all_data.dropna()
                 if len(df) < 60: continue
 
-                # לוגיקה שלך
+                # חישוב אינדיקטורים
                 df['EMA50'] = df['Close'].ewm(span=50, adjust=False).mean()
                 delta = df['Close'].diff()
                 gain = (delta.where(delta > 0, 0)).rolling(14).mean()
                 loss = (-delta.where(delta < 0, 0)).rolling(14).mean()
-                rs = gain / (loss + 1e-9)
-                df['RSI'] = 100 - (100 / (1 + rs))
-                
-                high_low = df['High'] - df['Low']
-                high_cp = np.abs(df['High'] - df['Close'].shift())
-                low_cp = np.abs(df['Low'] - df['Close'].shift())
-                df['ATR'] = pd.concat([high_low, high_cp, low_cp], axis=1).max(axis=1).rolling(14).mean()
+                df['RSI'] = 100 - (100 / (1 + gain / (loss + 1e-9)))
                 
                 curr = df.iloc[-1]
-                highest_20 = df['High'].iloc[-21:-1].max()
+                avg_vol = df['Volume'].rolling(20).mean().iloc[-1]
                 
-                # חישוב איתות
-                if curr['Close'] > highest_20 and curr['Close'] > curr['EMA50']:
-                    results.append({
-                        "Ticker": ticker,
-                        "Price": round(curr['Close'], 2),
-                        "RSI": round(curr['RSI'], 1),
-                        "ATR": round(curr['ATR'], 2),
-                        "SL": round(curr['Close'] - (2 * curr['ATR']), 2),
-                        "TP": round(curr['Close'] + (4 * curr['ATR']), 2)
-                    })
-            except Exception:
+                # חישוב ציון איכות (Score)
+                score = 0
+                if curr['Close'] > curr['EMA50']: score += 1
+                if 50 < curr['RSI'] < 70: score += 1
+                if curr['Volume'] > avg_vol * 1.2: score += 1
+                
+                if score > 0:
+                    results.append({"Ticker": ticker, "Price": round(curr['Close'], 2), "Score": score, "RSI": round(curr['RSI'], 1)})
+            except:
                 continue
+
+        # הצגת הטבלה
+        df_res = pd.DataFrame(results).sort_values(by="Score", ascending=False)
+        st.table(df_res)
+
+        # בחירת מניה לגרף מפורט
+        selected = st.selectbox("בחר מניה לניתוח טכני:", df_res['Ticker'].tolist())
         
-        # הצגה בטבלה
-        if results:
-            st.table(pd.DataFrame(results))
-        else:
-            st.warning("לא נמצאו איתותים.")
+        df_plot = yf.download(selected, period="6mo", progress=False)
+        fig = go.Figure(data=[go.Candlestick(x=df_plot.index, open=df_plot['Open'], high=df_plot['High'], low=df_plot['Low'], close=df_plot['Close'])])
+        fig.update_layout(template="plotly_white", title=f"ניתוח עומק: {selected}", height=400)
+        st.plotly_chart(fig, use_container_width=True)
