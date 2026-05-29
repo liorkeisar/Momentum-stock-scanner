@@ -120,3 +120,50 @@ try:
 
 except Exception as e:
     print(f"Error: {e}")
+    import streamlit as st
+import yfinance as yf
+import pandas as pd
+import plotly.graph_objects as go
+
+st.set_page_config(layout="wide", page_title="Pro Momentum Radar")
+st.title("🏹 Momentum Pro Radar - Dashboard")
+
+target_stocks = ["NVDA", "AMD", "SMCI", "AVGO", "PLTR", "TSLA", "META", "AMZN", "COIN", "MSTR", "HOOD", "FSLR", "ARM", "SNOW", "PATH"]
+
+if st.button("🚀 סרוק שוק"):
+    with st.spinner("מנתח מומנטום..."):
+        all_data = yf.download(target_stocks, period="60d", group_by='ticker', progress=False)
+        results = []
+        
+        for ticker in target_stocks:
+            df = all_data[ticker].dropna() if isinstance(all_data.columns, pd.MultiIndex) else all_data.dropna()
+            if len(df) < 30: continue
+            
+            # חישובים טכניים
+            df['EMA50'] = df['Close'].ewm(span=50, adjust=False).mean()
+            delta = df['Close'].diff()
+            gain = (delta.where(delta > 0, 0)).rolling(14).mean()
+            loss = (-delta.where(delta < 0, 0)).rolling(14).mean()
+            df['RSI'] = 100 - (100 / (1 + gain / (loss + 1e-9)))
+            
+            # חישוב ציון (Score)
+            curr = df.iloc[-1]
+            score = 0
+            if curr['Close'] > curr['EMA50']: score += 1
+            if 50 < curr['RSI'] < 70: score += 1
+            if curr['Volume'] > df['Volume'].rolling(20).mean().iloc[-1]: score += 1
+            
+            results.append({"Ticker": ticker, "Price": round(curr['Close'], 2), "Momentum Score": score, "RSI": round(curr['RSI'], 1)})
+
+        # הצגת הטבלה המרכזת
+        df_results = pd.DataFrame(results).sort_values(by="Momentum Score", ascending=False)
+        st.table(df_results)
+        
+        # בחירת מניה לגרף
+        selected = st.selectbox("בחר מניה מהטבלה לניתוח:", df_results['Ticker'].tolist())
+        
+        df_plot = yf.download(selected, period="3mo", progress=False)
+        fig = go.Figure(data=[go.Candlestick(x=df_plot.index, open=df_plot['Open'], high=df_plot['High'], low=df_plot['Low'], close=df_plot['Close'])])
+        fig.update_layout(template="plotly_white", height=400, title=f"גרף טכני: {selected}")
+        st.plotly_chart(fig, use_container_width=True)
+
