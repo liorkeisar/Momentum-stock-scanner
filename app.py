@@ -50,3 +50,26 @@ if st.button("🚀 הרץ סריקה מקיפה"):
             chart_data = [{"time": str(r['Date']).split(' ')[0], "open": float(r['Open']), "high": float(r['High']), "low": float(r['Low']), "close": float(r['Close'])} for _, r in df_plot.iterrows()]
             
             renderLightweightCharts([{"chart": {"height": 300, "layout": {"background": {"color": "#0E1117"}, "textColor": "#DDD"}}, "series": [{"type": "Candlestick", "data": chart_data}]}], res['ticker'])
+            import streamlit as st
+import yfinance as yf
+import pandas as pd
+from streamlit_lightweight_charts import renderLightweightCharts
+
+# ... (שאר הקוד של הסריקה נשאר כפי שהיה עד הלולאה) ...
+
+    # בתוך לולאת הצגת התוצאות:
+    for res in results:
+        with st.expander(f"{res['ticker']} - {res['type']} - ${res['price']:.2f}"):
+            # הוספת "טוען" כדי שיהיה חיווי ויזואלי
+            with st.spinner(f"טוען גרף עבור {res['ticker']}..."):
+                df_plot = yf.download(res['ticker'], period="1mo", interval="1d", progress=False)
+                if isinstance(df_plot.columns, pd.MultiIndex): df_plot.columns = df_plot.columns.get_level_values(0)
+                df_plot = df_plot.reset_index()
+                
+                chart_data = [{"time": str(r['Date']).split(' ')[0], "open": float(r['Open']), 
+                               "high": float(r['High']), "low": float(r['Low']), "close": float(r['Close'])} 
+                              for _, r in df_plot.iterrows()]
+                
+                renderLightweightCharts([{"chart": {"height": 300, "layout": {"background": {"color": "#0E1117"}, "textColor": "#DDD"}}, 
+                                        "series": [{"type": "Candlestick", "data": chart_data}]}], res['ticker'])
+
