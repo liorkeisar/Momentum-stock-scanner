@@ -3,46 +3,49 @@ import yfinance as yf
 import pandas as pd
 
 st.set_page_config(layout="wide")
-st.title("🏹 Pre-Breakout Squeeze Scanner")
+st.title("🏹 Narrow Squeeze Scanner (Pre-Breakout)")
 
-# הגדרת שווקים
 markets = {
-    "Blue Chips": ["AAPL", "MSFT", "NVDA", "AMZN", "GOOGL"],
-    "Volatility": ["PLTR", "SOUN", "MSTR", "COIN", "MARA", "RIOT", "CLSK", "TSLA"]
+    "High Momentum": ["NVDA", "PLTR", "SOUN", "MSTR", "COIN", "MARA", "RIOT"],
+    "Tech Giants": ["AAPL", "MSFT", "AMZN", "GOOGL", "META"]
 }
 
 tabs = st.tabs(list(markets.keys()))
 
-def get_squeeze_score(ticker):
+def get_squeeze_data(ticker):
     try:
-        df = yf.Ticker(ticker).history(period="30d")
-        if len(df) < 20: return None
+        df = yf.Ticker(ticker).history(period="60d")
+        if len(df) < 22: return None
         
-        # חישוב רצועות בולינגר (לזיהוי התכנסות)
-        sma = df['Close'].rolling(20).mean()
-        std = df['Close'].rolling(20).std()
-        bb_width = (std / sma) * 100 # ככל שנמוך יותר = התכנסות
+        # חישוב רצועות בולינגר
+        sma20 = df['Close'].rolling(20).mean()
+        std20 = df['Close'].rolling(20).std()
         
-        # חישוב Money Flow פשוט (לפי נפח ומחיר)
+        # התכנסות (Squeeze): רצועות צרות ביחס לממוצע
+        bb_width = (std20 / sma20)
+        
+        # Money Flow
         mfv = ((df['Close'] - df['Low']) - (df['High'] - df['Close'])) / (df['High'] - df['Low']) * df['Volume']
         cmf = mfv.rolling(20).sum() / df['Volume'].rolling(20).sum()
         
-        return {
-            "Ticker": ticker,
-            "Price": round(df['Close'].iloc[-1], 2),
-            "BB_Width": round(bb_width.iloc[-1], 2),
-            "CMF": round(cmf.iloc[-1], 3)
-        }
+        # תנאי: BB_Width מתחת לממוצע של עצמו (דחוס) + CMF חיובי
+        if bb_width.iloc[-1] < bb_width.rolling(20).mean().iloc[-1] and cmf.iloc[-1] > 0:
+            return {
+                "Ticker": ticker,
+                "Price": round(df['Close'].iloc[-1], 2),
+                "Squeeze_Score": round(bb_width.iloc[-1], 4),
+                "CMF": round(cmf.iloc[-1], 2)
+            }
+        return None
     except: return None
 
-# לולאה על הלשוניות
 for i, (market_name, tickers) in enumerate(markets.items()):
     with tabs[i]:
-        if st.button(f"סרוק {market_name}"):
-            data_list = [get_squeeze_score(t) for t in tickers]
-            df = pd.DataFrame([d for d in data_list if d is not None])
+        if st.button(f"סרוק מניות בהתכנסות - {market_name}"):
+            data = [get_squeeze_data(t) for t in tickers]
+            df = pd.DataFrame([d for d in data if d is not None])
             
-            # סינון: BB_Width נמוך (התכנסות) ו-CMF עולה/חיובי
-            df = df.sort_values(by="BB_Width")
-            st.dataframe(df, use_container_width=True)
-            st.write("הסבר: BB_Width נמוך מעיד על התכנסות. CMF חיובי מעיד על כניסת כסף.")
+            if not df.empty:
+                st.dataframe(df.sort_values(by="Squeeze_Score"), use_container_width=True)
+            else:
+                st.info("לא נמצאו מניות בדחיסה כרגע. נסה לשנות רשימה או לחכות לשינוי בשוק.")
