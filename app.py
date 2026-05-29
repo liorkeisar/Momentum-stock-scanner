@@ -5,17 +5,14 @@ import pandas as pd
 st.set_page_config(layout="wide")
 st.title("🏹 Professional Momentum Scanner")
 
-# הגדרת User-Agent כדי לעקוף חסימות
-yf.pdr_override() 
-
+# רשימת מניות
 stocks = ["NVDA", "AMD", "PLTR", "MSTR", "COIN", "MARA", "RIOT", "SOUN", "CLSK", "TSLA"]
 
 def get_data(ticker):
     try:
-        # שימוש ב-Ticker עם סשן שכולל User-Agent
+        # שימוש בסיסי ויציב - בלי פקודות מיושנות
         ticker_obj = yf.Ticker(ticker)
-        # הורדה עם הגדרת thread כדי למנוע קריסות
-        df = ticker_obj.history(period="5d", timeout=10)
+        df = ticker_obj.history(period="5d")
         
         if df.empty or len(df) < 2:
             return None
@@ -25,19 +22,20 @@ def get_data(ticker):
         change = ((last_close - prev_close) / prev_close) * 100
         
         return {"Ticker": ticker, "Price": round(last_close, 2), "Change %": round(change, 2)}
-    except Exception as e:
+    except Exception:
         return None
 
-st.write("סורק מניות עם הגדרות עקיפת חסימה...")
+st.write("סורק מניות...")
 
-# שימוש ברשימה פשוטה
+# הרצת הסריקה
 results = []
 for s in stocks:
     data = get_data(s)
     if data:
         results.append(data)
 
+# הצגת תוצאות
 if results:
     st.dataframe(pd.DataFrame(results), use_container_width=True)
 else:
-    st.error("עדיין לא מצליח למשוך נתונים. השרת כנראה חסום הרמטית.")
+    st.info("לא נמצאו נתונים כרגע. אם אתה רואה הודעה זו, נסה לרענן שוב.")
