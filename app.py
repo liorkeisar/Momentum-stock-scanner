@@ -1,58 +1,51 @@
 import streamlit as st
 import yfinance as yf
 import pandas as pd
+import plotly.graph_objects as go
 
 st.set_page_config(layout="wide")
-st.title("🚀 AI & Semi Breakout Scanner (Massive Scan)")
+st.title("🏹 Bollinger Accumulation Scanner (Top 200)")
 
-# רשימה מורחבת של מניות AI וסמיקונדקטורס
-ai_tickers = [
-    "NVDA", "AMD", "SOUN", "PLTR", "ARM", "MRVL", "AVGO", "INTC", "TSM", "ON", "QCOM",
-    "MU", "ADI", "TXN", "NXPI", "MCHP", "TER", "KLAC", "LRCX", "AMAT", "SSYS", "DDD",
-    "C3AI", "AI", "SNPS", "CDNS", "MSFT", "GOOGL", "META", "AMZN", "SNOW", "DDOG"
-]
+# כאן נכנסת רשימה של 200 המניות (דוגמה למבנה, ניתן להרחיב)
+# במערכת אמיתית נשתמש בסינון לפי Market Cap ו-Volume
+tickers = ["AAPL", "MSFT", "NVDA", "AMD", "TSLA", "META", "GOOGL", "AMZN", "PLTR", "SOUN", "MSTR", "COIN"] 
 
-def scan_breakout(tickers):
-    results = []
-    # סריקה בחבילות של 10 כדי למנוע עומס
+def get_analysis(ticker):
+    df = yf.Ticker(ticker).history(period="120d")
+    if len(df) < 60: return None
+    
+    # בולינגר בנדס
+    df['MA20'] = df['Close'].rolling(20).mean()
+    df['STD'] = df['Close'].rolling(20).std()
+    df['Upper'] = df['MA20'] + (2 * df['STD'])
+    df['Lower'] = df['MA20'] - (2 * df['STD'])
+    
+    # MFI
+    tp = (df['High'] + df['Low'] + df['Close']) / 3
+    mf = tp * df['Volume']
+    pos = mf.where(tp > tp.shift(1), 0).rolling(14).sum()
+    neg = mf.where(tp < tp.shift(1), 0).rolling(14).sum()
+    mfi = 100 - (100 / (1 + (pos / neg)))
+    
+    # תנאי: נגיעה בבולינגר תחתית + MFI עולה
+    if df['Close'].iloc[-1] <= df['Lower'].iloc[-1] and mfi.iloc[-1] > mfi.iloc[-5]:
+        return df, mfi.iloc[-1]
+    return None
+
+if st.button("סרוק 200 מניות בולינגר"):
     for ticker in tickers:
-        try:
-            df = yf.Ticker(ticker).history(period="60d")
-            if len(df) < 30: continue
+        data = get_analysis(ticker)
+        if data:
+            df, mfi_val = data
+            st.subheader(f"מניה מאותרת: {ticker}")
             
-            # RSI
-            delta = df['Close'].diff()
-            gain = (delta.where(delta > 0, 0)).rolling(14).mean()
-            loss = (-delta.where(delta < 0, 0)).rolling(14).mean()
-            rs = gain / loss
-            rsi = 100 - (100 / (1 + rs))
+            # גרף נרות יפניים עם Plotly
+            fig = go.Figure(data=[go.Candlestick(x=df.index, open=df['Open'], high=df['High'], low=df['Low'], close=df['Close'])])
             
-            # MACD
-            ema12 = df['Close'].ewm(span=12).mean()
-            ema26 = df['Close'].ewm(span=26).mean()
-            macd = ema12 - ema26
-            signal = macd.ewm(span=9).mean()
+            # הוספת סימון קנייה (חץ)
+            fig.add_trace(go.Scatter(x=[df.index[-1]], y=[df['Close'].iloc[-1]], 
+                                     mode='markers', marker=dict(symbol='triangle-up', size=15, color='green'),
+                                     name='סיגנל קנייה'))
             
-            # תנאי פריצה
-            is_near_high = df['Close'].iloc[-1] >= (df['High'].rolling(20).max() * 0.98)
-            vol_spike = df['Volume'].iloc[-1] > (df['Volume'].rolling(20).mean().iloc[-1] * 1.5)
-            is_bullish_macd = macd.iloc[-1] > signal.iloc[-1]
-            
-            if is_near_high and vol_spike and is_bullish_macd and 60 < rsi.iloc[-1] < 75:
-                results.append({
-                    "Ticker": ticker,
-                    "Price": round(df['Close'].iloc[-1], 2),
-                    "RSI": round(rsi.iloc[-1], 1)
-                })
-        except: continue
-    return pd.DataFrame(results)
-
-if st.button("סרוק את כל מניות ה-AI והסמיקונדקטורס"):
-    with st.spinner("סורק מקסימום מניות... אנא המתן"):
-        df = scan_breakout(ai_tickers)
-        if not df.empty:
-            st.dataframe(df.sort_values(by="RSI", ascending=False), use_container_width=True)
-        else:
-            st.info("לא נמצאו מניות בפריצה כרגע. נסה שוב מחר.")
-
-st.sidebar.write(f"מותקן כרגע: {len(ai_tickers)} מניות במעקב.")
+            st.plotly_chart(fig, use_container_width=True)
+            st.write(f"MFI נוכחי: {round(mfi_val, 2)}")
