@@ -12,26 +12,19 @@ tabs_stocks = {
 
 def analyze_pre_breakout(ticker):
     try:
+        # הורדה נקודתית לכל מניה כדי למנוע MultiIndex
         df = yf.download(ticker, period="60d", progress=False)
         if df.empty or len(df) < 30: return None
         
-        # --- תיקון ה-KeyError הקריטי ---
-        if isinstance(df.columns, pd.MultiIndex):
-            df.columns = df.columns.get_level_values(0)
-        # --------------------------------
+        # חישוב אינדיקטורים בטוח
+        sma20 = df['Close'].rolling(20).mean()
+        std20 = df['Close'].rolling(20).std()
+        width = (4 * std20) / sma20
+        vol_avg = df['Volume'].rolling(20).mean()
         
-        # חישוב בולינגר
-        df['SMA20'] = df['Close'].rolling(20).mean()
-        df['STD'] = df['Close'].rolling(20).std()
-        df['Width'] = (4 * df['STD']) / df['SMA20']
-        
-        if df['Width'].isnull().iloc[-1]: return None
-        
-        # לוגיקת צבירה (Accumulation)
-        is_tight = df['Width'].iloc[-1] < df['Width'].rolling(20).mean().iloc[-1]
-        is_vol_flow = df['Volume'].iloc[-1] > df['Volume'].rolling(20).mean().iloc[-1] * 1.5
-        
-        if is_tight and is_vol_flow:
+        # בדיקת תנאי פריצה
+        if width.iloc[-1] < width.rolling(20).mean().iloc[-1] and \
+           df['Volume'].iloc[-1] > vol_avg.iloc[-1] * 1.5:
             return {"Ticker": ticker, "Price": round(float(df['Close'].iloc[-1]), 2)}
     except Exception:
         return None
