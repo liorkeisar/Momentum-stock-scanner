@@ -1,8 +1,13 @@
+import streamlit as st
 import yfinance as yf
 import pandas as pd
 import numpy as np
+import plotly.graph_objects as go
 
-# רשימה נקייה של 150 מניות המומנטום
+st.set_page_config(layout="wide", page_title="Algo Momentum Radar")
+st.title("🏹 Momentum Pro Radar - סורק מניות מושלם")
+
+# רשימת 150 המניות שלך
 target_stocks = [
     "NVDA", "AMD", "SMCI", "AVGO", "ARM", "TSM", "ASML", "MU", "LRCX", "AMAT",
     "PLTR", "SOUN", "BBAI", "AI", "INTC", "QCOM", "TXN", "ADI", "MRVL", "KLAC",
@@ -21,149 +26,45 @@ target_stocks = [
     "DRI", "TXRH", "UAL", "AAL", "DAL", "LUV", "RCL", "CCL", "NCLH", "LYFT"
 ]
 
-print("Running Scored ATR Trading Radar...")
-
-try:
-    all_data = yf.download(target_stocks, period="100d", group_by='ticker', progress=False)
-    print("Data loaded. Ranking signals by quality...")
-    print("=" * 60)
-
-    signals_found = 0
-
-    for ticker_symbol in target_stocks:
-        try:
-            data = all_data[ticker_symbol].dropna()
-            if len(data) < 60: continue
-
-            stable_data = data.iloc[:-1].copy()
-
-            # --- אינדיקטורים ---
-            stable_data['EMA50'] = stable_data['Close'].ewm(span=50, adjust=False).mean()
-            current_ema50 = stable_data['EMA50'].iloc[-1]
-
-            delta = stable_data['Close'].diff()
-            gain = (delta.where(delta > 0, 0)).rolling(window=14).mean()
-            loss = (-delta.where(delta < 0, 0)).rolling(window=14).mean()
-            rs = gain / (loss + 1e-9)
-            stable_data['RSI'] = 100 - (100 / (1 + rs))
-            current_rsi = stable_data['RSI'].iloc[-1]
-
-            high_low = stable_data['High'] - stable_data['Low']
-            high_cp = np.abs(stable_data['High'] - stable_data['Close'].shift())
-            low_cp = np.abs(stable_data['Low'] - stable_data['Close'].shift())
-            df_tr = pd.concat([high_low, high_cp, low_cp], axis=1)
-            true_range = df_tr.max(axis=1)
-            stable_data['ATR'] = true_range.rolling(14).mean()
-            current_atr = stable_data['ATR'].iloc[-1]
-
-            entry_price = stable_data['Close'].iloc[-1]
-            last_closed_volume = stable_data['Volume'].iloc[-1]
-
-            history_20_days = stable_data.iloc[:-1]
-            highest_20 = history_20_days['High'].tail(20).max()
-            lowest_20 = history_20_days['Low'].tail(20).min()
-            avg_volume_20 = history_20_days['Volume'].tail(20).mean()
-
-            # 🟢 בדיקת איתות קנייה
-            if (entry_price > highest_20 and
-                last_closed_volume > (avg_volume_20 * 1.2) and
-                entry_price > current_ema50 and
-                50 < current_rsi < 70):
-
-                score = 0
-                if last_closed_volume > (avg_volume_20 * 2.0): score += 1
-                if 55 <= current_rsi <= 65: score += 1
-                if (entry_price - current_ema50) / current_ema50 < 0.05: score += 1
-
-                stop_loss = entry_price - (2 * current_atr)
-                take_profit = entry_price + (4 * current_atr)
-
-                print(f"🟢 PREMIUM BUY: {ticker_symbol} [SCORE: {score}/3]")
-                if score == 3:
-                    print("   🔥 HIGH CONVICTION TRADE - ALL CONDITIONS OPTIMAL!")
-                print(f"   ▶️ ENTRY PRICE : ${entry_price:.2f}")
-                print(f"   🎯 TAKE PROFIT (TP): ${take_profit:.2f}")
-                print(f"   🛑 STOP LOSS   (SL): ${stop_loss:.2f}")
-                print(f"   📊 TECHS       : RSI: {current_rsi:.1f} | ATR: ${current_atr:.2f}")
-                print("-" * 60)
-                signals_found += 1
-
-            # 🔴 בדיקת איתות מכירה/שורט
-            elif (entry_price < lowest_20 and
-                  last_closed_volume > (avg_volume_20 * 1.2) and
-                  entry_price < current_ema50 and
-                  30 < current_rsi < 50):
-
-                score = 0
-                if last_closed_volume > (avg_volume_20 * 2.0): score += 1
-                if 35 <= current_rsi <= 45: score += 1
-                if (current_ema50 - entry_price) / current_ema50 < 0.05: score += 1
-
-                stop_loss = entry_price + (2 * current_atr)
-                take_profit = entry_price - (4 * current_atr)
-
-                print(f"🔴 PREMIUM SELL: {ticker_symbol} [SCORE: {score}/3]")
-                if score == 3:
-                    print("   🔥 HIGH CONVICTION SHORT - ALL CONDITIONS OPTIMAL!")
-                print(f"   ▶️ ENTRY PRICE : ${entry_price:.2f}")
-                print(f"   🎯 TAKE PROFIT (TP): ${take_profit:.2f}")
-                print(f"   🛑 STOP LOSS   (SL): ${stop_loss:.2f}")
-                print(f"   📊 TECHS       : RSI: {current_rsi:.1f} | ATR: ${current_atr:.2f}")
-                print("-" * 60)
-                signals_found += 1
-        except:
-            continue
-
-    print("=" * 60)
-    print(f"Scan finished. Total Scored signals found: {signals_found}")
-    print("=" * 60)
-
-except Exception as e:
-    print(f"Error: {e}")
-    import streamlit as st
-import yfinance as yf
-import pandas as pd
-import plotly.graph_objects as go
-
-st.set_page_config(layout="wide", page_title="Pro Momentum Radar")
-st.title("🏹 Momentum Pro Radar - Dashboard")
-
-target_stocks = ["NVDA", "AMD", "SMCI", "AVGO", "PLTR", "TSLA", "META", "AMZN", "COIN", "MSTR", "HOOD", "FSLR", "ARM", "SNOW", "PATH"]
-
-if st.button("🚀 סרוק שוק"):
-    with st.spinner("מנתח מומנטום..."):
-        all_data = yf.download(target_stocks, period="60d", group_by='ticker', progress=False)
+if st.button("🚀 הרץ סריקה מקיפה", type="primary"):
+    with st.spinner("סורק מניות ומחשב ציוני מומנטום..."):
+        all_data = yf.download(target_stocks, period="100d", group_by='ticker', progress=False)
         results = []
-        
+
         for ticker in target_stocks:
-            df = all_data[ticker].dropna() if isinstance(all_data.columns, pd.MultiIndex) else all_data.dropna()
-            if len(df) < 30: continue
-            
-            # חישובים טכניים
-            df['EMA50'] = df['Close'].ewm(span=50, adjust=False).mean()
-            delta = df['Close'].diff()
-            gain = (delta.where(delta > 0, 0)).rolling(14).mean()
-            loss = (-delta.where(delta < 0, 0)).rolling(14).mean()
-            df['RSI'] = 100 - (100 / (1 + gain / (loss + 1e-9)))
-            
-            # חישוב ציון (Score)
-            curr = df.iloc[-1]
-            score = 0
-            if curr['Close'] > curr['EMA50']: score += 1
-            if 50 < curr['RSI'] < 70: score += 1
-            if curr['Volume'] > df['Volume'].rolling(20).mean().iloc[-1]: score += 1
-            
-            results.append({"Ticker": ticker, "Price": round(curr['Close'], 2), "Momentum Score": score, "RSI": round(curr['RSI'], 1)})
+            try:
+                df = all_data[ticker].dropna() if isinstance(all_data.columns, pd.MultiIndex) else all_data.dropna()
+                if len(df) < 60: continue
 
-        # הצגת הטבלה המרכזת
-        df_results = pd.DataFrame(results).sort_values(by="Momentum Score", ascending=False)
-        st.table(df_results)
+                # חישוב אינדיקטורים
+                df['EMA50'] = df['Close'].ewm(span=50, adjust=False).mean()
+                delta = df['Close'].diff()
+                gain = (delta.where(delta > 0, 0)).rolling(14).mean()
+                loss = (-delta.where(delta < 0, 0)).rolling(14).mean()
+                df['RSI'] = 100 - (100 / (1 + gain / (loss + 1e-9)))
+                
+                curr = df.iloc[-1]
+                avg_vol = df['Volume'].rolling(20).mean().iloc[-1]
+                
+                # חישוב ציון איכות (Score)
+                score = 0
+                if curr['Close'] > curr['EMA50']: score += 1
+                if 50 < curr['RSI'] < 70: score += 1
+                if curr['Volume'] > avg_vol * 1.2: score += 1
+                
+                if score > 0:
+                    results.append({"Ticker": ticker, "Price": round(curr['Close'], 2), "Score": score, "RSI": round(curr['RSI'], 1)})
+            except:
+                continue
+
+        # הצגת הטבלה
+        df_res = pd.DataFrame(results).sort_values(by="Score", ascending=False)
+        st.table(df_res)
+
+        # בחירת מניה לגרף מפורט
+        selected = st.selectbox("בחר מניה לניתוח טכני:", df_res['Ticker'].tolist())
         
-        # בחירת מניה לגרף
-        selected = st.selectbox("בחר מניה מהטבלה לניתוח:", df_results['Ticker'].tolist())
-        
-        df_plot = yf.download(selected, period="3mo", progress=False)
+        df_plot = yf.download(selected, period="6mo", progress=False)
         fig = go.Figure(data=[go.Candlestick(x=df_plot.index, open=df_plot['Open'], high=df_plot['High'], low=df_plot['Low'], close=df_plot['Close'])])
-        fig.update_layout(template="plotly_white", height=400, title=f"גרף טכני: {selected}")
+        fig.update_layout(template="plotly_white", title=f"ניתוח עומק: {selected}", height=400)
         st.plotly_chart(fig, use_container_width=True)
-
