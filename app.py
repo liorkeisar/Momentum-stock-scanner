@@ -1,36 +1,31 @@
 import streamlit as st
-import yfinance as yf
 import pandas as pd
+import requests
 
-st.set_page_config(layout="wide", page_title="Scanner")
+st.title("🏹 Simple Market Scanner")
 
-# רשימה רחבה של מניות "חמות" (תנודתיות גבוהה)
-watchlist = ["NVDA", "AMD", "PLTR", "SOUN", "BBAI", "CLSK", "MSTR", "COIN", "MARA", "RIOT", "HOOD", "AFRM", "RIVN", "TSLA", "META"]
+# רשימת מניות לבדיקה
+tickers = ["NVDA", "AMD", "PLTR", "SOUN", "MSTR", "COIN", "TSLA", "META"]
 
-def check_momentum(ticker):
+def get_price(ticker):
     try:
-        # ירידה ל-5 ימים בלבד כדי להבטיח טעינה מהירה
-        df = yf.download(ticker, period="5d", progress=False)
-        if df.empty or len(df) < 2: return None
-        
-        last_price = float(df['Close'].iloc[-1])
-        prev_price = float(df['Close'].iloc[-2])
-        change = ((last_price - prev_price) / prev_price) * 100
-        
-        # החזרה של כל מניה שזזה מעל 0.1% - כדי לראות תוצאות מיד
-        return {"Ticker": ticker, "Price": round(last_price, 2), "Change %": round(change, 2)}
-    except: return None
+        # שימוש ב-API פשוט יותר
+        url = f"https://query1.finance.yahoo.com/v8/finance/chart/{ticker}?interval=1d&range=5d"
+        headers = {'User-Agent': 'Mozilla/5.0'}
+        response = requests.get(url, headers=headers).json()
+        prices = response['chart']['result'][0]['indicators']['quote'][0]['close']
+        last = prices[-1]
+        prev = prices[-2]
+        change = ((last - prev) / prev) * 100
+        return {"Ticker": ticker, "Price": round(last, 2), "Change %": round(change, 2)}
+    except:
+        return None
 
-st.title("🏹 Real-Time Momentum Scanner")
+st.write("סורק מניות...")
+data = [get_price(t) for t in tickers]
+data = [d for d in data if d is not None]
 
-# סריקה אחת גדולה ופשוטה
-found = []
-with st.spinner("סורק שוק..."):
-    for t in watchlist:
-        res = check_momentum(t)
-        if res: found.append(res)
-
-if found:
-    st.dataframe(pd.DataFrame(found).sort_values("Change %", ascending=False), use_container_width=True)
+if data:
+    st.dataframe(pd.DataFrame(data), use_container_width=True)
 else:
-    st.write("לא נמצאו נתונים, נסה לרענן.")
+    st.error("לא ניתן למשוך נתונים. ייתכן שאתה חסום עקב מגבלות IP של הענן.")
