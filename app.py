@@ -145,3 +145,64 @@ if st.button("🚀 הרץ סריקת שוק ויצירת גרפים", type="prim
                 st.info("לא נמצאו איתותים חדשים כעת.")
         except Exception as e:
             st.error(f"שגיאה בהרצה: {e}")
+import streamlit as st
+import yfinance as yf
+import pandas as pd
+import plotly.graph_objects as go
+
+st.set_page_config(page_title="Momentum Pro Radar", layout="wide")
+
+st.sidebar.title("🏹 הגדרות רדאר")
+# תיבת חיפוש למניה ספציפית
+search_symbol = st.sidebar.text_input("חיפוש מניה (למשל: NVDA):", "").upper()
+run_search = st.sidebar.button("🔍 נתח מניה זו")
+
+# רשימת המניות הקבועה (אם תרצה להשאיר את אופציית הסריקה)
+target_stocks = ["NVDA", "AMD", "SMCI", "AVGO", "PLTR", "TSLA", "META", "AMZN", "COIN", "MSTR", "HOOD", "FSLR", "ARM", "SNOW", "PATH"]
+
+def analyze_ticker(ticker):
+    """פונקציית ניתוח אחידה לכל מניה"""
+    df = yf.download(ticker, period="100d", progress=False)
+    if isinstance(df.columns, pd.MultiIndex): df.columns = df.columns.get_level_values(0)
+    
+    df['EMA50'] = df['Close'].ewm(span=50, adjust=False).mean()
+    tr = pd.concat([df['High']-df['Low'], abs(df['High']-df['Close'].shift()), abs(df['Low']-df['Close'].shift())], axis=1).max(axis=1)
+    df['ATR'] = tr.rolling(14).mean()
+    delta = df['Close'].diff()
+    gain = (delta.where(delta > 0, 0)).rolling(14).mean()
+    loss = (-delta.where(delta < 0, 0)).rolling(14).mean()
+    df['RSI'] = 100 - (100 / (1 + gain / (loss + 1e-9)))
+    
+    curr = df.iloc[-1]
+    score = (1 if curr['Close'] > curr['EMA50'] else 0) + (1 if 50 < curr['RSI'] < 70 else 0)
+    sl = curr['Close'] - (2 * df['ATR'].iloc[-1])
+    tp = curr['Close'] + (4 * df['ATR'].iloc[-1])
+    
+    return df, {"Ticker": ticker, "Score": score, "Price": round(curr['Close'], 2), "SL": round(sl, 2), "TP": round(tp, 2)}
+
+# --- לוגיקת הרצה ---
+st.title("📈 Momentum Pro Radar")
+
+if run_search and search_symbol:
+    with st.spinner(f"מנתח את {search_symbol}..."):
+        try:
+            df, stats = analyze_ticker(search_symbol)
+            
+            # הצגת נתונים בראש העמוד
+            col1, col2, col3 = st.columns(3)
+            col1.metric("מחיר נוכחי", f"${stats['Price']}")
+            col2.metric("ציון מומנטום", f"{stats['Score']}/2")
+            col3.metric("סטופ לוס", f"${stats['SL']}")
+            
+            # גרף
+            fig = go.Figure()
+            fig.add_trace(go.Candlestick(x=df.index, open=df['Open'], high=df['High'], low=df['Low'], close=df['Close']))
+            fig.add_hline(y=stats['SL'], line_color="red", line_dash="dash")
+            fig.add_hline(y=stats['TP'], line_color="green", line_dash="dash")
+            fig.update_layout(height=500, template="plotly_white", xaxis_rangeslider_visible=False)
+            st.plotly_chart(fig, use_container_width=True)
+            
+        except Exception as e:
+            st.error("לא נמצאה מניה. בדוק את הסימבול.")
+else:
+    st.info("הקלד סימבול של מניה בתפריט הצד כדי להתחיל בניתוח.")
