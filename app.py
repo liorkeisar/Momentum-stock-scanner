@@ -70,3 +70,61 @@ if st.button("🚀 הרץ סריקת מומנטום"):
             st.table(pd.DataFrame(signals))
         else:
             st.write("לא נמצאו איתותים כרגע.")
+import streamlit as st
+import yfinance as yf
+import pandas as pd
+import numpy as np
+
+# הגדרת דף
+st.set_page_config(layout="wide")
+st.title("🏹 Scored ATR Trading Radar")
+
+# רשימת המניות
+target_stocks = ["NVDA", "AMD", "SMCI", "AVGO", "PLTR", "TSLA", "META", "AMZN", "COIN", "MSTR"]
+
+if st.button("🚀 הרץ סריקה"):
+    with st.spinner("סורק נתונים..."):
+        # איסוף נתונים לכל המניות
+        all_data = yf.download(target_stocks, period="100d", group_by='ticker', progress=False)
+        
+        results = []
+        for ticker in target_stocks:
+            try:
+                # חילוץ נתונים למניה בודדת
+                df = all_data[ticker].dropna() if isinstance(all_data.columns, pd.MultiIndex) else all_data.dropna()
+                if len(df) < 60: continue
+
+                # לוגיקה שלך
+                df['EMA50'] = df['Close'].ewm(span=50, adjust=False).mean()
+                delta = df['Close'].diff()
+                gain = (delta.where(delta > 0, 0)).rolling(14).mean()
+                loss = (-delta.where(delta < 0, 0)).rolling(14).mean()
+                rs = gain / (loss + 1e-9)
+                df['RSI'] = 100 - (100 / (1 + rs))
+                
+                high_low = df['High'] - df['Low']
+                high_cp = np.abs(df['High'] - df['Close'].shift())
+                low_cp = np.abs(df['Low'] - df['Close'].shift())
+                df['ATR'] = pd.concat([high_low, high_cp, low_cp], axis=1).max(axis=1).rolling(14).mean()
+                
+                curr = df.iloc[-1]
+                highest_20 = df['High'].iloc[-21:-1].max()
+                
+                # חישוב איתות
+                if curr['Close'] > highest_20 and curr['Close'] > curr['EMA50']:
+                    results.append({
+                        "Ticker": ticker,
+                        "Price": round(curr['Close'], 2),
+                        "RSI": round(curr['RSI'], 1),
+                        "ATR": round(curr['ATR'], 2),
+                        "SL": round(curr['Close'] - (2 * curr['ATR']), 2),
+                        "TP": round(curr['Close'] + (4 * curr['ATR']), 2)
+                    })
+            except Exception:
+                continue
+        
+        # הצגה בטבלה
+        if results:
+            st.table(pd.DataFrame(results))
+        else:
+            st.warning("לא נמצאו איתותים.")
