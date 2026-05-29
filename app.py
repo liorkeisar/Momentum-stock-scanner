@@ -1,56 +1,51 @@
 import streamlit as st
 import yfinance as yf
 import pandas as pd
-import plotly.graph_objects as go
 from concurrent.futures import ThreadPoolExecutor
 
 st.set_page_config(layout="wide")
-st.title("🏹 Ultimate 200+ Sector-Based Accumulation Scanner")
+st.title("🏹 Multi-Strategy Trading Dashboard")
 
-# חלוקה לסקטורים - סה"כ מעל 200 מניות איכותיות
-def get_all_tickers():
-    tech = ["AAPL", "MSFT", "NVDA", "AMD", "TSLA", "META", "GOOGL", "AMZN", "PLTR", "SOUN", "ARM", "AVGO", "CSCO", "ORCL", "CRM", "ADBE", "INTC", "TSM", "QCOM", "TXN"]
-    finance = ["JPM", "BAC", "GS", "MS", "C", "AXP", "BLK", "SCHW", "WFC", "USB", "PNC", "TFC", "COF", "DFS", "PYPL", "V", "MA", "AXP"]
-    defensive = ["PEP", "KO", "PG", "JNJ", "PFE", "MRK", "T", "VZ", "WMT", "COST", "CVX", "XOM", "MCD", "DIS", "HD", "LOW", "CAT", "DE", "IBM", "MMM", "UNH", "ABBV", "LLY", "ABT"]
-    growth_mid = ["SNOW", "DDOG", "CRWD", "MSTR", "COIN", "ZM", "DOCU", "ROKU", "PTON", "UBER", "ABNB", "BYND", "SQ", "SHOP", "PATH", "NET"]
-    return tech + finance + defensive + growth_mid
+tickers = ["AAPL", "MSFT", "NVDA", "AMD", "TSLA", "META", "GOOGL", "AMZN", "PEP", "KO", "JPM", "GS", "AVGO", "INTC"]
 
-def scan_stock(ticker):
-    try:
-        df = yf.Ticker(ticker).history(period="150d")
-        if len(df) < 60: return None
-        
-        df['MA20'] = df['Close'].rolling(20).mean()
-        df['STD'] = df['Close'].rolling(20).std()
-        df['Lower'] = df['MA20'] - (2 * df['STD'])
-        
-        tp = (df['High'] + df['Low'] + df['Close']) / 3
-        mf = tp * df['Volume']
-        pos = mf.where(tp > tp.shift(1), 0).rolling(14).sum()
-        neg = mf.where(tp < tp.shift(1), 0).rolling(14).sum()
-        mfi = 100 - (100 / (1 + (pos / neg)))
-        
-        # תנאי צבירה ממוקד
-        if df['Close'].iloc[-1] <= df['Lower'].iloc[-1] * 1.02 and mfi.iloc[-1] > mfi.iloc[-5]:
-            return (ticker, df, mfi.iloc[-1])
-    except: return None
-    return None
+def get_data(ticker):
+    return yf.Ticker(ticker).history(period="200d")
 
-if st.button("סרוק 200+ מניות מכל הסקטורים"):
-    tickers = get_all_tickers()
-    with st.spinner(f"סורק {len(tickers)} מניות... המתן בסבלנות"):
-        with ThreadPoolExecutor(max_workers=20) as executor:
-            results = list(executor.map(scan_stock, tickers))
-        
-        found = [r for r in results if r is not None]
-    
-    if found:
-        st.success(f"נמצאו {len(found)} הזדמנויות בשוק!")
-        for ticker, df, mfi in found:
-            with st.expander(f"מניה מאותרת: {ticker} | MFI: {round(mfi, 1)}"):
-                fig = go.Figure(data=[go.Candlestick(x=df.index, open=df['Open'], high=df['High'], low=df['Low'], close=df['Close'])])
-                fig.add_trace(go.Scatter(x=[df.index[-1]], y=[df['Close'].iloc[-1]], mode='markers', 
-                                         marker=dict(symbol='triangle-up', size=15, color='green')))
-                st.plotly_chart(fig, use_container_width=True)
-    else:
-        st.info("לא נמצאו מניות כרגע. השוק במצב המתנה.")
+# 1. לוגיקת מומנטום
+def is_momentum(df):
+    return df['Close'].iloc[-1] >= df['High'].rolling(20).max() * 0.98 and \
+           df['Volume'].iloc[-1] > df['Volume'].rolling(20).mean().iloc[-1] * 1.5
+
+# 2. לוגיקת סווינג (איסוף בבולינגר)
+def is_swing(df):
+    ma20 = df['Close'].rolling(20).mean()
+    lower = ma20 - (2 * df['Close'].rolling(20).std())
+    return df['Close'].iloc[-1] <= lower.iloc[-1] * 1.03
+
+# 3. לוגיקת טווח ארוך (מגמת עלייה)
+def is_long_term(df):
+    sma200 = df['Close'].rolling(200).mean().iloc[-1]
+    return df['Close'].iloc[-1] > sma200
+
+tabs = st.tabs(["🚀 מומנטום", "📈 סווינג", "💎 טווח ארוך"])
+
+with tabs[0]:
+    st.header("סורק מומנטום")
+    if st.button("סרוק מומנטום"):
+        for t in tickers:
+            df = get_data(t)
+            if is_momentum(df): st.success(f"{t} נמצא בפריצה!")
+
+with tabs[1]:
+    st.header("סורק סווינג")
+    if st.button("סרוק סווינג"):
+        for t in tickers:
+            df = get_data(t)
+            if is_swing(df): st.warning(f"{t} בבולינגר תחתית (איסוף)")
+
+with tabs[2]:
+    st.header("סורק טווח ארוך")
+    if st.button("סרוק מגמה ארוכה"):
+        for t in tickers:
+            df = get_data(t)
+            if is_long_term(df): st.info(f"{t} מעל SMA 200 (מגמה חיובית)")
