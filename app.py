@@ -1,40 +1,20 @@
 import streamlit as st
-import yfinance as yf
 import pandas as pd
 
 st.set_page_config(layout="wide")
-st.title("🏹 Professional Momentum Scanner")
+st.title("🏹 Test Scanner - Static Data")
 
-# רשימת מניות לבדיקה
-stocks = ["NVDA", "AMD", "PLTR", "MSTR", "COIN", "MARA", "RIOT", "SOUN", "CLSK", "TSLA"]
+# יצירת נתונים ידניים ללא קריאה חיצונית
+data = [
+    {"Ticker": "NVDA", "Price": 214.25, "Change %": 1.5},
+    {"Ticker": "AMD", "Price": 150.10, "Change %": -0.5},
+    {"Ticker": "PLTR", "Price": 25.40, "Change %": 2.2}
+]
 
-def get_simple_data(ticker):
-    try:
-        # הורדה של 2 ימים בלבד כדי להבטיח מהירות מקסימלית
-        df = yf.download(ticker, period="2d", progress=False)
-        
-        # בדיקת תקינות בסיסית
-        if df.empty or len(df) < 2:
-            return None
-        
-        # חישוב שינוי יומי
-        last_close = float(df['Close'].iloc[-1])
-        prev_close = float(df['Close'].iloc[-2])
-        change = ((last_close - prev_close) / prev_close) * 100
-        
-        return {"Ticker": ticker, "Price": round(last_close, 2), "Change %": round(change, 2)}
-    except Exception:
-        return None
+st.write("מציג נתונים מהזיכרון הפנימי:")
 
-# הצגת נתונים בטבלה
-st.write("סורק נתונים...")
-results = []
-for s in stocks:
-    data = get_simple_data(s)
-    if data:
-        results.append(data)
+# הצגת טבלה
+df = pd.DataFrame(data)
+st.dataframe(df, use_container_width=True)
 
-if results:
-    st.dataframe(pd.DataFrame(results), use_container_width=True)
-else:
-    st.write("לא נמצאו מניות כרגע. נסה לרענן את הדף (F5).")
+st.success("אם אתה רואה את הטבלה הזו, האפליקציה תקינה והבעיה היא בחיבור לבורסה.")
