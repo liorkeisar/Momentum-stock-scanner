@@ -61,3 +61,6 @@ if st.button("🚀 הרץ סריקת ATR מומנטום"):
             st.table(pd.DataFrame(signals))
         else:
             st.info("לא נמצאו איתותים כרגע.")
+# פסאודו-קוד לשיפור:
+if (ticker_momentum > market_momentum):
+    # תן עדיפות גבוהה יותר למניה הזו
