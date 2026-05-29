@@ -20,18 +20,17 @@ def get_data(ticker):
     except: return None
 
 # איסוף נתונים
-data = [get_data(s) for s in stocks]
-df = pd.DataFrame([d for d in data if d is not None])
+results = []
+for s in stocks:
+    data = get_data(s)
+    if data:
+        results.append(data)
 
-# מיון מהחזקה לחלשה
-df = df.sort_values(by="Change %", ascending=False)
-
-# עיצוב הטבלה (צבעים)
-def color_negative_red(val):
-    color = 'red' if val < 0 else 'green'
-    return f'color: {color}'
-
-st.dataframe(df.style.applymap(color_negative_red, subset=['Change %']), use_container_width=True)
+if results:
+    df = pd.DataFrame(results).sort_values(by="Change %", ascending=False)
+    st.dataframe(df, use_container_width=True)
+else:
+    st.write("לא נמצאו נתונים, נסה לרענן.")
 
 if st.button("רענן נתונים"):
     st.rerun()
