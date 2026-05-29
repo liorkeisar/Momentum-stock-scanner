@@ -12,19 +12,22 @@ tabs_stocks = {
 
 def analyze_pre_breakout(ticker):
     try:
-        # הורדת נתונים עם טיפול בשגיאות
         df = yf.download(ticker, period="60d", progress=False)
         if df.empty or len(df) < 30: return None
-        if isinstance(df.columns, pd.MultiIndex): df.columns = df.columns.get_level_values(0)
         
-        # חישוב בולינגר בטוח (עם מילוי נתונים חסרים)
+        # --- תיקון ה-KeyError הקריטי ---
+        if isinstance(df.columns, pd.MultiIndex):
+            df.columns = df.columns.get_level_values(0)
+        # --------------------------------
+        
+        # חישוב בולינגר
         df['SMA20'] = df['Close'].rolling(20).mean()
         df['STD'] = df['Close'].rolling(20).std()
-        df['Width'] = (4 * df['STD']) / df['SMA20'] # מדד תנודתיות
+        df['Width'] = (4 * df['STD']) / df['SMA20']
         
-        # בדיקת תקינות נתונים לפני השוואה
         if df['Width'].isnull().iloc[-1]: return None
         
+        # לוגיקת צבירה (Accumulation)
         is_tight = df['Width'].iloc[-1] < df['Width'].rolling(20).mean().iloc[-1]
         is_vol_flow = df['Volume'].iloc[-1] > df['Volume'].rolling(20).mean().iloc[-1] * 1.5
         
