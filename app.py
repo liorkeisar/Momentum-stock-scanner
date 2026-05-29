@@ -3,13 +3,13 @@ import yfinance as yf
 import pandas as pd
 
 st.set_page_config(layout="wide")
-st.title("🏹 15-Day Accumulation Scanner")
+st.title("🏹 30-Day Robust Accumulation Scanner")
 
-# חלוקה לקטגוריות מחיר
+# הרחבנו מעט את רשימות המניות כדי לתת לסורק יותר "חומר גלם" לעבוד איתו
 penny_indices = {
-    "Under $1": ["FCEL", "SNDL", "WISH", "MULN", "FSR", "GNS", "BBIG", "TRKA"],
-    "$1 - $5": ["PLUG", "TLRY", "AMC", "NIO", "JOBY", "VERV", "KOSS"],
-    "$5 +": ["ASST", "BBAI", "IONQ", "RIVN", "LCID", "QS", "PATH", "STEM"]
+    "Under $1": ["FCEL", "SNDL", "WISH", "MULN", "FSR", "GNS", "BBIG", "TRKA", "HIVE", "BTBT", "OPTT", "CISS"],
+    "$1 - $5": ["PLUG", "TLRY", "AMC", "NIO", "JOBY", "VERV", "KOSS", "CAN", "CLSK", "MARA", "WBA", "PTON"],
+    "$5 +": ["ASST", "BBAI", "IONQ", "RIVN", "LCID", "QS", "PATH", "STEM", "SOUN", "PLTR", "ARM", "ABNB"]
 }
 
 tabs = st.tabs(list(penny_indices.items()))
@@ -18,38 +18,44 @@ def scan_penny_market(tickers):
     results = []
     for ticker in tickers:
         try:
-            df = yf.Ticker(ticker).history(period="60d")
-            if len(df) < 30: continue
+            # הגדלנו את טווח הנתונים ל-120 יום כדי לאפשר חישובים ארוכי טווח
+            df = yf.Ticker(ticker).history(period="120d")
+            if len(df) < 60: continue
             
-            # MFI 15 יום
+            # חישוב MFI (טווח 30 יום לצבירה)
             tp = (df['High'] + df['Low'] + df['Close']) / 3
             mf = tp * df['Volume']
             pos = mf.where(tp > tp.shift(1), 0).rolling(14).sum()
             neg = mf.where(tp < tp.shift(1), 0).rolling(14).sum()
             mfi = 100 - (100 / (1 + (pos / neg)))
             
-            # ווליום: ממוצע 5 ימים אחרונים מול ממוצע 15 יום
-            avg_vol_short = df['Volume'].rolling(5).mean().iloc[-1]
-            avg_vol_long = df['Volume'].rolling(15).mean().iloc[-1]
-            vol_spike = avg_vol_short > avg_vol_long * 1.15 # עלייה של 15%
+            # RSI 14 (סטנדרטי למצבי שוק)
+            delta = df['Close'].diff()
+            gain = (delta.where(delta > 0, 0)).rolling(14).mean()
+            loss = (-delta.where(delta < 0, 0)).rolling(14).mean()
+            rs = gain / loss
+            rsi = 100 - (100 / (1 + rs))
             
-            # תנאי 15 יום: מחיר ירד ב-15 יום האחרונים, MFI עלה ב-15 יום האחרונים
-            if df['Close'].iloc[-1] < df['Close'].iloc[-15] and mfi.iloc[-1] > mfi.iloc[-15] and vol_spike:
+            # תנאי 30 יום: 
+            # 1. מחיר יורד ב-30 יום האחרונים 
+            # 2. MFI עולה ב-30 יום האחרונים
+            # 3. RSI מתחת ל-55 (מניה לא "חמה" מדי)
+            if df['Close'].iloc[-1] < df['Close'].iloc[-30] and mfi.iloc[-1] > mfi.iloc[-30] and rsi.iloc[-1] < 55:
                 results.append({
                     "Ticker": ticker,
                     "Price": round(df['Close'].iloc[-1], 2),
-                    "MFI_15d": round(mfi.iloc[-1], 1),
-                    "Vol_Trend": "High ⚡"
+                    "MFI_30d": round(mfi.iloc[-1], 1),
+                    "RSI_14": round(rsi.iloc[-1], 1)
                 })
         except: continue
     return pd.DataFrame(results)
 
 for i, (name, tickers) in enumerate(penny_indices.items()):
     with tabs[i]:
-        if st.button(f"סרוק מניות ב-{name} (15 יום)"):
-            with st.spinner("סורק בטווח 15 יום..."):
+        if st.button(f"סרוק מניות ב-{name} (30 יום)"):
+            with st.spinner("סורק נתונים לטווח 30 יום..."):
                 df = scan_penny_market(tickers)
                 if not df.empty:
-                    st.dataframe(df.sort_values(by="MFI_15d", ascending=False), use_container_width=True)
+                    st.dataframe(df.sort_values(by="MFI_30d", ascending=False), use_container_width=True)
                 else:
-                    st.info(f"לא נמצאו מניות באיסוף בטווח 15 יום עבור {name}.")
+                    st.info(f"לא נמצאו מניות באיסוף בטווח 30 יום עבור {name}.")
