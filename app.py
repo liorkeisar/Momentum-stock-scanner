@@ -5,7 +5,7 @@ import pandas as pd
 st.set_page_config(layout="wide")
 st.title("🏹 Professional Momentum Scanner")
 
-# רשימה ממוקדת של 10 מניות חמות בלבד
+# רשימת מניות לבדיקה
 stocks = ["NVDA", "AMD", "PLTR", "MSTR", "COIN", "MARA", "RIOT", "SOUN", "CLSK", "TSLA"]
 
 def get_simple_data(ticker):
@@ -13,11 +13,11 @@ def get_simple_data(ticker):
         # הורדה של 2 ימים בלבד כדי להבטיח מהירות מקסימלית
         df = yf.download(ticker, period="2d", progress=False)
         
-        # בדיקת תקינות בסיסית ביותר
+        # בדיקת תקינות בסיסית
         if df.empty or len(df) < 2:
             return None
         
-        # חישוב שינוי יומי (פשוט)
+        # חישוב שינוי יומי
         last_close = float(df['Close'].iloc[-1])
         prev_close = float(df['Close'].iloc[-2])
         change = ((last_close - prev_close) / prev_close) * 100
