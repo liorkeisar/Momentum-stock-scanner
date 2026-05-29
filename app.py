@@ -3,60 +3,56 @@ import yfinance as yf
 import pandas as pd
 
 st.set_page_config(layout="wide")
-st.title("🏹 Large-Cap Accumulation Scanner")
+st.title("🚀 AI & Semi Breakout Scanner (Massive Scan)")
 
-# חלוקה לסקטורים ומדדים מובילים
-major_indices = {
-    "Big Tech (FAANG+)": ["AAPL", "MSFT", "NVDA", "GOOGL", "META", "AMZN", "TSLA", "NFLX"],
-    "Financial & Banks": ["JPM", "BAC", "GS", "MS", "WFC", "C", "AXP"],
-    "Major ETFs": ["SPY", "QQQ", "IWM", "DIA", "XLK", "XLF", "SMH"]
-}
+# רשימה מורחבת של מניות AI וסמיקונדקטורס
+ai_tickers = [
+    "NVDA", "AMD", "SOUN", "PLTR", "ARM", "MRVL", "AVGO", "INTC", "TSM", "ON", "QCOM",
+    "MU", "ADI", "TXN", "NXPI", "MCHP", "TER", "KLAC", "LRCX", "AMAT", "SSYS", "DDD",
+    "C3AI", "AI", "SNPS", "CDNS", "MSFT", "GOOGL", "META", "AMZN", "SNOW", "DDOG"
+]
 
-tab_names = list(major_indices.keys())
-tabs = st.tabs(tab_names)
-
-def scan_major_market(tickers):
+def scan_breakout(tickers):
     results = []
+    # סריקה בחבילות של 10 כדי למנוע עומס
     for ticker in tickers:
         try:
-            # שימוש בטווח נתונים גדול למניות יציבות
-            df = yf.Ticker(ticker).history(period="150d")
-            if len(df) < 90: continue
+            df = yf.Ticker(ticker).history(period="60d")
+            if len(df) < 30: continue
             
-            # MFI (30 יום לאיסוף)
-            tp = (df['High'] + df['Low'] + df['Close']) / 3
-            mf = tp * df['Volume']
-            pos = mf.where(tp > tp.shift(1), 0).rolling(14).sum()
-            neg = mf.where(tp < tp.shift(1), 0).rolling(14).sum()
-            mfi = 100 - (100 / (1 + (pos / neg)))
+            # RSI
+            delta = df['Close'].diff()
+            gain = (delta.where(delta > 0, 0)).rolling(14).mean()
+            loss = (-delta.where(delta < 0, 0)).rolling(14).mean()
+            rs = gain / loss
+            rsi = 100 - (100 / (1 + rs))
             
-            # ווליום ממוצע (30 יום)
-            avg_vol_short = df['Volume'].rolling(5).mean().iloc[-1]
-            avg_vol_long = df['Volume'].rolling(30).mean().iloc[-1]
+            # MACD
+            ema12 = df['Close'].ewm(span=12).mean()
+            ema26 = df['Close'].ewm(span=26).mean()
+            macd = ema12 - ema26
+            signal = macd.ewm(span=9).mean()
             
-            # לוגיקת איסוף למניות גדולות: MFI עולה ב-30 יום האחרונים + מחיר יציב/מתקן
-            # במניות גדולות אנחנו מחפשים התכנסות ולא רק ירידה חדה
-            if mfi.iloc[-1] > mfi.iloc[-30] and avg_vol_short > avg_vol_long * 1.05:
+            # תנאי פריצה
+            is_near_high = df['Close'].iloc[-1] >= (df['High'].rolling(20).max() * 0.98)
+            vol_spike = df['Volume'].iloc[-1] > (df['Volume'].rolling(20).mean().iloc[-1] * 1.5)
+            is_bullish_macd = macd.iloc[-1] > signal.iloc[-1]
+            
+            if is_near_high and vol_spike and is_bullish_macd and 60 < rsi.iloc[-1] < 75:
                 results.append({
                     "Ticker": ticker,
                     "Price": round(df['Close'].iloc[-1], 2),
-                    "MFI_30d": round(mfi.iloc[-1], 1),
-                    "Trend": "צבירה חיובית 🟢"
+                    "RSI": round(rsi.iloc[-1], 1)
                 })
         except: continue
     return pd.DataFrame(results)
 
-# לולאה בטוחה על הלשוניות
-for i, tab_name in enumerate(tab_names):
-    with tabs[i]:
-        tickers = major_indices[tab_name]
-        if st.button(f"סרוק מניות ב-{tab_name}", key=f"btn_{i}"):
-            with st.spinner(f"סורק מדדים מובילים..."):
-                df = scan_major_market(tickers)
-                if not df.empty:
-                    st.dataframe(df.sort_values(by="MFI_30d", ascending=False), use_container_width=True)
-                else:
-                    st.info(f"לא נמצאו סימני איסוף מובהקים כרגע במדד {tab_name}.")
+if st.button("סרוק את כל מניות ה-AI והסמיקונדקטורס"):
+    with st.spinner("סורק מקסימום מניות... אנא המתן"):
+        df = scan_breakout(ai_tickers)
+        if not df.empty:
+            st.dataframe(df.sort_values(by="RSI", ascending=False), use_container_width=True)
+        else:
+            st.info("לא נמצאו מניות בפריצה כרגע. נסה שוב מחר.")
 
-st.sidebar.markdown("### דגש למדדים מובילים:")
-st.sidebar.write("בניגוד לפני-סטוקס, כאן אנחנו מחפשים **התכנסות עם ווליום**. כש-MFI עולה במדדים כמו SPY או QQQ, זה מעיד על כניסת מוסדיים.")
+st.sidebar.write(f"מותקן כרגע: {len(ai_tickers)} מניות במעקב.")
