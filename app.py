@@ -47,14 +47,34 @@ if st.button("🚀 סרוק שוק עם ניהול סיכונים", type="primar
         st.table(df_results)
         
         # בחירת מניה לגרף
+                # בחירת מניה לגרף מפורט
         selected = st.selectbox("בחר מניה לניתוח טכני מפורט:", df_results['Ticker'].tolist())
         
+        # הורדת נתונים מפורטים למניה הנבחרת
         df_plot = yf.download(selected, period="6mo", progress=False)
-        fig = go.Figure(data=[go.Candlestick(x=df_plot.index, open=df_plot['Open'], high=df_plot['High'], low=df_plot['Low'], close=df_plot['Close'])])
         
+        # יצירת גרף קנדלסטיק מקצועי
+        fig = go.Figure()
+
+        # הוספת הנרות
+        fig.add_trace(go.Candlestick(
+            x=df_plot.index, open=df_plot['Open'], high=df_plot['High'], 
+            low=df_plot['Low'], close=df_plot['Close'], name='מחיר'
+        ))
+
+        # הוספת EMA 50
+        ema50 = df_plot['Close'].ewm(span=50, adjust=False).mean()
+        fig.add_trace(go.Scatter(x=df_plot.index, y=ema50, line=dict(color='blue', width=2), name='EMA 50'))
+
+        # הוספת קווי SL ו-TP מהטבלה
         row = df_results[df_results['Ticker'] == selected].iloc[0]
-        fig.add_hline(y=row['SL'], line_color="red", line_dash="dash", annotation_text="SL")
-        fig.add_hline(y=row['TP'], line_color="green", line_dash="dash", annotation_text="TP")
+        fig.add_hline(y=row['SL'], line_color="red", line_width=2, line_dash="dash", annotation_text="SL")
+        fig.add_hline(y=row['TP'], line_color="green", line_width=2, line_dash="dash", annotation_text="TP")
         
-        fig.update_layout(template="plotly_white", title=f"ניתוח עומק: {selected}", height=400)
+        fig.update_layout(
+            template="plotly_white", 
+            title=f"ניתוח טכני: {selected}", 
+            height=500, 
+            xaxis_rangeslider_visible=False
+        )
         st.plotly_chart(fig, use_container_width=True)
