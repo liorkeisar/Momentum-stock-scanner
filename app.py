@@ -1,63 +1,52 @@
 import streamlit as st
 import yfinance as yf
 import pandas as pd
+import numpy as np
 import plotly.graph_objects as go
 
-# הגדרת עיצוב הדף למראה אפל ומקצועי
-st.set_page_config(layout="wide", page_title="Momentum Suite")
+st.set_page_config(layout="wide", page_title="Professional Algo-Scanner")
 
-st.markdown("""
-    <style>
-    .main { background-color: #0e1117; color: white; }
-    .stDataFrame { border: 1px solid #333; border-radius: 10px; }
-    </style>
-    """, unsafe_allow_html=True)
+# הגדרת רשימות מניות
+tabs_stocks = {
+    "Big Caps": ["NVDA", "AMD", "MSFT", "GOOGL", "META", "AMZN", "AAPL", "AVGO", "TSM", "LLY"],
+    "Small Caps/Volatile": ["SOUN", "BBAI", "CLSK", "WULF", "CIFR", "IONQ", "PLTR", "HOOD", "AFRM", "SOFI"],
+    "High Alpha": ["MSTR", "COIN", "MARA", "RIOT", "FSLR", "NVAX", "CRSP", "EDIT", "BEAM", "NTLA"]
+}
 
-st.title("🏹 Momentum Suite")
-
-# רשימת המניות (כפי שביקשת)
-target_stocks = ["NVDA", "AMD", "SMCI", "AVGO", "ARM", "PLTR", "MSTR", "COIN", "META", "AMZN", "TSLA", "LLY", "SNOW", "PATH", "ORCL", "BBAI", "AI", "HOOD", "FSLR", "CRSP"]
-
-def get_data(tickers):
-    # הורדת נתונים מרוכזת
-    df = yf.download(tickers, period="100d", group_by='ticker', progress=False)
-    results = []
-    for t in tickers:
-        try:
-            d = df[t].dropna() if isinstance(df.columns, pd.MultiIndex) else df.dropna()
-            price = d['Close'].iloc[-1]
-            change = ((price - d['Close'].iloc[-2]) / d['Close'].iloc[-2]) * 100
-            atr = (d['High'] - d['Low']).rolling(14).mean().iloc[-1]
-            results.append({"Ticker": t, "Price": round(price, 2), "Change %": round(change, 2), "ATR": round(atr, 2)})
-        except: continue
-    return pd.DataFrame(results)
-
-# כפתור הרצה
-if st.button("🚀 הרץ סריקת מומנטום"):
-    df_res = get_data(target_stocks)
+def analyze_pre_breakout(ticker):
+    df = yf.download(ticker, period="60d", progress=False)
+    if len(df) < 50: return None
     
-    # תצוגה מקצועית בטורים
-    col_table, col_chart = st.columns([1, 2])
+    # חישוב התכנסות (Bollinger Squeeze)
+    df['SMA20'] = df['Close'].rolling(20).mean()
+    df['STD'] = df['Close'].rolling(20).std()
+    df['Upper'] = df['SMA20'] + (df['STD'] * 2)
+    df['Lower'] = df['SMA20'] - (df['STD'] * 2)
+    df['Width'] = (df['Upper'] - df['Lower']) / df['SMA20']
     
-    with col_table:
-        st.dataframe(df_res.sort_values(by="Change %", ascending=False), hide_index=True, use_container_width=True)
+    # בדיקת זרימת כסף: מחזור גבוה מהממוצע בזמן שהמחיר יציב
+    avg_vol = df['Volume'].rolling(20).mean()
+    price_range = df['High'] - df['Low']
     
-    with col_chart:
-        ticker = st.selectbox("בחר מניה לניתוח:", df_res['Ticker'].tolist())
-        data = yf.download(ticker, period="6mo", progress=False)
-        if isinstance(data.columns, pd.MultiIndex): data.columns = data.columns.get_level_values(0)
-        
-        # גרף נרות בסגנון כהה ומקצועי
-        fig = go.Figure(data=[go.Candlestick(
-            x=data.index, open=data['Open'], high=data['High'], low=data['Low'], close=data['Close'],
-            increasing_line_color='#26a69a', decreasing_line_color='#ef5350'
-        )])
-        
-        fig.update_layout(
-            template="plotly_dark",
-            title=f"{ticker} - ניתוח טכני",
-            yaxis_title="מחיר (USD)",
-            xaxis_rangeslider_visible=False,
-            height=500
-        )
-        st.plotly_chart(fig, use_container_width=True)
+    is_tight = df['Width'].iloc[-1] < df['Width'].rolling(20).mean().iloc[-1]
+    is_vol_flow = df['Volume'].iloc[-1] > avg_vol.iloc[-1] * 1.5
+    
+    if is_tight and is_vol_flow:
+        return {"Ticker": ticker, "Price": round(df['Close'].iloc[-1], 2), "Signal": "Accumulation"}
+    return None
+
+st.title("🏹 Professional Pre-Breakout Scanner")
+tab1, tab2, tab3 = st.tabs(["Big Caps", "Small Caps", "High Alpha"])
+
+def process_tab(stocks):
+    found = []
+    with st.spinner("סורק התכנסויות..."):
+        for t in stocks:
+            res = analyze_pre_breakout(t)
+            if res: found.append(res)
+    if found: st.dataframe(pd.DataFrame(found), use_container_width=True)
+    else: st.info("לא נמצאו מניות בתהליך צבירה.")
+
+with tab1: process_tab(tabs_stocks["Big Caps"])
+with tab2: process_tab(tabs_stocks["Small Caps"])
+with tab3: process_tab(tabs_stocks["High Alpha"])
