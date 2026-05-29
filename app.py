@@ -2,35 +2,39 @@ import streamlit as st
 import yfinance as yf
 import pandas as pd
 
-st.set_page_config(page_title="Scanner", layout="wide")
+st.set_page_config(layout="wide")
 st.title("🏹 Professional Momentum Scanner")
 
-# רשימת המניות
-stocks = ["NVDA", "AMD", "MSFT", "PLTR", "SOUN", "MSTR", "COIN", "MARA", "RIOT"]
+# רשימה ממוקדת של 10 מניות חמות בלבד
+stocks = ["NVDA", "AMD", "PLTR", "MSTR", "COIN", "MARA", "RIOT", "SOUN", "CLSK", "TSLA"]
 
-def get_data(ticker):
+def get_simple_data(ticker):
     try:
-        # הורדה נקודתית לכל מניה - עובד בטוח
-        df = yf.download(ticker, period="5d", progress=False)
-        if df.empty: return None
+        # הורדה של 2 ימים בלבד כדי להבטיח מהירות מקסימלית
+        df = yf.download(ticker, period="2d", progress=False)
         
-        # חישוב אחוז שינוי (הוכח שעובד בטבלה האחרונה)
-        last_price = float(df['Close'].iloc[-1])
-        prev_price = float(df['Close'].iloc[-2])
-        change = ((last_price - prev_price) / prev_price) * 100
+        # בדיקת תקינות בסיסית ביותר
+        if df.empty or len(df) < 2:
+            return None
         
-        return {"Ticker": ticker, "Price": round(last_price, 2), "Change %": round(change, 2)}
-    except:
+        # חישוב שינוי יומי (פשוט)
+        last_close = float(df['Close'].iloc[-1])
+        prev_close = float(df['Close'].iloc[-2])
+        change = ((last_close - prev_close) / prev_close) * 100
+        
+        return {"Ticker": ticker, "Price": round(last_close, 2), "Change %": round(change, 2)}
+    except Exception:
         return None
 
-# סריקה
-st.write("סורק מניות...")
-results = [get_data(t) for t in stocks]
-results = [r for r in results if r is not None]
+# הצגת נתונים בטבלה
+st.write("סורק נתונים...")
+results = []
+for s in stocks:
+    data = get_simple_data(s)
+    if data:
+        results.append(data)
 
-# הצגת תוצאות
 if results:
-    df_results = pd.DataFrame(results)
-    st.dataframe(df_results, use_container_width=True)
+    st.dataframe(pd.DataFrame(results), use_container_width=True)
 else:
-    st.write("לא נמצאו מניות בעלייה כרגע.")
+    st.write("לא נמצאו מניות כרגע. נסה לרענן את הדף (F5).")
