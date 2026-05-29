@@ -12,17 +12,18 @@ tabs_stocks = {
 
 def analyze_pre_breakout(ticker):
     try:
-        # הורדה נקודתית לכל מניה כדי למנוע MultiIndex
         df = yf.download(ticker, period="60d", progress=False)
-        if df.empty or len(df) < 30: return None
+        # בדיקה קריטית: האם הנתונים חזרו תקינים?
+        if df is None or df.empty or 'Close' not in df.columns or 'Volume' not in df.columns:
+            return None
         
-        # חישוב אינדיקטורים בטוח
+        # חישוב אינדיקטורים
         sma20 = df['Close'].rolling(20).mean()
         std20 = df['Close'].rolling(20).std()
         width = (4 * std20) / sma20
         vol_avg = df['Volume'].rolling(20).mean()
         
-        # בדיקת תנאי פריצה
+        # בדיקת תנאי פריצה עם נתונים בטוחים
         if width.iloc[-1] < width.rolling(20).mean().iloc[-1] and \
            df['Volume'].iloc[-1] > vol_avg.iloc[-1] * 1.5:
             return {"Ticker": ticker, "Price": round(float(df['Close'].iloc[-1]), 2)}
@@ -35,12 +36,12 @@ tab1, tab2, tab3 = st.tabs(["Big Caps", "Small Caps", "High Alpha"])
 
 def process_tab(stocks):
     found = []
-    with st.spinner("סורק מניות..."):
+    with st.spinner(f"סורק {len(stocks)} מניות..."):
         for t in stocks:
             res = analyze_pre_breakout(t)
             if res: found.append(res)
     if found: st.dataframe(pd.DataFrame(found), use_container_width=True)
-    else: st.info("לא נמצאו איתותי התכנסות כרגע.")
+    else: st.info("לא נמצאו מניות במצב התכנסות כרגע.")
 
 with tab1: process_tab(tabs_stocks["Big Caps"])
 with tab2: process_tab(tabs_stocks["Small Caps"])
