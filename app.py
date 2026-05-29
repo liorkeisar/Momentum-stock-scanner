@@ -51,16 +51,7 @@ if st.button("🚀 סרוק שוק עם ניהול סיכונים", type="primar
         selected = st.selectbox("בחר מניה לניתוח טכני מפורט:", df_results['Ticker'].tolist())
         
         # הורדת נתונים מפורטים למניה הנבחרת
-        df_plot = yf.download(selected, period="6mo", progress=False)
         
-        # יצירת גרף קנדלסטיק מקצועי
-        fig = go.Figure()
-
-        # הוספת הנרות
-        fig.add_trace(go.Candlestick(
-            x=df_plot.index, open=df_plot['Open'], high=df_plot['High'], 
-            low=df_plot['Low'], close=df_plot['Close'], name='מחיר'
-        ))
 
         # הוספת EMA 50
         ema50 = df_plot['Close'].ewm(span=50, adjust=False).mean()
@@ -78,3 +69,13 @@ if st.button("🚀 סרוק שוק עם ניהול סיכונים", type="primar
             xaxis_rangeslider_visible=False
         )
         st.plotly_chart(fig, use_container_width=True)
+        df_plot = yf.download(selected, period="6mo", progress=False)
+        
+        # יצירת גרף קנדלסטיק מקצועי
+        fig = go.Figure()
+
+        # הוספת הנרות
+        fig.add_trace(go.Candlestick(
+            x=df_plot.index, open=df_plot['Open'], high=df_plot['High'], 
+            low=df_plot['Low'], close=df_plot['Close'], name='מחיר'
+        ))
