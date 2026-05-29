@@ -62,3 +62,27 @@ if st.button("🚀 הרץ סריקת ATR מומנטום"):
         else:
             st.info("לא נמצאו איתותים כרגע.")
 # פסא
+import streamlit as st
+import yfinance as yf
+import pandas as pd
+import numpy as np
+
+# ... (שאר רשימת המניות נשארת כפי שהיא) ...
+
+def is_market_bullish():
+    """בודק אם ה-S&P 500 מעל ממוצע 200 יום (פילטר שוק בטוח)"""
+    try:
+        spy = yf.download("SPY", period="250d", progress=False)
+        if isinstance(spy.columns, pd.MultiIndex): spy.columns = spy.columns.get_level_values(0)
+        ma200 = spy['Close'].rolling(200).mean().iloc[-1]
+        return spy['Close'].iloc[-1] > ma200
+    except:
+        return True # אם לא הצלחנו לבדוק, נניח שהשוק בסדר
+
+if st.button("🚀 הרץ סריקת מומנטום עם פילטר שוק"):
+    # בדיקת פילטר שוק לפני שמתחילים
+    if not is_market_bullish():
+        st.warning("⚠️ אזהרה: השוק נמצא במגמה שלילית (מתחת ל-MA200). סוחרים בזהירות יתרה!")
+    
+    with st.spinner("סורק מניות..."):
+        # ... (שאר הלוגיקה נשארת זהה) ...
