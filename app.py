@@ -157,3 +157,51 @@ try:
 
 except Exception as e:
     print(f"Error: {e}")
+    import streamlit as st
+import yfinance as yf
+import pandas as pd
+from streamlit_lightweight_charts import renderLightweightCharts
+
+st.set_page_config(layout="wide", page_title="Pro Trader Radar")
+st.title("🏹 Momentum Pro Radar")
+
+# רשימת המניות לסריקה (תוכל להוסיף כאן עוד מניות)
+tickers = ["AAPL", "NVDA", "TSLA", "AMD", "MSFT", "GOOGL", "AMZN", "META", "NFLX", "PYPL"] 
+
+if st.button("🚀 הרץ סורק מניות"):
+    results = []
+    
+    # לולאת סריקה על רשימת המניות
+    for ticker in tickers:
+        df = yf.download(ticker, period="3mo", interval="1d", progress=False)
+        if df.empty: continue
+        
+        if isinstance(df.columns, pd.MultiIndex):
+            df.columns = df.columns.get_level_values(0)
+            
+        # חישוב EMA50 לזיהוי מומנטום
+        df['EMA50'] = df['Close'].ewm(span=50, adjust=False).mean()
+        
+        # תנאי פשוט לסריקה (למשל: מחיר מעל EMA50)
+        if df['Close'].iloc[-1] > df['EMA50'].iloc[-1]:
+            results.append(ticker)
+
+    st.success(f"נמצאו {len(results)} איתותים מובילים!")
+    
+    # הצגת גרף למניות שנמצאו
+    for ticker in results:
+        st.subheader(f"ניתוח: {ticker}")
+        
+        df = yf.download(ticker, period="1mo", interval="1d", progress=False)
+        if isinstance(df.columns, pd.MultiIndex): df.columns = df.columns.get_level_values(0)
+        df = df.reset_index()
+        
+        chart_data = [{"time": str(row['Date']).split(' ')[0], "open": float(row['Open']), 
+                       "high": float(row['High']), "low": float(row['Low']), "close": float(row['Close'])} 
+                      for _, row in df.iterrows()]
+        
+        renderLightweightCharts([
+            {"chart": {"height": 300, "layout": {"background": {"color": "#0E1117"}, "textColor": "#DDD"}},
+             "series": [{"type": "Candlestick", "data": chart_data}]}
+        ], ticker)
+
