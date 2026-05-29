@@ -1,3 +1,35 @@
+import streamlit as st
+import yfinance as yf
+import pandas as pd
+import numpy as np
+import plotly.graph_objects as go
+
+st.set_page_config(layout="wide")
+st.title("🏹 Momentum Pro Radar - סורק מניות מקצועי")
+
+# 150 המניות שלך
+target_stocks = ["NVDA", "AMD", "SMCI", "AVGO", "ARM", "TSM", "ASML", "MU", "LRCX", "AMAT", "PLTR", "SOUN", "BBAI", "AI", "INTC", "QCOM", "TXN", "ADI", "MRVL", "KLAC", "SNPS", "CDNS", "CRWD", "PANW", "FTNT", "NET", "DDOG", "SNOW", "WDAY", "TEAM", "MDB", "ZS", "OKTA", "PATH", "NOW", "ORCL", "CRM", "HUBS", "ANET", "COIN", "MARA", "RIOT", "CLSK", "MSTR", "WULF", "HOOD", "SQ", "PYPL", "AFRM", "SOFI", "UPST", "COF", "NU", "MELI", "SE", "SHOP", "CHWY", "AMZN", "TSLA", "RIVN", "LCID", "NIO", "LI", "XPEV", "FSLR", "ENPH", "WMT", "TGT", "COST", "LLY", "NVO", "MRNA", "CRSP", "BNTX", "VRTX", "AMGN", "GILD", "REGN", "META", "GOOGL", "SPOT", "ROKU", "DIS", "NFLX", "SNAP", "PINS", "TTD", "RBLX", "CMG", "CELH", "ELF", "LULU", "NKE", "SBUX", "MNST", "CAT", "DE", "GE", "BA", "UBER", "CIFR", "WEX", "PAYC", "PCTY", "RUN", "BLNK", "CHPT", "QS", "BE", "NEE", "GEV", "SEDG", "CSIQ", "ARRY", "SHLS", "STEM", "JOBY", "ACHR", "LUNR", "RKLB", "TCOM", "W", "ANF", "GAP", "URBN", "JWN", "EXAS", "NVAX", "EDIT", "BEAM", "NTLA", "LYV", "NYT", "WMG", "IMAX", "AMC", "SKX", "TPR", "PVH", "RL", "DRI", "TXRH", "UAL", "AAL", "DAL", "LUV", "RCL", "CCL", "NCLH", "LYFT"]
+
+if st.button("🚀 הרץ סריקה"):
+    # הורדת נתונים מרוכזת (מהיר יותר)
+    all_data = yf.download(target_stocks, period="100d", group_by='ticker', progress=False)
+    
+    for ticker in target_stocks:
+        # בדיקה שהנתונים קיימים
+        data = all_data[ticker].dropna() if isinstance(all_data.columns, pd.MultiIndex) else all_data.dropna()
+        if len(data) < 50: continue
+        
+        # חישוב אינדיקטורים
+        data['EMA50'] = data['Close'].ewm(span=50, adjust=False).mean()
+        
+        # הצגת הגרף בפורמט בהיר וקריא
+        st.write(f"### מניית {ticker}")
+        fig = go.Figure(data=[go.Candlestick(x=data.index, open=data['Open'], high=data['High'], low=data['Low'], close=data['Close'])])
+        fig.add_trace(go.Scatter(x=data.index, y=data['EMA50'], line=dict(color='blue', width=2), name='EMA50'))
+        
+        # עיצוב גרף בהיר (לא שחור!)
+        fig.update_layout(template="plotly_white", height=300, margin=dict(l=0, r=0, t=30, b=0))
+        st.plotly_chart(fig, use_container_width=True)
 import yfinance as yf
 import pandas as pd
 import numpy as np
