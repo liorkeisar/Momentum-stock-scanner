@@ -1,64 +1,72 @@
 import streamlit as st
 import yfinance as yf
 import pandas as pd
-import plotly.graph_objects as go
+import numpy as np
 
-st.set_page_config(page_title="Momentum Pro Radar", layout="wide")
+# הגדרת דף
+st.set_page_config(layout="wide", page_title="Scored ATR Radar")
+st.title("🏹 Scored ATR Trading Radar")
 
-# --- תפריט צד ---
-st.sidebar.title("🏹 רדאר מומנטום")
-search_symbol = st.sidebar.text_input("חיפוש מניה (למשל: NVDA):", "").upper()
-run_single = st.sidebar.button("🔍 נתח מניה זו")
-st.sidebar.markdown("---")
-run_scanner = st.sidebar.button("🚀 הרץ סורק שוק מלא")
+target_stocks = [
+    "NVDA", "AMD", "SMCI", "AVGO", "ARM", "TSM", "ASML", "MU", "LRCX", "AMAT",
+    "PLTR", "SOUN", "BBAI", "AI", "INTC", "QCOM", "TXN", "ADI", "MRVL", "KLAC",
+    "SNPS", "CDNS", "CRWD", "PANW", "FTNT", "NET", "DDOG", "SNOW", "WDAY", "TEAM",
+    "MDB", "ZS", "OKTA", "PATH", "NOW", "ORCL", "CRM", "HUBS", "ANET", "COIN",
+    "MARA", "RIOT", "CLSK", "MSTR", "WULF", "HOOD", "SQ", "PYPL", "AFRM", "SOFI",
+    "UPST", "COF", "NU", "MELI", "SE", "SHOP", "CHWY", "AMZN", "TSLA", "RIVN"
+]
 
-target_stocks = ["NVDA", "AMD", "SMCI", "AVGO", "PLTR", "TSLA", "META", "AMZN", "COIN", "MSTR", "HOOD", "FSLR", "ARM", "SNOW", "PATH"]
+if st.button("🚀 הרץ סריקת מומנטום"):
+    with st.spinner("סורק מניות ומדרג איכות..."):
+        all_data = yf.download(target_stocks, period="100d", group_by='ticker', progress=False)
+        signals = []
 
-def get_analysis(ticker):
-    df = yf.download(ticker, period="100d", progress=False)
-    if isinstance(df.columns, pd.MultiIndex): df.columns = df.columns.get_level_values(0)
-    
-    df['EMA50'] = df['Close'].ewm(span=50, adjust=False).mean()
-    tr = pd.concat([df['High']-df['Low'], abs(df['High']-df['Close'].shift()), abs(df['Low']-df['Close'].shift())], axis=1).max(axis=1)
-    df['ATR'] = tr.rolling(14).mean()
-    delta = df['Close'].diff()
-    gain = (delta.where(delta > 0, 0)).rolling(14).mean()
-    loss = (-delta.where(delta < 0, 0)).rolling(14).mean()
-    df['RSI'] = 100 - (100 / (1 + gain / (loss + 1e-9)))
-    
-    curr = df.iloc[-1]
-    score = (1 if curr['Close'] > curr['EMA50'] else 0) + (1 if 50 < curr['RSI'] < 70 else 0)
-    sl = curr['Close'] - (2 * df['ATR'].iloc[-1])
-    tp = curr['Close'] + (4 * df['ATR'].iloc[-1])
-    return df, {"Ticker": ticker, "Score": score, "Price": round(curr['Close'], 2), "SL": round(sl, 2), "TP": round(tp, 2)}
-
-def render_chart(df, stats):
-    fig = go.Figure()
-    fig.add_trace(go.Candlestick(x=df.index, open=df['Open'], high=df['High'], low=df['Low'], close=df['Close'], name='מחיר'))
-    fig.add_hline(y=stats['SL'], line_color="red", line_dash="dash", annotation_text="SL")
-    fig.add_hline(y=stats['TP'], line_color="green", line_dash="dash", annotation_text="TP")
-    fig.update_layout(height=500, template="plotly_white", xaxis_rangeslider_visible=False)
-    st.plotly_chart(fig, use_container_width=True)
-
-# --- לוגיקה ---
-st.title("📈 Momentum Pro Radar")
-
-if run_single and search_symbol:
-    df, stats = get_analysis(search_symbol)
-    col1, col2, col3 = st.columns(3)
-    col1.metric("מחיר נוכחי", f"${stats['Price']}")
-    col2.metric("ציון מומנטום", f"{stats['Score']}/2")
-    col3.metric("סטופ לוס", f"${stats['SL']}")
-    render_chart(df, stats)
-
-elif run_scanner:
-    with st.spinner("סורק שוק..."):
-        results = []
-        for t in target_stocks:
+        for ticker in target_stocks:
             try:
-                _, stats = get_analysis(t)
-                results.append(stats)
+                data = all_data[ticker].dropna() if isinstance(all_data.columns, pd.MultiIndex) else all_data.dropna()
+                if len(data) < 60: continue
+
+                # חישוב אינדיקטורים (לפי הלוגיקה שלך)
+                data['EMA50'] = data['Close'].ewm(span=50, adjust=False).mean()
+                delta = data['Close'].diff()
+                gain = (delta.where(delta > 0, 0)).rolling(14).mean()
+                loss = (-delta.where(delta < 0, 0)).rolling(14).mean()
+                rs = gain / (loss + 1e-9)
+                data['RSI'] = 100 - (100 / (1 + rs))
+                
+                tr = pd.concat([data['High']-data['Low'], abs(data['High']-data['Close'].shift()), abs(data['Low']-data['Close'].shift())], axis=1).max(axis=1)
+                data['ATR'] = tr.rolling(14).mean()
+
+                curr = data.iloc[-1]
+                highest_20 = data['High'].iloc[-21:-1].max()
+                lowest_20 = data['Low'].iloc[-21:-1].min()
+                avg_vol = data['Volume'].iloc[-21:-1].mean()
+
+                # בדיקת איתותים
+                score = 0
+                direction = ""
+                
+                if curr['Close'] > highest_20 and curr['Volume'] > (avg_vol * 1.2) and curr['Close'] > curr['EMA50'] and 50 < curr['RSI'] < 70:
+                    direction = "BUY 🟢"
+                    if curr['Volume'] > (avg_vol * 2.0): score += 1
+                    if 55 <= curr['RSI'] <= 65: score += 1
+                    if (curr['Close'] - curr['EMA50']) / curr['EMA50'] < 0.05: score += 1
+                
+                elif curr['Close'] < lowest_20 and curr['Volume'] > (avg_vol * 1.2) and curr['Close'] < curr['EMA50'] and 30 < curr['RSI'] < 50:
+                    direction = "SELL 🔴"
+                    if curr['Volume'] > (avg_vol * 2.0): score += 1
+                    if 35 <= curr['RSI'] <= 45: score += 1
+                    if (curr['EMA50'] - curr['Close']) / curr['EMA50'] < 0.05: score += 1
+
+                if direction:
+                    signals.append({
+                        "Ticker": ticker, "Dir": direction, "Price": round(curr['Close'], 2),
+                        "Score": f"{score}/3", "TP": round(curr['Close'] + (4 * curr['ATR']), 2),
+                        "SL": round(curr['Close'] - (2 * curr['ATR']), 2)
+                    })
             except: continue
-        st.table(pd.DataFrame(results).sort_values(by="Score", ascending=False))
-else:
-    st.info("בחר מניה לניתוח מהתפריט בצד או הרץ סריקה מלאה.")
+
+        if signals:
+            st.table(pd.DataFrame(signals))
+        else:
+            st.write("לא נמצאו איתותים כרגע.")
