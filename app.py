@@ -6,7 +6,7 @@ from concurrent.futures import ThreadPoolExecutor
 
 st.set_page_config(page_title="Pro Market Scanner", layout="wide")
 
-# פונקציית משיכת מניות
+# --- פונקציות עזר ---
 @st.cache_data
 def get_tickers(index):
     if index == "DJIA":
@@ -17,7 +17,6 @@ def get_tickers(index):
         return pd.read_html('https://en.wikipedia.org/wiki/List_of_S%26P_500_companies')[0]['Symbol'].tolist()
     except: return ["AAPL", "MSFT"]
 
-# מנוע הסריקה
 def run_scanner(ticker, scan_type):
     try:
         df = yf.Ticker(ticker).history(period="100d")
@@ -34,19 +33,34 @@ def run_scanner(ticker, scan_type):
     except: return None
     return None
 
-# יצירת גרף מקצועי
-def draw_chart(df, ticker):
+# פונקציית הגרף המקצועית
+def draw_chart(df, ticker, scan_type):
     fig = go.Figure(data=[go.Candlestick(x=df.index, open=df['Open'], high=df['High'], low=df['Low'], close=df['Close'])])
-    fig.update_layout(title=f"{ticker} - Professional Chart", height=500, template="plotly_dark", xaxis_rangeslider_visible=False)
+    
+    # איתות ויזואלי על הגרף
+    fig.add_annotation(
+        x=df.index[-1], y=df['Low'].iloc[-1],
+        text="SIGNAL" if scan_type == "REVERSAL" else "BREAKOUT",
+        showarrow=True, arrowhead=2, ax=0, ay=40,
+        arrowcolor="lime", font=dict(color="lime", size=14)
+    )
+    
+    fig.update_layout(
+        title=f"Technical Analysis: {ticker}",
+        height=600, template="plotly_dark",
+        xaxis_rangeslider_visible=False,
+        xaxis=dict(showgrid=True, gridcolor='#333'),
+        yaxis=dict(showgrid=True, gridcolor='#333')
+    )
     return fig
 
-# ממשק משתמש
+# --- ממשק משתמש ---
 st.title("⚡ Pro Market Scanner")
 tab1, tab2, tab3, tab4 = st.tabs(["🚀 SP500 (Rev)", "🏢 Dow (Rev)", "📈 SP500 (Break)", "📊 Dow (Break)"])
 
 def execute(index, scan_type):
     tickers = get_tickers(index)
-    with st.spinner("סורק מניות..."):
+    with st.spinner(f"סורק {len(tickers)} מניות..."):
         with ThreadPoolExecutor(max_workers=5) as executor:
             results = list(executor.map(lambda t: run_scanner(t, scan_type), tickers))
         
@@ -54,10 +68,10 @@ def execute(index, scan_type):
         for res in results:
             if res:
                 ticker, df = res
-                with st.expander(f"✅ {ticker} - לחץ להצגת גרף"):
-                    st.plotly_chart(draw_chart(df, ticker), use_container_width=True)
+                with st.expander(f"✅ {ticker}"):
+                    st.plotly_chart(draw_chart(df, ticker, scan_type), use_container_width=True)
                 found = True
-        if not found: st.warning("לא נמצאו תוצאות.")
+        if not found: st.warning("לא נמצאו תוצאות העונות על התנאים.")
 
 with tab1:
     if st.button("סרוק SP500 להיפוך"): execute("SP500", "REVERSAL")
