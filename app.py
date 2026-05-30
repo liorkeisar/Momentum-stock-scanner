@@ -7,7 +7,7 @@ from concurrent.futures import ThreadPoolExecutor
 
 st.set_page_config(page_title="Pro Market Scanner", layout="wide")
 
-# --- פונקציות עזר ---
+# --- פונקציות עזר למשיכת מניות ---
 @st.cache_data
 def get_tickers(index):
     if index == "DJIA":
@@ -16,51 +16,85 @@ def get_tickers(index):
                 "MRK", "MSFT", "NKE", "PG", "TRV", "UNH", "V", "VZ", "WBA", "WMT"]
     try:
         return pd.read_html('https://en.wikipedia.org/wiki/List_of_S%26P_500_companies')[0]['Symbol'].tolist()
-    except: return ["AAPL", "MSFT"]
+    except: return ["AAPL", "MSFT", "NVDA"]
 
+# --- מנוע הסריקה המחמיר ---
 def run_scanner(ticker, scan_type):
     try:
-        df = yf.Ticker(ticker).history(period="100d")
+        # משיכת 150 יום כדי שיהיה מספיק מידע לחישוב אינדיקטורים ארוכים
+        df = yf.Ticker(ticker).history(period="150d")
         if len(df) < 50: return None
-        df['RSI'] = 100 - (100 / (1 + (df['Close'].diff().clip(lower=0).rolling(14).mean() / df['Close'].diff().clip(upper=0).abs().rolling(14).mean())))
-        df['MA20'] = df['Close'].rolling(20).mean()
         
+        # חישוב אינדיקטורים בסיסיים
+        df['MA20'] = df['Close'].rolling(20).mean()
+        df['Vol20'] = df['Volume'].rolling(20).mean()
+        df['High20'] = df['High'].rolling(20).max().shift(1)
+        
+        # חישוב MACD (לאיתותי היפוך)
+        exp1 = df['Close'].ewm(span=12, adjust=False).mean()
+        exp2 = df['Close'].ewm(span=26, adjust=False).mean()
+        df['MACD'] = exp1 - exp2
+        df['Signal_Line'] = df['MACD'].ewm(span=9, adjust=False).mean()
+
+        # הגדרת לוגיקת האיתותים (BUY / SELL) לכל אסטרטגיה
         if scan_type == "REVERSAL":
-            if df['RSI'].iloc[-1] < 50 and df['RSI'].iloc[-1] > df['RSI'].iloc[-2] and df['Close'].iloc[-1] < df['MA20'].iloc[-1]:
-                return ticker, df
+            # קניה: MACD חוצה למעלה + מחיר סוגר מעל MA20
+            df['BUY'] = (df['MACD'] > df['Signal_Line']) & (df['MACD'].shift(1) <= df['Signal_Line'].shift(1)) & (df['Close'] > df['MA20'])
+            # מכירה: MACD חוצה למטה (אזהרת ירידות)
+            df['SELL'] = (df['MACD'] < df['Signal_Line']) & (df['MACD'].shift(1) >= df['Signal_Line'].shift(1))
+        
         elif scan_type == "BREAKOUT":
-            if df['Close'].iloc[-1] > df['High'].rolling(20).max().shift(1).iloc[-1] and df['Volume'].iloc[-1] > df['Volume'].rolling(20).mean().iloc[-1] * 1.5:
-                return ticker, df
+            # קניה: מחיר פורץ שיא של 20 יום + ווליום כפול מהממוצע
+            df['BUY'] = (df['Close'] > df['High20']) & (df['Volume'] > df['Vol20'] * 2)
+            # מכירה: המחיר נופל חזרה מתחת לממוצע נע 20
+            df['SELL'] = (df['Close'] < df['MA20']) & (df['Close'].shift(1) >= df['MA20'].shift(1))
+
+        # אם היום האחרון הוא איתות קניה - החזר את המניה
+        if df['BUY'].iloc[-1]:
+            return ticker, df
     except: return None
     return None
 
-# פונקציית גרף מקצועית עם תצוגת נרות ונפח מסחר
+# --- פונקציית הגרף המקצועי עם החצים ---
 def draw_chart(df, ticker, scan_type):
     fig = make_subplots(rows=2, cols=1, shared_xaxes=True, 
-                        vertical_spacing=0.03, subplot_titles=(f'{ticker} Price', 'Volume'), 
-                        row_width=[0.2, 0.7])
+                        vertical_spacing=0.03, row_width=[0.2, 0.7])
 
+    # נרות יפניים
     fig.add_trace(go.Candlestick(x=df.index, open=df['Open'], high=df['High'], 
                                  low=df['Low'], close=df['Close'], name='Price'), row=1, col=1)
     
+    # סינון הנקודות שבהן התקבלו איתותים בהיסטוריה של המניה
+    buy_signals = df[df['BUY']]
+    sell_signals = df[df['SELL']]
+
+    # הוספת חצי BUY ירוקים (ממוקמים קצת מתחת לנר)
+    fig.add_trace(go.Scatter(x=buy_signals.index, y=buy_signals['Low'] * 0.98, mode='markers+text',
+                             text=['BUY'] * len(buy_signals), textposition='bottom center',
+                             marker=dict(color='#00ff00', size=12, symbol='triangle-up'), name='Buy'), row=1, col=1)
+    
+    # הוספת חצי SELL אדומים (ממוקמים קצת מעל הנר)
+    fig.add_trace(go.Scatter(x=sell_signals.index, y=sell_signals['High'] * 1.02, mode='markers+text',
+                             text=['SELL'] * len(sell_signals), textposition='top center',
+                             marker=dict(color='#ff0000', size=12, symbol='triangle-down'), name='Sell'), row=1, col=1)
+
+    # עמודות נפח מסחר בצבעים
     colors = ['green' if row['Close'] >= row['Open'] else 'red' for index, row in df.iterrows()]
     fig.add_trace(go.Bar(x=df.index, y=df['Volume'], marker_color=colors, name='Volume'), row=2, col=1)
 
-    fig.add_annotation(row=1, col=1, x=df.index[-1], y=df['High'].iloc[-1],
-                       text=f"▲ {scan_type}", showarrow=True, arrowhead=2, 
-                       arrowcolor="yellow", font=dict(color="yellow"))
-
+    # עיצוב כללי
     fig.update_layout(template="plotly_dark", height=700, xaxis_rangeslider_visible=False, 
-                      showlegend=False, margin=dict(l=20, r=20, t=50, b=20))
+                      showlegend=False, margin=dict(l=20, r=20, t=50, b=20),
+                      title=f"{ticker} - {scan_type} Strategy Analysis")
     return fig
 
-# --- ממשק ---
+# --- ממשק האפליקציה ---
 st.title("⚡ Pro Market Scanner")
 tab1, tab2, tab3, tab4 = st.tabs(["🚀 SP500 (Rev)", "🏢 Dow (Rev)", "📈 SP500 (Break)", "📊 Dow (Break)"])
 
 def execute(index, scan_type):
     tickers = get_tickers(index)
-    with st.spinner(f"סורק {len(tickers)} מניות..."):
+    with st.spinner(f"סורק {len(tickers)} מניות... (מחפש התאמה מחמירה)"):
         with ThreadPoolExecutor(max_workers=5) as executor:
             results = list(executor.map(lambda t: run_scanner(t, scan_type), tickers))
         
@@ -71,7 +105,7 @@ def execute(index, scan_type):
                 with st.expander(f"✅ {ticker}"):
                     st.plotly_chart(draw_chart(df, ticker, scan_type), use_container_width=True)
                 found = True
-        if not found: st.warning("לא נמצאו תוצאות.")
+        if not found: st.warning("לא נמצאו איתותים אמינים היום.")
 
 with tab1:
     if st.button("סרוק SP500 להיפוך"): execute("SP500", "REVERSAL")
