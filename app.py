@@ -3,7 +3,7 @@ import yfinance as yf
 import pandas as pd
 from concurrent.futures import ThreadPoolExecutor
 
-st.set_page_config(page_title="Pro Stock Scanner", layout="wide")
+st.set_page_config(page_title="Pro Market Scanner", layout="wide")
 
 @st.cache_data
 def get_tickers(index):
@@ -11,12 +11,11 @@ def get_tickers(index):
         return ["AAPL", "AMGN", "AXP", "BA", "CAT", "CRM", "CSCO", "CVX", "DIS", "DOW", 
                 "GS", "HD", "HON", "IBM", "INTC", "JNJ", "JPM", "KO", "MCD", "MMM", 
                 "MRK", "MSFT", "NKE", "PG", "TRV", "UNH", "V", "VZ", "WBA", "WMT"]
-    try:
-        # ניסיון למשוך מויקיפדיה
-        tables = pd.read_html('https://en.wikipedia.org/wiki/List_of_S%26P_500_companies')
-        return tables[0]['Symbol'].tolist()
-    except:
-        return ["AAPL", "MSFT", "NVDA"]
+    else: # SP500
+        try:
+            return pd.read_html('https://en.wikipedia.org/wiki/List_of_S%26P_500_companies')[0]['Symbol'].tolist()
+        except:
+            return ["AAPL", "MSFT", "NVDA"]
 
 def run_scanner(ticker, scan_type):
     try:
@@ -37,7 +36,8 @@ def run_scanner(ticker, scan_type):
     return None
 
 st.title("⚡ Pro Market Scanner")
-tab1, tab2, tab3 = st.tabs(["🚀 S&P 500 (Reversal)", "🏢 Dow Jones (Reversal)", "📈 Breakout Scanner"])
+# ארגון הלשוניות: 4 לשוניות - שתיים ל-Reversal ושתיים ל-Breakout
+tab1, tab2, tab3, tab4 = st.tabs(["🚀 SP500 (Reversal)", "🏢 Dow (Reversal)", "📈 SP500 (Breakout)", "📊 Dow (Breakout)"])
 
 def execute(index, scan_type):
     tickers = get_tickers(index)
@@ -54,8 +54,10 @@ def execute(index, scan_type):
         if not found: st.warning("לא נמצאו תוצאות בשלב זה.")
 
 with tab1:
-    if st.button("סרוק S&P 500"): execute("SP500", "REVERSAL")
+    if st.button("סרוק SP500 להיפוך"): execute("SP500", "REVERSAL")
 with tab2:
-    if st.button("סרוק Dow Jones"): execute("DJIA", "REVERSAL")
+    if st.button("סרוק Dow להיפוך"): execute("DJIA", "REVERSAL")
 with tab3:
-    if st.button("סרוק פריצות (Breakout)"): execute("SP500", "BREAKOUT")
+    if st.button("סרוק SP500 לפריצה"): execute("SP500", "BREAKOUT")
+with tab4:
+    if st.button("סרוק Dow לפריצה"): execute("DJIA", "BREAKOUT")
