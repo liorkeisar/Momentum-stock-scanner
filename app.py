@@ -70,3 +70,21 @@ if st.button("🔍 סרוק S&P 500 לסיגנל היפוך"):
         
         if not found_any:
             st.warning("לא נמצאו מניות העונות על הקריטריונים כרגע.")
+def run_breakout_scan(ticker):
+    try:
+        df = yf.Ticker(ticker).history(period="60d")
+        if len(df) < 40: return None
+        
+        # חישוב אינדיקטורים
+        df['MA_Vol'] = df['Volume'].rolling(20).mean()
+        df['High_20'] = df['High'].rolling(20).max().shift(1) # שיא של 20 יום לא כולל היום
+        
+        # תנאי פריצה
+        is_breaking_out = df['Close'].iloc[-1] > df['High_20'].iloc[-1]
+        is_volume_high = df['Volume'].iloc[-1] > df['MA_Vol'].iloc[-1] * 1.5 # נפח גבוה ב-50% מהממוצע
+        
+        if is_breaking_out and is_volume_high:
+            return ticker, df
+    except:
+        return None
+    return None
