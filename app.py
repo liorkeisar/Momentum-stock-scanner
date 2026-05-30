@@ -1,15 +1,18 @@
 import streamlit as st
 import yfinance as yf
 import pandas as pd
-import numpy as np
 from concurrent.futures import ThreadPoolExecutor
 
-st.set_page_config(page_title="Reversal Scanner", layout="wide")
+st.set_page_config(page_title="Reversal Divergence Scanner", layout="wide")
 
 @st.cache_data
 def get_sp500_tickers():
-    # רשימה מקוצרת לטובת יציבות הסריקה
-    return ["AAPL", "MSFT", "NVDA", "AMD", "TSLA", "META", "GOOGL", "AMZN", "JPM", "NFLX", "CRM", "BAC", "DIS", "INTC", "PEP", "KO", "GS", "AVGO", "WMT", "COST"]
+    try:
+        url = 'https://en.wikipedia.org/wiki/List_of_S%26P_500_companies'
+        df = pd.read_html(url)[0]
+        return df['Symbol'].tolist()
+    except:
+        return ["AAPL", "MSFT", "NVDA", "AMD", "TSLA"]
 
 def calculate_indicators(df):
     # RSI
@@ -19,59 +22,51 @@ def calculate_indicators(df):
     rs = gain / loss
     df['RSI'] = 100 - (100 / (1 + rs))
     
-    # MACD
-    exp1 = df['Close'].ewm(span=12, adjust=False).mean()
-    exp2 = df['Close'].ewm(span=26, adjust=False).mean()
-    df['MACD'] = exp1 - exp2
-    df['MACD_Signal'] = df['MACD'].ewm(span=9, adjust=False).mean()
-    
-    # MFI (Money Flow Index)
+    # MFI
     typical_price = (df['High'] + df['Low'] + df['Close']) / 3
-    money_flow = typical_price * df['Volume']
-    positive_flow = money_flow.where(typical_price > typical_price.shift(1), 0).rolling(14).sum()
-    negative_flow = money_flow.where(typical_price < typical_price.shift(1), 0).rolling(14).sum()
-    mfi = 100 - (100 / (1 + (positive_flow / negative_flow)))
-    df['MFI'] = mfi
+    mf = typical_price * df['Volume']
+    pos_mf = mf.where(typical_price > typical_price.shift(1), 0).rolling(14).sum()
+    neg_mf = mf.where(typical_price < typical_price.shift(1), 0).rolling(14).sum()
+    df['MFI'] = 100 - (100 / (1 + (pos_mf / neg_mf)))
     
     return df
 
-def run_reversal_scan(ticker):
+def run_scanner(ticker):
     try:
         df = yf.Ticker(ticker).history(period="1y")
-        if len(df) < 100: return None
+        if len(df) < 50: return None
         df = calculate_indicators(df)
         
-        # התנאים שלך:
-        # 1. שפל שנתי (המחיר הנוכחי קרוב למינימום של השנה)
-        is_yearly_low = df['Close'].iloc[-1] <= df['Low'].min() * 1.05
-        # 2. MACD עולה (והיה מתחת ל-0)
-        is_macd_rising = df['MACD'].iloc[-1] > df['MACD'].iloc[-2] and df['MACD'].iloc[-1] < 0
-        # 3. RSI באובר-סולד (מתחת ל-30)
-        is_rsi_oversold = df['RSI'].iloc[-1] < 30
-        # 4. MFI במגמת עלייה
-        is_mfi_rising = df['MFI'].iloc[-1] > df['MFI'].iloc[-2]
+        # תנאים:
+        # 1. RSI ב-Oversold ועולה (היום גבוה מאתמול)
+        rsi_condition = (df['RSI'].iloc[-1] < 40) and (df['RSI'].iloc[-1] > df['RSI'].iloc[-2])
+        # 2. MFI עולה
+        mfi_condition = (df['MFI'].iloc[-1] > df['MFI'].iloc[-2])
+        # 3. מחיר קרוב לשפל שנתי
+        price_condition = (df['Close'].iloc[-1] <= df['Low'].min() * 1.08)
         
-        if is_yearly_low and is_macd_rising and is_rsi_oversold and is_mfi_rising:
+        if rsi_condition and mfi_condition and price_condition:
             return df
     except:
         return None
     return None
 
-st.title("🛡️ Reversal Signal Scanner")
+st.title("🛡️ Divergence Reversal Scanner")
 tickers = get_sp500_tickers()
 
-if st.button("🔍 סרוק מניות במצב Reversal (S&P 500)"):
-    with st.spinner("מנתח אינדיקטורים טכניים..."):
+if st.button("🔍 סרוק S&P 500 לסיגנל היפוך"):
+    with st.spinner("סורק מניות..."):
         with ThreadPoolExecutor(max_workers=10) as executor:
-            results = list(executor.map(run_reversal_scan, tickers))
+            results = list(executor.map(run_scanner, tickers))
             
-        found = False
+        found_any = False
         for i, df in enumerate(results):
             if df is not None:
-                st.success(f"נמצא סיגנל ב-{tickers[i]}")
-                st.write(f"RSI: {df['RSI'].iloc[-1]:.2f} | MFI: {df['MFI'].iloc[-1]:.2f}")
-                st.line_chart(df[['Close']])
-                found = True
+                st.write(f"---")
+                st.subheader(f"סיגנל ב-{tickers[i]}")
+                st.write(f"RSI: {df['RSI'].iloc[-1]:.1f} (עולה) | MFI: {df['MFI'].iloc[-1]:.1f} (עולה)")
+                st.line_chart(df['Close'].tail(50))
+                found_any = True
         
-        if not found:
-            st.warning("לא נמצאו מניות העונות על כל התנאים כרגע.")
+        if not found_any:
+            st.warning("לא נמצאו מניות העונות על הקריטריונים כרגע.")
