@@ -116,4 +116,47 @@ def display_modern_result(t, df, title, color, symbol):
         
         with col1:
             st.markdown("<br>", unsafe_allow_html=True)
-            st.
+            st.metric("מחיר נוכחי", f"${current_price:.2f}", f"{change_pct:.2f}%")
+            st.metric("מחזור מסחר", f"{int(df['Volume'].iloc[-1]):,}")
+            
+        with col2:
+            plot_chart(df, t, title, signal_color=color, symbol=symbol)
+
+tabs = st.tabs(["🚀 פריצות (Breakout)", "📈 סווינג (Bollinger)", "💎 טווח ארוך (Trend)", "⚓ תחתית שנתית (52W Low)"])
+tickers = get_sp500_tickers()
+
+with tabs[0]:
+    if st.button("סרוק פוטנציאל פריצות"):
+        with st.spinner("מנתח לחץ מחירים..."):
+            with ThreadPoolExecutor(max_workers=20) as executor:
+                results = list(executor.map(lambda t: (t, run_scan(t, "breakout")), tickers))
+            for t, df in results:
+                if df is not None:
+                    display_modern_result(t, df, "Pre-Breakout", '#00ff00', 'triangle-up')
+
+with tabs[1]:
+    if st.button("סרוק הזדמנויות סווינג"):
+        with st.spinner("מאתר תחתיות בולינגר..."):
+            with ThreadPoolExecutor(max_workers=20) as executor:
+                results = list(executor.map(lambda t: (t, run_scan(t, "swing")), tickers))
+            for t, df in results:
+                if df is not None:
+                    display_modern_result(t, df, "Bollinger Buy", '#ffeb3b', 'circle')
+
+with tabs[2]:
+    if st.button("סרוק מגמות ארוכות"):
+        with st.spinner("בודק ממוצעים נעים..."):
+            with ThreadPoolExecutor(max_workers=20) as executor:
+                results = list(executor.map(lambda t: (t, run_scan(t, "long")), tickers))
+            for t, df in results:
+                if df is not None:
+                    display_modern_result(t, df, "Trend Follow", '#00e5ff', 'arrow-up')
+
+with tabs[3]:
+    if st.button("סרוק תחתיות שנתיות"):
+        with st.spinner("מאתר מניות בשפל..."):
+            with ThreadPoolExecutor(max_workers=20) as executor:
+                results = list(executor.map(lambda t: (t, run_scan(t, "yearly_bottom")), tickers))
+            for t, df in results:
+                if df is not None:
+                    display_modern_result(t, df, "52-Week Low", '#ff1744', 'star')
