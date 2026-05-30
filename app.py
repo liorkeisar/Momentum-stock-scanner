@@ -3,88 +3,57 @@ import yfinance as yf
 import pandas as pd
 from concurrent.futures import ThreadPoolExecutor
 
-st.set_page_config(page_title="Reversal Divergence Scanner", layout="wide")
+st.set_page_config(page_title="Pro Stock Scanner", layout="wide")
 
+# --- פונקציות עזר ---
 @st.cache_data
-def get_sp500_tickers():
-    try:
-        url = 'https://en.wikipedia.org/wiki/List_of_S%26P_500_companies'
-        df = pd.read_html(url)[0]
-        return df['Symbol'].tolist()
-    except:
-        return ["AAPL", "MSFT", "NVDA", "AMD", "TSLA"]
+def get_tickers(index):
+    if index == "SP500":
+        return pd.read_html('https://en.wikipedia.org/wiki/List_of_S%26P_500_companies')[0]['Symbol'].tolist()
+    else: # Dow Jones
+        return ["AAPL", "AMGN", "AXP", "BA", "CAT", "CRM", "CSCO", "CVX", "DIS", "DOW", 
+                "GS", "HD", "HON", "IBM", "INTC", "JNJ", "JPM", "KO", "MCD", "MMM", 
+                "MRK", "MSFT", "NKE", "PG", "TRV", "UNH", "V", "VZ", "WBA", "WMT"]
 
-def calculate_indicators(df):
-    # RSI
-    delta = df['Close'].diff()
-    gain = (delta.where(delta > 0, 0)).rolling(14).mean()
-    loss = (-delta.where(delta < 0, 0)).rolling(14).mean()
-    rs = gain / loss
-    df['RSI'] = 100 - (100 / (1 + rs))
-    
-    # MFI
-    typical_price = (df['High'] + df['Low'] + df['Close']) / 3
-    mf = typical_price * df['Volume']
-    pos_mf = mf.where(typical_price > typical_price.shift(1), 0).rolling(14).sum()
-    neg_mf = mf.where(typical_price < typical_price.shift(1), 0).rolling(14).sum()
-    df['MFI'] = 100 - (100 / (1 + (pos_mf / neg_mf)))
-    
-    return df
-
-def run_scanner(ticker):
+def run_scanner(ticker, scan_type):
     try:
-        df = yf.Ticker(ticker).history(period="1y")
+        df = yf.Ticker(ticker).history(period="100d")
         if len(df) < 50: return None
-        df = calculate_indicators(df)
         
-        # תנאים:
-        # 1. RSI ב-Oversold ועולה (היום גבוה מאתמול)
-        rsi_condition = (df['RSI'].iloc[-1] < 40) and (df['RSI'].iloc[-1] > df['RSI'].iloc[-2])
-        # 2. MFI עולה
-        mfi_condition = (df['MFI'].iloc[-1] > df['MFI'].iloc[-2])
-        # 3. מחיר קרוב לשפל שנתי
-        price_condition = (df['Close'].iloc[-1] <= df['Low'].min() * 1.08)
+        # אינדיקטורים
+        df['RSI'] = 100 - (100 / (1 + (df['Close'].diff().clip(lower=0).rolling(14).mean() / 
+                                      df['Close'].diff().clip(upper=0).abs().rolling(14).mean())))
+        df['MA20'] = df['Close'].rolling(20).mean()
         
-        if rsi_condition and mfi_condition and price_condition:
-            return df
-    except:
-        return None
+        if scan_type == "REVERSAL":
+            if df['RSI'].iloc[-1] < 50 and df['RSI'].iloc[-1] > df['RSI'].iloc[-2] and df['Close'].iloc[-1] < df['MA20'].iloc[-1]:
+                return ticker, df
+        elif scan_type == "BREAKOUT":
+            if df['Close'].iloc[-1] > df['High'].rolling(20).max().shift(1).iloc[-1] and df['Volume'].iloc[-1] > df['Volume'].rolling(20).mean().iloc[-1] * 1.5:
+                return ticker, df
+    except: return None
     return None
 
-st.title("🛡️ Divergence Reversal Scanner")
-tickers = get_sp500_tickers()
+# --- ממשק משתמש ---
+st.title("⚡ Pro Market Scanner")
+tab1, tab2, tab3 = st.tabs(["🚀 S&P 500 (Reversal)", "🏢 Dow Jones (Reversal)", "📈 Breakout Scanner"])
 
-if st.button("🔍 סרוק S&P 500 לסיגנל היפוך"):
-    with st.spinner("סורק מניות..."):
+def execute(index, scan_type):
+    tickers = get_tickers(index)
+    with st.spinner("סורק נתונים..."):
         with ThreadPoolExecutor(max_workers=10) as executor:
-            results = list(executor.map(run_scanner, tickers))
-            
-        found_any = False
-        for i, df in enumerate(results):
-            if df is not None:
-                st.write(f"---")
-                st.subheader(f"סיגנל ב-{tickers[i]}")
-                st.write(f"RSI: {df['RSI'].iloc[-1]:.1f} (עולה) | MFI: {df['MFI'].iloc[-1]:.1f} (עולה)")
-                st.line_chart(df['Close'].tail(50))
-                found_any = True
-        
-        if not found_any:
-            st.warning("לא נמצאו מניות העונות על הקריטריונים כרגע.")
-def run_breakout_scan(ticker):
-    try:
-        df = yf.Ticker(ticker).history(period="60d")
-        if len(df) < 40: return None
-        
-        # חישוב אינדיקטורים
-        df['MA_Vol'] = df['Volume'].rolling(20).mean()
-        df['High_20'] = df['High'].rolling(20).max().shift(1) # שיא של 20 יום לא כולל היום
-        
-        # תנאי פריצה
-        is_breaking_out = df['Close'].iloc[-1] > df['High_20'].iloc[-1]
-        is_volume_high = df['Volume'].iloc[-1] > df['MA_Vol'].iloc[-1] * 1.5 # נפח גבוה ב-50% מהממוצע
-        
-        if is_breaking_out and is_volume_high:
-            return ticker, df
-    except:
-        return None
-    return None
+            results = list(executor.map(lambda t: run_scanner(t, scan_type), tickers))
+        found = False
+        for res in results:
+            if res:
+                st.success(f"נמצא סיגנל ב-{res[0]}")
+                st.line_chart(res[1]['Close'].tail(30))
+                found = True
+        if not found: st.warning("לא נמצאו תוצאות העונות על הקריטריונים.")
+
+with tab1:
+    if st.button("סרוק S&P 500"): execute("SP500", "REVERSAL")
+with tab2:
+    if st.button("סרוק Dow Jones"): execute("DJIA", "REVERSAL")
+with tab3:
+    if st.button("סרוק לפריצות (Breakout)"): execute("SP500", "BREAKOUT")
