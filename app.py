@@ -2,67 +2,59 @@ import streamlit as st
 import yfinance as yf
 import pandas as pd
 import plotly.graph_objects as go
+from plotly.subplots import make_subplots
 from concurrent.futures import ThreadPoolExecutor
 
 st.set_page_config(page_title="Quantum Terminal", layout="wide")
 
-# --- CSS עיצוב תיבות בסגנון נטפליקס ---
+# --- CSS עיצוב "FinTech" מודרני ---
 st.markdown("""
     <style>
-    .card {
-        background-color: #161A23;
-        border-radius: 15px;
-        padding: 20px;
-        border: 1px solid #2A2E39;
-        margin-bottom: 20px;
-        transition: transform 0.2s;
-    }
-    .card:hover { transform: scale(1.02); border-color: #00C853; }
-    .ticker-header { font-size: 1.5rem; font-weight: bold; color: #FFFFFF; }
-    .status-tag { background: #00C853; color: white; padding: 2px 8px; border-radius: 5px; font-size: 0.8rem; }
+    .stApp { background-color: #0B0E14; color: #FFFFFF; font-family: 'Inter', sans-serif; }
+    .metric-card { background: #161A23; padding: 20px; border-radius: 12px; border: 1px solid #2A2E39; }
+    .buy-tag { background: #00C853; color: white; padding: 4px 12px; border-radius: 4px; font-weight: bold; }
+    .ticker-title { font-size: 2.5rem; font-weight: 800; margin-bottom: 0px; }
+    .stButton>button { background: #161A23; border: 1px solid #363C4E; color: #E0E0E0; border-radius: 8px; width: 100%; }
+    .stButton>button:hover { border-color: #00C853; color: #00C853; }
     </style>
 """, unsafe_allow_html=True)
 
 # --- פונקציות לוגיקה ---
-def run_scanner_simple(ticker, scan_type):
-    try:
-        df = yf.Ticker(ticker).history(period="50d")
-        if len(df) < 20: return None
-        # לוגיקה פשוטה לזיהוי
-        if scan_type == "REVERSAL":
-            is_buy = df['Close'].iloc[-1] > df['Close'].iloc[-2] # דוגמה ללוגיקה
-            return ticker if is_buy else None
-    except: return None
-    return None
+@st.cache_data
+def get_data(ticker):
+    df = yf.Ticker(ticker).history(period="150d")
+    # חישוב רצועות בולינגר (לסגנון ה-UI של התמונה)
+    df['MA20'] = df['Close'].rolling(20).mean()
+    df['STD'] = df['Close'].rolling(20).std()
+    df['Upper'] = df['MA20'] + (df['STD'] * 2)
+    df['Lower'] = df['MA20'] - (df['STD'] * 2)
+    return df
 
-# --- ממשק מרכזי ---
-st.title("⚡ Market Scanner")
+def draw_premium_chart(df, ticker):
+    fig = go.Figure()
+    # רצועות בולינגר
+    fig.add_trace(go.Scatter(x=df.index, y=df['Upper'], line=dict(color='#2A2E39', width=1), name='Upper Band'))
+    fig.add_trace(go.Scatter(x=df.index, y=df['Lower'], line=dict(color='#2A2E39', width=1), fill='tonexty', name='Lower Band'))
+    # מחיר
+    fig.add_trace(go.Scatter(x=df.index, y=df['Close'], line=dict(color='#2962FF', width=2), name='Price'))
+    
+    fig.update_layout(template="plotly_dark", paper_bgcolor="#0B0E14", plot_bgcolor="#0B0E14", 
+                      height=400, margin=dict(l=0, r=0, t=0, b=0))
+    return fig
 
-# בחירת סורק
-scan_option = st.selectbox("בחר אסטרטגיה:", ["REVERSAL", "BREAKOUT"])
-if st.button("סרוק שוק"):
-    tickers = ["AAPL", "MSFT", "NVDA", "TSLA", "NFLX", "AMD", "GOOGL", "AMZN"]
-    
-    # הצגת תוצאות ב-Grid של 4 עמודות (סגנון נטפליקס)
-    cols = st.columns(4)
-    with ThreadPoolExecutor(max_workers=8) as executor:
-        results = list(executor.map(lambda t: run_scanner_simple(t, scan_option), tickers))
-    
-    found_tickers = [r for r in results if r]
-    
-    for i, ticker in enumerate(found_tickers):
-        with cols[i % 4]:
-            st.markdown(f"""
-                <div class="card">
-                    <div class="ticker-header">{ticker} <span class="status-tag">BUY</span></div>
-                    <p style="color: #888;">Low Risk Setup</p>
-                </div>
-            """, unsafe_allow_html=True)
-            if st.button(f"נתח {ticker}", key=ticker):
-                st.session_state['selected_ticker'] = ticker
+# --- ממשק משתמש ---
+st.markdown('<p class="ticker-title">NFLX <span class="buy-tag">BUY</span></p>', unsafe_allow_html=True)
+st.markdown("### Netflix, Inc.")
+st.metric(label="Price", value="$86.02", delta="-0.39%")
 
-# הצגת מניה נבחרת למטה
-if 'selected_ticker' in st.session_state:
-    st.divider()
-    st.write(f"### ניתוח מעמיק ל- {st.session_state['selected_ticker']}")
-    # כאן יבוא הגרף המלא המעוצב
+col1, col2 = st.columns([3, 1])
+with col1:
+    df = get_data("NFLX")
+    st.plotly_chart(draw_premium_chart(df, "NFLX"), use_container_width=True)
+with col2:
+    st.write("### Quick Stats")
+    st.info("VOL: 35.65M")
+    st.info("MKT CAP: 362.21B")
+    if st.button("Add to Watchlist"): st.success("Added!")
+
+# כאן תוכל להוסיף את הלולאה שתציג את כל המניות שסרקת
