@@ -81,10 +81,6 @@ with col2:
 
 # ----------------- שלב 2: מודל למידת מכונה וחיזוי מתמטי -----------------
 def run_ml_prediction(df, prediction_days=10):
-    """
-    פונקציית למידת מכונה (Machine Learning) אמיתית המשתמשת ברגרסיה לינארית
-    לבניית מסלול תנועה עתידי וחישוב רמות סיכון.
-    """
     df = df.copy()
     df['Timestamp'] = np.arange(len(df))
     
@@ -99,7 +95,6 @@ def run_ml_prediction(df, prediction_days=10):
     last_timestamp = df['Timestamp'].iloc[-1]
     future_timestamps = np.arange(last_timestamp + 1, last_timestamp + 1 + prediction_days).reshape(-1, 1)
     
-    # חיזוי המחירים העתידיים
     predicted_trend = model.predict(future_timestamps)
     
     # שילוב מומנטום קצר טווח למניעת גרף ישר מדי
@@ -107,16 +102,15 @@ def run_ml_prediction(df, prediction_days=10):
     for i in range(len(predicted_trend)):
         predicted_trend[i] += (last_momentum * (i + 1) * 0.3)
         
-    # חישוב תנודתיות היסטורית לצורך בניית רצועות ביטחון לחיזוי
     recent_volatility = df['Close'].pct_change().tail(20).std() * df['Close'].iloc[-1]
-    
-    # בניית תאריכים עתידיים
+    if np.isnan(recent_volatility) or recent_volatility == 0:
+        recent_volatility = df['Close'].iloc[-1] * 0.02
+        
     last_date = df.index[-1]
     future_dates = [last_date + timedelta(days=int(i)) for i in range(1, prediction_days + 1)]
     
     current_price = df['Close'].iloc[-1]
     
-    # קביעת רמות מסחר אופטימליות
     entry_price = round(current_price * 0.995, 2)
     target_price = round(predicted_trend[-1], 2)
     
@@ -131,24 +125,27 @@ def run_ml_prediction(df, prediction_days=10):
 
 # ----------------- שלב 3: מנוע רנדור גרפים (Webull Style) -----------------
 def display_quantum_chart(ticker_symbol, prediction_days):
-    # הורדת נתוני שוק חיים
     with st.spinner(f"מנתח את {ticker_symbol} בעזרת מודל ה-ML..."):
-        data = yf.download(ticker_symbol, period="6m", interval="1d")
+        # הורדה נקודתית ומאובטחת של נתוני השוק כדי למנוע קריסה בענן
+        try:
+            data = yf.download(ticker_symbol, period="6m", interval="1d", auto_adjust=True, group_by='ticker')
+        except Exception as e:
+            st.error(f"שגיאה במשיכת נתונים עבור {ticker_symbol}")
+            return
         
-    if data.empty:
-        st.error(f"לא נמצאו נתונים עבור {ticker_symbol}")
+    if data.empty or len(data) < 20:
+        st.error(f"לא נמצאו מספיק נתוני עבר עבור {ticker_symbol}. נסה להריץ שוב.")
         return
         
     # הרצת מודל החיזוי
     future_dates, predicted_prices, entry, target, stop = run_ml_prediction(data, prediction_days)
     current_price = data['Close'].iloc[-1]
     
-    # חישוב אחוזי רווח/הפסד פוטנציאליים
     reward_pct = round(((target / entry) - 1) * 100, 2)
     risk_pct = round(((1 - (stop / entry)) * 100), 2)
     risk_reward_ratio = round(reward_pct / risk_pct, 2) if risk_pct != 0 else 0
     
-    # יצירת לוח מחוונים עליון (Metrics Master Board)
+    # לוח מחוונים עליון
     col1, col2, col3, col4, col5 = st.columns(5)
     with col1:
         st.markdown(f"<div class='metric-box'><span style='color:#848e9c; font-size:12px;'>מחיר שוק</span><br><b style='font-size:18px; color:#ffffff;'>${round(current_price, 2)}</b></div>", unsafe_allow_html=True)
@@ -166,14 +163,14 @@ def display_quantum_chart(ticker_symbol, prediction_days):
     # בניית הגרף האינטראקטיבי
     fig = go.Figure()
     
-    # 1. נרות יפניים (Candlesticks)
+    # 1. נרות יפניים
     fig.add_trace(go.Candlestick(
         x=data.index, open=data['Open'], high=data['High'], low=data['Low'], close=data['Close'],
         name='מחיר היסטורי (OHLC)',
         increasing_line_color='#00ffaa', decreasing_line_color='#ff3b30'
     ))
     
-    # 2. ממוצע נע מהיר (EMA 20) להמחשת המגמה
+    # 2. ממוצע נע מהיר (EMA 20)
     data['EMA20'] = data['Close'].ewm(span=20, adjust=False).mean()
     fig.add_trace(go.Scatter(
         x=data.index, y=data['EMA20'],
@@ -181,7 +178,7 @@ def display_quantum_chart(ticker_symbol, prediction_days):
         name='EMA 20'
     ))
     
-    # 3. מסלול החיזוי של למידת המכונה (ML Prediction Path)
+    # 3. מסלול החיזוי
     prediction_x = [data.index[-1]] + future_dates
     prediction_y = [current_price] + list(predicted_prices)
     
@@ -196,7 +193,6 @@ def display_quantum_chart(ticker_symbol, prediction_days):
     fig.add_hline(y=target, line_color="#00ffaa", line_dash="dash", annotation_text=f" Target: ${target}", annotation_position="top left")
     fig.add_hline(y=stop, line_color="#ff3b30", line_dash="dash", annotation_text=f" Stop Loss: ${stop}", annotation_position="top left")
     
-    # התאמת הממשק למראה פרימיום כמו Webull/TradingView
     fig.update_layout(
         template="plotly_dark",
         xaxis_rangeslider_visible=False,
@@ -213,15 +209,14 @@ if execute_scan:
     st.write("")
     st.subheader(f"🔍 נכסים מובילים שעברו את הסינון הנוקשה עבור: {trading_style}")
     
-    # קביעת רשימת נכסים (כולל תעודות סל מובילות) בהתאם לפילטר הנבחר
+    # החלפה למניות חזקות ויציבות למניעת חסימות שרת
     if "מומנטום" in trading_style:
-        selected_assets = ['QQQ', 'NVDA', 'AAPL', 'XLK']
+        selected_assets = ['NVDA', 'AAPL', 'AMD', 'MSFT']
     elif "סווינג" in trading_style:
-        selected_assets = ['SPY', 'SIRI', 'AMZN', 'XLE']
+        selected_assets = ['SIRI', 'AMZN', 'GOOGL', 'META']
     else:
-        selected_assets = ['IWM', 'TSLA', 'META', 'XBI']
+        selected_assets = ['TSLA', 'NFLX', 'INTC', 'PLTR']
         
-    # יצירת מבנה טאבים חכם למעבר מהיר בין נכסים מסוננים
     asset_tabs = st.tabs([f"📈 {asset}" for asset in selected_assets])
     
     for idx, asset in enumerate(selected_assets):
