@@ -6,6 +6,3 @@ plotly
 streamlit-lightweight-charts
 lxml
 html5lib
-streamlit
-yfinance
-matplotlib
