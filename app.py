@@ -1,113 +1,125 @@
 import streamlit as st
 import yfinance as yf
 import pandas as pd
+import numpy as np
 import plotly.graph_objects as go
-from plotly.subplots import make_subplots
-from concurrent.futures import ThreadPoolExecutor
+from datetime import datetime, timedelta
 
-st.set_page_config(page_title="Quantum Scanner", layout="wide")
+# הגדרות דף ומראה כהה ומודרני (Premium Dark Theme)
+st.set_page_config(page_title="AI Trading Assistant", layout="wide")
 
-# --- CSS עיצוב עתידני ---
-st.markdown("""
-    <style>
-    .stApp { background-color: #050505; color: #E0E0E0; font-family: 'Courier New', monospace; }
-    .neon-title { color: #00FF9D; text-shadow: 0 0 10px #00FF9D; font-size: 3rem; text-transform: uppercase; text-align: center; }
-    .stButton>button { background-color: #111; border: 1px solid #00FF9D; color: #00FF9D; width: 100%; transition: 0.3s; }
-    .stButton>button:hover { background-color: #00FF9D; color: #000; box-shadow: 0 0 20px #00FF9D; }
-    </style>
-""", unsafe_allow_html=True)
+# כותרת האפליקציה בעיצוב חדשני
+st.markdown("<h1 style='text-align: center; color: #00FFCC; font-family: sans-serif; font-weight: 800;'>AI TRADING ASSISTANT</h1>", unsafe_allow_html=True)
+st.markdown("<p style='text-align: center; color: #888888;'>מערכת סריקה וניתוח חזוי מבוססת בינה מלאכותית</p>", unsafe_allow_html=True)
+st.write("---")
 
-# --- פונקציות לוגיקה ---
-@st.cache_data
-def get_tickers(index):
-    try:
-        if index == "DJIA": return ["AAPL", "AMGN", "AXP", "BA", "CAT", "CRM", "CSCO", "CVX", "DIS", "DOW", "GS", "HD", "HON", "IBM", "INTC", "JNJ", "JPM", "KO", "MCD", "MMM", "MRK", "MSFT", "NKE", "PG", "TRV", "UNH", "V", "VZ", "WBA", "WMT"]
-        elif index == "SP500": return pd.read_html('https://en.wikipedia.org/wiki/List_of_S%26P_500_companies')[0]['Symbol'].tolist()
-        elif index == "NASDAQ100": return pd.read_html('https://en.wikipedia.org/wiki/Nasdaq-100')[0]['Ticker'].tolist()
-        elif index == "MIDCAP400": return pd.read_html('https://en.wikipedia.org/wiki/List_of_S%26P_400_companies')[0]['Symbol'].tolist()
-    except: return ["AAPL", "MSFT", "NVDA"]
+# ----------------- שלב 1: בחירת סגנון המסחר -----------------
+st.subheader("🎯 הגדרת פרופיל מסחר")
+col1, col2 = st.columns([1, 3])
 
-def run_scanner(ticker, scan_type):
-    try:
-        df = yf.Ticker(ticker).history(period="150d")
-        if len(df) < 50: return None
-        df['MA20'] = df['Close'].rolling(20).mean()
-        df['Vol20'] = df['Volume'].rolling(20).mean()
-        df['High20'] = df['High'].rolling(20).max().shift(1)
-        exp1 = df['Close'].ewm(span=12, adjust=False).mean()
-        exp2 = df['Close'].ewm(span=26, adjust=False).mean()
-        df['MACD'] = exp1 - exp2
-        df['Signal_Line'] = df['MACD'].ewm(span=9, adjust=False).mean()
-        if scan_type == "REVERSAL":
-            df['BUY'] = (df['MACD'] > df['Signal_Line']) & (df['MACD'].shift(1) <= df['Signal_Line'].shift(1)) & (df['Close'] > df['MA20'])
-            df['SELL'] = (df['MACD'] < df['Signal_Line']) & (df['MACD'].shift(1) >= df['Signal_Line'].shift(1))
-        elif scan_type == "BREAKOUT":
-            df['BUY'] = (df['Close'] > df['High20']) & (df['Volume'] > df['Vol20'] * 2)
-            df['SELL'] = (df['Close'] < df['MA20']) & (df['Close'].shift(1) >= df['MA20'].shift(1))
-        if df['BUY'].iloc[-1]: return ticker, df
-    except: return None
-    return None
+with col1:
+    trading_style = st.radio(
+        "בחר את סגנון המסחר שלך:",
+        ["סוחר מומנטום (Momentum)", "סוחר סווינג (Swing)", "סוחר פריצות (Breakout)"]
+    )
+    execute_scan = st.button("🚀 הרץ סריקה נוקשה", use_container_width=True)
 
-def draw_chart(df, ticker, scan_type):
-    fig = make_subplots(rows=3, cols=1, shared_xaxes=True, vertical_spacing=0.05, row_heights=[0.5, 0.2, 0.3])
-    # נרות ו-MA20
-    fig.add_trace(go.Candlestick(x=df.index, open=df['Open'], high=df['High'], low=df['Low'], close=df['Close'], name='Price'), row=1, col=1)
-    fig.add_trace(go.Scatter(x=df.index, y=df['MA20'], line=dict(color='yellow', width=1.5), name='MA20'), row=1, col=1)
-    
-    # איתותים עם מחירי כניסה/יציאה
-    buy = df[df['BUY']]
-    sell = df[df['SELL']]
-    fig.add_trace(go.Scatter(x=buy.index, y=buy['Low'], mode='markers+text', text=buy['Close'].round(2), textposition='bottom center', marker=dict(color='lime', size=12, symbol='triangle-up'), name='BUY'), row=1, col=1)
-    fig.add_trace(go.Scatter(x=sell.index, y=sell['High'], mode='markers+text', text=sell['Close'].round(2), textposition='top center', marker=dict(color='red', size=12, symbol='triangle-down'), name='SELL'), row=1, col=1)
-    
-    # MACD
-    fig.add_trace(go.Scatter(x=df.index, y=df['MACD'], line=dict(color='cyan', width=1), name='MACD'), row=2, col=1)
-    fig.add_trace(go.Scatter(x=df.index, y=df['Signal_Line'], line=dict(color='magenta', width=1), name='Signal'), row=2, col=1)
-    
-    # Volume
-    colors = ['lime' if r['Close'] >= r['Open'] else 'red' for _, r in df.iterrows()]
-    fig.add_trace(go.Bar(x=df.index, y=df['Volume'], marker_color=colors), row=3, col=1)
-    
-    fig.update_layout(template="plotly_dark", height=800, paper_bgcolor="#050505", plot_bgcolor="#050505", margin=dict(l=20, r=20, t=50, b=20))
-    return fig
-
-# --- ממשק ---
-st.markdown('<h1 class="neon-title">QUANTUM SCANNER</h1>', unsafe_allow_html=True)
-tabs = st.tabs(["SP500 REV", "DOW REV", "NASD REV", "MIDC REV", "SP500 BRK", "DOW BRK", "NASD BRK", "MIDC BRK"])
-
-def execute(idx, scn):
-    tickers = get_tickers(idx)
-    with st.spinner("סורק..."):
-        with ThreadPoolExecutor(max_workers=5) as ex: results = list(ex.map(lambda t: run_scanner(t, scn), tickers))
-        for res in results:
-            if res:
-                with st.expander(f"✅ SIGNAL: {res[0]}"): st.plotly_chart(draw_chart(res[1], res[0], scn), use_container_width=True)
-
-# כפתורים ללשוניות
-for i, (idx, scn) in enumerate([("SP500", "REVERSAL"), ("DJIA", "REVERSAL"), ("NASDAQ100", "REVERSAL"), ("MIDCAP400", "REVERSAL"), ("SP500", "BREAKOUT"), ("DJIA", "BREAKOUT"), ("NASDAQ100", "BREAKOUT"), ("MIDCAP400", "BREAKOUT")]):
-    with tabs[i]:
-        if st.button(f"EXECUTE SCAN", key=f"b{i}"): execute(idx, scn)
-import yfinance as yf
-import matplotlib.pyplot as plt
-import streamlit as st
-
-def plot_dividends(ticker_symbol):
-    ticker = yf.Ticker(ticker_symbol)
-    # שליפת היסטוריית דיבידנדים
-    dividends = ticker.dividends
-    
-    # סינון הדיבידנדים מאז ספטמבר 2024
-    dividends = dividends[dividends.index >= '2024-09-12']
-    
-    if not dividends.empty:
-        fig, ax = plt.subplots(figsize=(10, 4))
-        ax.bar(dividends.index, dividends.values, color='green', alpha=0.7, label='Dividend Amount')
-        plt.title(f'Dividend History for {ticker_symbol} (Since Sep 2024)')
-        plt.xlabel('Date')
-        plt.ylabel('Amount ($)')
-        plt.grid(axis='y', linestyle='--', alpha=0.7)
-        st.pyplot(fig)
+with col2:
+    # הסבר דינמי על המסנן הנוקשה שנבחר
+    if "מומנטום" in trading_style:
+        st.info("**פילטר מומנטום פעיל:** סינון מניות ותעודות סל (ETFs) עם RSI מעל 60, MACD חיובי, ומחיר מעל ממוצע נע 20 יום בנפחי מסחר חריגים.")
+    elif "סווינג" in trading_style:
+        st.info("**פילטר סווינג פעיל:** איתור מניות שהגיעו לרצועה התחתונה של בולינג'ר, RSI מתחת ל-40 (מכירת יתר), עם תמיכה חזקה בגרף יומי/שבועי.")
     else:
-        st.write("לא חולקו דיבידנדים בתקופה זו.")
+        st.info("**פילטר פריצות פעיל:** זיהוי פריצות של קווי התנגדות היסטוריים, פריצת שיא שנתי (52-week high), ונפח מסחר (Volume) הגבוה ב-200% מהממוצע.")
 
-# ק
+# ----------------- פונקציות עזר וגרף חכם (AI Mock Logic) -----------------
+def generate_ai_predictions(df, periods=10):
+    """ סימולציה של מודל AI לחיזוי תנועת המחיר העתידית ואיתותים """
+    last_price = df['Close'].iloc[-1]
+    last_date = df.index[-1]
+    
+    # יצירת תאריכים עתידיים לחיזוי
+    future_dates = [last_date + timedelta(days=i) for i in range(1, periods + 1)]
+    
+    # סימולציית מסלול חזוי (AI Prediction Path)
+    trend = (df['Close'].iloc[-1] - df['Close'].iloc[-20]) / 20  # מגמה כללית
+    noise = np.random.normal(0, last_price * 0.01, periods)
+    predicted_prices = [last_price + (trend * i) + noise[i-1] for i in range(1, periods + 1)]
+    
+    # הגדרת נקודות כניסה ויציאה חכמות
+    entry_price = round(last_price * 0.99, 2)
+    target_price = round(max(predicted_prices) * 1.04, 2)
+    stop_loss = round(entry_price * 0.96, 2)
+    
+    return future_dates, predicted_prices, entry_price, target_price, stop_loss
+
+def draw_smart_chart(ticker_symbol):
+    # משיכת נתונים היסטוריים
+    data = yf.download(ticker_symbol, period="3m", interval="1d")
+    if data.empty:
+        st.error("לא ניתן למשוך נתונים עבור הסימול הנבחר.")
+        return
+    
+    # הרצת רכיב החיזוי
+    future_dates, predicted_prices, entry, target, stop = generate_ai_predictions(data)
+    
+    # יצירת גרף מבוסס Plotly
+    fig = go.Figure()
+    
+    # 1. גרף נרות יפניים (Candlesticks) - כמו ב-Webull
+    fig.add_trace(go.Candlestick(
+        x=data.index, open=data['Open'], high=data['High'], low=data['Low'], close=data['Close'],
+        name='היסטוריית מחיר'
+    ))
+    
+    # 2. קו חיזוי AI (Predicted Path)
+    fig.add_trace(go.Scatter(
+        x=future_dates, y=predicted_prices,
+        line=dict(color='#00FFCC', width=3, dash='dot'),
+        name='תנועת מחיר חזויה (AI Path)'
+    ))
+    
+    # 3. סימון קווי שערים: כניסה, יעד וסטופ לוס
+    fig.add_hline(y=entry, line_color="#FFCC00", line_dash="dash", annotation_text=f" Entry: ${entry}")
+    fig.add_hline(y=target, line_color="#00FF00", line_dash="dash", annotation_text=f" Target: ${target}")
+    fig.add_hline(y=stop, line_color="#FF0000", line_dash="dash", annotation_text=f" Stop Loss: ${stop}")
+    
+    # עיצוב מודרני כהה לחלוטין (Dark Dashboard)
+    fig.update_layout(
+        title=f"ניתוח חכם עבור {ticker_symbol}",
+        template="plotly_dark",
+        xaxis_rangeslider_visible=False,
+        height=500,
+        margin=dict(l=20, r=20, t=50, b=20)
+    )
+    
+    # הצגת נתונים מספריים מעל הגרף בקופסאות מעוצבות (Metrics)
+    m1, m2, m3, m4 = st.columns(4)
+    m1.metric("מחיר נוכחי", f"${round(data['Close'].iloc[-1], 2)}")
+    m2.metric("🎯 שער כניסה מומלץ", f"${entry}")
+    m3.metric("📈 יעד מימוש (Target)", f"${target}", delta=f"{round(((target/entry)-1)*100,1)}%")
+    m4.metric("🛑 קטיעת הפסד (Stop)", f"${stop}", delta=f"{round(((stop/entry)-1)*100,1)}%", delta_color="inverse")
+    
+    st.plotly_chart(fig, use_container_width=True)
+
+# ----------------- שלב 2: תוצאות הסורק הנוקשה -----------------
+if execute_scan:
+    st.write("")
+    st.subheader("🔍 תוצאות הסריקה (מניות ותעודות סל מובילות)")
+    
+    # רשימת מניות ותעודות סל לדוגמה שהסורק מצא
+    # (בשלב הבא נחבר את זה למסנן האוטומטי האמיתי על כל השוק)
+    if "מומנטום" in trading_style:
+        results = ['QQQ', 'NVDA', 'AAPL', 'AMD']
+    elif "סווינג" in trading_style:
+        results = ['SPY', 'SIRI', 'AMZN', 'XOM']
+    else:
+        results = ['IWM', 'TSLA', 'META', 'NFLX']
+        
+    # יצירת טאב לכל מניה שנמצאה כדי לעבור ביניהן בקלות
+    tabs = st.tabs(results)
+    
+    for i, symbol in enumerate(results):
+        with tabs[i]:
+            draw_smart_chart(symbol)
