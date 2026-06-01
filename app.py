@@ -66,16 +66,17 @@ if run_scan:
     
     for idx, ticker in enumerate(tickers):
         with tabs[idx]:
-            # משיכת נתונים
+            # --- תיקון השגיאה כאן ---
             is_mock = False
             try:
-                data = yf.download(ticker, period="6mo", progress=False)
+                ticker_obj = yf.Ticker(ticker)
+                data = ticker_obj.history(period="6mo")
                 if data.empty: raise ValueError
                 data = add_technical_indicators(data)
                 # הסרת שורות ריקות שנוצרו מהממוצעים
                 data.dropna(inplace=True)
                 data = data.tail(75) # תצוגה אופטימלית
-            except:
+            except Exception as e:
                 data = generate_pro_mock_data().tail(75)
                 is_mock = True
             
