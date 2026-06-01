@@ -30,59 +30,76 @@ with col1:
 with col2:
     st.markdown("<div style='background-color: #131722; border-right: 4px solid #3179f5; padding: 15px;'><strong style='color: #3179f5;'>מנוע סריקה פעיל</strong><br>המערכת מחשבת מומנטום, תנודתיות, ופעילות מוסדית.</div>", unsafe_allow_html=True)
 
-# ----------------- מנגנון יצירת נתונים ריאליסטיים -----------------
+# ----------------- מנגנון יצירת נתונים ריאליסטיים וקריאים לנייד -----------------
 def generate_realistic_mock_data():
-    dates = pd.date_range(end=datetime.today(), periods=120, freq='B')
-    # יצירת מגמה ריאליסטית (גלים) במקום רעש סטטי
-    trend = np.linspace(150, 180, 120) + np.sin(np.linspace(0, 10, 120)) * 8
-    noise = np.random.normal(0, 1.2, 120)
-    close = trend + noise
-    open_p = close - np.random.normal(0, 1.5, 120)
-    high = np.maximum(close, open_p) + np.abs(np.random.normal(0, 1.5, 120))
-    low = np.minimum(close, open_p) - np.abs(np.random.normal(0, 1.5, 120))
+    # הורדנו ל-75 ימים כדי שהנרות יהיו רחבים וברורים במסך קטן
+    periods = 75
+    dates = pd.date_range(end=datetime.today(), periods=periods, freq='B')
+    
+    # יצירת תנועת מחיר חלקה יותר
+    trend = np.linspace(150, 175, periods) + np.sin(np.linspace(0, 8, periods)) * 6
+    close = trend + np.random.normal(0, 0.8, periods)
+    
+    # פתיחה מבוססת על הסגירה הקודמת כדי למנוע קפיצות רנדומליות
+    open_p = np.roll(close, 1)
+    open_p[0] = close[0] - 0.5
+    open_p = open_p + np.random.normal(0, 0.4, periods)
+    
+    # זנבות עדינים ופרופורציונליים
+    high = np.maximum(close, open_p) + np.abs(np.random.normal(0, 0.6, periods))
+    low = np.minimum(close, open_p) - np.abs(np.random.normal(0, 0.6, periods))
+    
     return pd.DataFrame({'Open': open_p, 'High': high, 'Low': low, 'Close': close}, index=dates)
 
 # ----------------- שלב 2: מודל למידת מכונה -----------------
 def run_ml_prediction(df, prediction_days=10):
     df = df.copy()
     df['Timestamp'] = np.arange(len(df))
-    X = df[['Timestamp']].values[-60:]
-    y = df['Close'].values[-60:]
+    X = df[['Timestamp']].values[-40:] # לוקח מגמה עדכנית יותר
+    y = df['Close'].values[-40:]
     
     model = LinearRegression()
     model.fit(X, y)
     
     last_timestamp = df['Timestamp'].iloc[-1]
     future_timestamps = np.arange(last_timestamp + 1, last_timestamp + 1 + prediction_days).reshape(-1, 1)
-    predicted_trend = model.predict(future_timestamps)
+    raw_prediction = model.predict(future_timestamps)
     
+    current_price = df['Close'].iloc[-1]
+    
+    # עוגן המחיר: מחבר את תחילת קו החיזוי במדויק למחיר הסגירה האחרון
+    offset = current_price - raw_prediction[0]
+    predicted_trend = raw_prediction + offset
+    
+    # הוספת זווית מומנטום מתונה
     last_momentum = (df['Close'].iloc[-1] - df['Close'].iloc[-5]) / 5
     for i in range(len(predicted_trend)):
-        predicted_trend[i] += (last_momentum * (i + 1) * 0.2)
+        predicted_trend[i] += (last_momentum * (i + 1) * 0.15)
         
-    recent_volatility = df['Close'].pct_change().tail(20).std() * df['Close'].iloc[-1]
+    recent_volatility = df['Close'].pct_change().tail(14).std() * current_price
     if np.isnan(recent_volatility) or recent_volatility == 0:
-        recent_volatility = df['Close'].iloc[-1] * 0.02
+        recent_volatility = current_price * 0.02
         
     last_date = df.index[-1]
     future_dates = [last_date + timedelta(days=int(i)) for i in range(1, prediction_days + 1)]
     
-    current_price = df['Close'].iloc[-1]
     entry_price = round(current_price * 0.995, 2)
     target_price = round(predicted_trend[-1], 2)
-    if target_price <= current_price: target_price = round(current_price * 1.06, 2)
+    if target_price <= current_price: target_price = round(current_price * 1.05, 2)
     stop_loss = round(entry_price - (recent_volatility * 1.5), 2)
-    if stop_loss >= entry_price: stop_loss = round(entry_price * 0.95, 2)
+    if stop_loss >= entry_price: stop_loss = round(entry_price * 0.96, 2)
         
     return future_dates, predicted_trend, entry_price, target_price, stop_loss
 
 # ----------------- שלב 3: מנוע רנדור גרפים (Pro Style) -----------------
 def display_quantum_chart(ticker_symbol, prediction_days):
+    st.write("<br>", unsafe_allow_html=True) # ריווח נקי בין האזהרה לגרף
+    
     with st.spinner(f"טוען נתונים עבור {ticker_symbol}..."):
         is_mock = False
         try:
             ticker_obj = yf.Ticker(ticker_symbol)
-            data = ticker_obj.history(period="6m")
+            data = ticker_obj.history(period="3mo") # משיכת 3 חודשים בלבד לריווח בנייד
             if data.empty or len(data) < 20: raise ValueError("No Data")
         except:
             data = generate_realistic_mock_data()
@@ -96,48 +113,5 @@ def display_quantum_chart(ticker_symbol, prediction_days):
     
     fig = go.Figure()
     
-    # נרות יפניים עם צבעים מלאים בסגנון TradingView
-    fig.add_trace(go.Candlestick(
-        x=data.index, open=data['Open'], high=data['High'], low=data['Low'], close=data['Close'],
-        name='Price',
-        increasing_line_color='#26a69a', increasing_fillcolor='#26a69a',
-        decreasing_line_color='#ef5350', decreasing_fillcolor='#ef5350'
-    ))
-    
-    # EMA 20
-    data['EMA20'] = data['Close'].ewm(span=20, adjust=False).mean()
-    fig.add_trace(go.Scatter(x=data.index, y=data['EMA20'], line=dict(color='#2962ff', width=1.5), name='EMA 20'))
-    
-    # AI Path
-    prediction_x = [data.index[-1]] + future_dates
-    prediction_y = [current_price] + list(predicted_prices)
-    fig.add_trace(go.Scatter(x=prediction_x, y=prediction_y, line=dict(color='#ff9800', width=2, dash='dot'), name='AI Path'))
-    
-    # קווי רמות (מרוככים יותר)
-    fig.add_hline(y=entry, line_color="#b2b5be", line_dash="dash", line_width=1)
-    fig.add_hline(y=target, line_color="#26a69a", line_dash="dash", line_width=1)
-    fig.add_hline(y=stop, line_color="#ef5350", line_dash="dash", line_width=1)
-    
-    # עיצוב מקצועי לנייד
-    fig.update_layout(
-        plot_bgcolor='#131722',
-        paper_bgcolor='#0b0e14',
-        margin=dict(l=5, r=45, t=10, b=10), # שוליים צרים, ציר Y מימין
-        xaxis=dict(showgrid=True, gridcolor='#2a2e39', zeroline=False, rangeslider=dict(visible=False)),
-        yaxis=dict(showgrid=True, gridcolor='#2a2e39', zeroline=False, side='right', tickfont=dict(color='#787b86', size=11)),
-        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="left", x=0, font=dict(color='#d1d4dc', size=10)),
-        height=450,
-        hovermode='x unified'
-    )
-    
-    st.plotly_chart(fig, use_container_width=True, config={'displayModeBar': False}) # הסרת סרגל הכלים העליון למראה נקי
-
-# ----------------- שלב 4: הרצת הסורק -----------------
-if execute_scan:
-    st.write("")
-    selected_assets = ['NVDA', 'AAPL', 'AMD'] if "מומנטום" in trading_style else ['SIRI', 'AMZN', 'META']
-    asset_tabs = st.tabs([f" {asset}" for asset in selected_assets])
-    
-    for idx, asset in enumerate(selected_assets):
-        with asset_tabs[idx]:
-            display_quantum_chart(asset, days_to_predict)
+    # נרות יפניים ברוחב מותאם
+    fig.add_trace(go.Candlest
