@@ -87,3 +87,28 @@ def execute(idx, scn):
 for i, (idx, scn) in enumerate([("SP500", "REVERSAL"), ("DJIA", "REVERSAL"), ("NASDAQ100", "REVERSAL"), ("MIDCAP400", "REVERSAL"), ("SP500", "BREAKOUT"), ("DJIA", "BREAKOUT"), ("NASDAQ100", "BREAKOUT"), ("MIDCAP400", "BREAKOUT")]):
     with tabs[i]:
         if st.button(f"EXECUTE SCAN", key=f"b{i}"): execute(idx, scn)
+import yfinance as yf
+import matplotlib.pyplot as plt
+import streamlit as st
+
+def plot_dividends(ticker_symbol):
+    ticker = yf.Ticker(ticker_symbol)
+    # שליפת היסטוריית דיבידנדים
+    dividends = ticker.dividends
+    
+    # סינון הדיבידנדים מאז ספטמבר 2024
+    dividends = dividends[dividends.index >= '2024-09-12']
+    
+    if not dividends.empty:
+        fig, ax = plt.subplots(figsize=(10, 4))
+        ax.bar(dividends.index, dividends.values, color='green', alpha=0.7, label='Dividend Amount')
+        plt.title(f'Dividend History for {ticker_symbol} (Since Sep 2024)')
+        plt.xlabel('Date')
+        plt.ylabel('Amount ($)')
+        plt.grid(axis='y', linestyle='--', alpha=0.7)
+        st.pyplot(fig)
+    else:
+        st.write("לא חולקו דיבידנדים בתקופה זו.")
+
+# קריאה לפונקציה
+plot_dividends('SIRI')
