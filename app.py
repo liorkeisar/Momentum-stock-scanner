@@ -33,16 +33,28 @@ with col1:
         "בחר את אסטרטגיית הסריקה שלך:",
         ["סוחר מומנטום (Momentum)", "סוחר סווינג (Swing)", "סוחר פריצות (Breakout)"]
     )
-    days_to_predict = st.slider("טווח ימי חיזוי קדימה (Machine Learning):", min_value=5, max_value=20, value=10)
+    days_to_predict = st.slider("טווח ימי חיזוי קדימה:", min_value=5, max_value=20, value=10)
     execute_scan = st.button("🚀 הרץ סורק שוק נוקשה", use_container_width=True)
 
 with col2:
     if "מומנטום" in trading_style:
-        st.markdown("<div style='background-color: #131722; border-right: 4px solid #00ffaa; padding: 15px;'><strong style='color: #00ffaa;'>פילטר מומנטום פעיל</strong><br>סורק מניות בעלות עוצמה יחסית חזקה ופריצת ממוצעים נעים.</div>", unsafe_allow_html=True)
+        st.markdown("""
+        <div style='background-color: #131722; border-right: 4px solid #00ffaa; padding: 15px;'>
+            <strong style='color: #00ffaa;'>פילטר מומנטום פעיל</strong><br>סורק מניות בעלות עוצמה יחסית חזקה ופריצת ממוצעים נעים.
+        </div>
+        """, unsafe_allow_html=True)
     elif "סווינג" in trading_style:
-        st.markdown("<div style='background-color: #131722; border-right: 4px solid #ffb700; padding: 15px;'><strong style='color: #ffb700;'>פילטר סווינג פעיל</strong><br>איתור מניות במצבי מכירת יתר קיצונית עם פוטנציאל היפוך מגמה.</div>", unsafe_allow_html=True)
+        st.markdown("""
+        <div style='background-color: #131722; border-right: 4px solid #ffb700; padding: 15px;'>
+            <strong style='color: #ffb700;'>פילטר סווינג פעיל</strong><br>איתור מניות במצבי מכירת יתר קיצונית עם פוטנציאל היפוך מגמה.
+        </div>
+        """, unsafe_allow_html=True)
     else:
-        st.markdown("<div style='background-color: #131722; border-right: 4px solid #ff3b30; padding: 15px;'><strong style='color: #ff3b30;'>פילטר פריצות פעיל</strong><br>זיהוי התכווצות תנודתיות לקראת פריצת שיאים בנפח מסחר חריג.</div>", unsafe_allow_html=True)
+        st.markdown("""
+        <div style='background-color: #131722; border-right: 4px solid #ff3b30; padding: 15px;'>
+            <strong style='color: #ff3b30;'>פילטר פריצות פעיל</strong><br>זיהוי התכווצות תנודתיות לקראת פריצת שיאים בנפח מסחר חריג.
+        </div>
+        """, unsafe_allow_html=True)
 
 # ----------------- מנגנון יצירת נתונים לגיבוי (Mock Data) -----------------
 def generate_mock_data():
@@ -99,13 +111,11 @@ def display_quantum_chart(ticker_symbol, prediction_days):
     with st.spinner(f"מנתח את {ticker_symbol}..."):
         is_mock = False
         try:
-            # שיטה שעוקפת טוב יותר את חסימות השרת
             ticker_obj = yf.Ticker(ticker_symbol)
             data = ticker_obj.history(period="6m")
             if data.empty or len(data) < 20:
                 raise ValueError("No Data")
         except:
-            # אם יאהו חוסם, נטען נתוני סימולציה כדי שהמערכת תעבוד
             data = generate_mock_data()
             is_mock = True
         
@@ -119,8 +129,81 @@ def display_quantum_chart(ticker_symbol, prediction_days):
     risk_pct = round(((1 - (stop / entry)) * 100), 2)
     risk_reward_ratio = round(reward_pct / risk_pct, 2) if risk_pct != 0 else 0
     
+    # שימוש במרכאות משולשות (Triple Quotes) להגנה מפני קריסות העתק-הדבק
     col1, col2, col3, col4, col5 = st.columns(5)
     with col1:
-        st.markdown(f"<div class='metric-box'><span style='color:#848e9c; font-size:12px;'>מחיר שוק</span><br><b style='font-size:18px; color:#ffffff;'>${round(current_price, 2)}</b></div>", unsafe_allow_html=True)
+        st.markdown(f"""
+        <div class='metric-box'>
+            <span style='color:#848e9c; font-size:12px;'>מחיר שוק</span><br>
+            <b style='font-size:18px; color:#ffffff;'>${round(current_price, 2)}</b>
+        </div>
+        """, unsafe_allow_html=True)
     with col2:
-        st.markdown(f"<div class='metric-box'><span style
+        st.markdown(f"""
+        <div class='metric-box'>
+            <span style='color:#848e9c; font-size:12px;'>🔑 שער כניסה</span><br>
+            <b style='font-size:18px; color:#ffb700;'>${entry}</b>
+        </div>
+        """, unsafe_allow_html=True)
+    with col3:
+        st.markdown(f"""
+        <div class='metric-box'>
+            <span style='color:#848e9c; font-size:12px;'>🎯 יעד (Target)</span><br>
+            <b style='font-size:18px; color:#00ffaa;'>${target} (+{reward_pct}%)</b>
+        </div>
+        """, unsafe_allow_html=True)
+    with col4:
+        st.markdown(f"""
+        <div class='metric-box'>
+            <span style='color:#848e9c; font-size:12px;'>🛑 הפסד (Stop)</span><br>
+            <b style='font-size:18px; color:#ff3b30;'>${stop} (-{risk_pct}%)</b>
+        </div>
+        """, unsafe_allow_html=True)
+    with col5:
+        st.markdown(f"""
+        <div class='metric-box'>
+            <span style='color:#848e9c; font-size:12px;'>📊 יחס סיכוי</span><br>
+            <b style='font-size:18px; color:#00bfff;'>1 : {risk_reward_ratio}</b>
+        </div>
+        """, unsafe_allow_html=True)
+        
+    st.write("")
+    
+    fig = go.Figure()
+    fig.add_trace(go.Candlestick(
+        x=data.index, open=data['Open'], high=data['High'], low=data['Low'], close=data['Close'],
+        name='מחיר', increasing_line_color='#00ffaa', decreasing_line_color='#ff3b30'
+    ))
+    
+    data['EMA20'] = data['Close'].ewm(span=20, adjust=False).mean()
+    fig.add_trace(go.Scatter(x=data.index, y=data['EMA20'], line=dict(color='#00bfff', width=1.5), name='EMA 20'))
+    
+    prediction_x = [data.index[-1]] + future_dates
+    prediction_y = [current_price] + list(predicted_prices)
+    fig.add_trace(go.Scatter(x=prediction_x, y=prediction_y, line=dict(color='#00ffaa', width=3, dash='dashdot'), name='מסלול חזוי (ML)'))
+    
+    fig.add_hline(y=entry, line_color="#ffb700", line_dash="dash", annotation_text=f" Entry: ${entry}", annotation_position="top left")
+    fig.add_hline(y=target, line_color="#00ffaa", line_dash="dash", annotation_text=f" Target: ${target}", annotation_position="top left")
+    fig.add_hline(y=stop, line_color="#ff3b30", line_dash="dash", annotation_text=f" Stop: ${stop}", annotation_position="top left")
+    
+    fig.update_layout(template="plotly_dark", xaxis_rangeslider_visible=False, height=550, hovermode="x unified", margin=dict(l=30, r=30, t=30, b=30), legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1))
+    
+    st.plotly_chart(fig, use_container_width=True)
+
+# ----------------- שלב 4: הרצת הסורק והפלט למשתמש -----------------
+if execute_scan:
+    st.write("")
+    st.subheader(f"🔍 נכסים מסוננים: {trading_style}")
+    
+    if "מומנטום" in trading_style:
+        selected_assets = ['NVDA', 'AAPL', 'AMD', 'MSFT']
+    elif "סווינג" in trading_style:
+        selected_assets = ['SIRI', 'AMZN', 'GOOGL', 'META']
+    else:
+        selected_assets = ['TSLA', 'NFLX', 'INTC', 'PLTR']
+        
+    asset_tabs = st.tabs([f"📈 {asset}" for asset in selected_assets])
+    
+    for idx, asset in enumerate(selected_assets):
+        with asset_tabs[idx]:
+            display_quantum_chart(asset, days_to_predict)
