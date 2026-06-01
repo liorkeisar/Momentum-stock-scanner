@@ -3,6 +3,11 @@ yfinance
 pandas
 numpy
 plotly
+streamlit
+yfinance
+pandas
+numpy
+plotly
 streamlit-lightweight-charts
 lxml
 html5lib
