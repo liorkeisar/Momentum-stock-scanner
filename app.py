@@ -110,5 +110,4 @@ def plot_dividends(ticker_symbol):
     else:
         st.write("לא חולקו דיבידנדים בתקופה זו.")
 
-# קריאה לפונקציה
-plot_dividends('SIRI')
+# ק
