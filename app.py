@@ -4,7 +4,8 @@ import pandas as pd
 import plotly.graph_objects as go
 from concurrent.futures import ThreadPoolExecutor
 
-st.set_page_config(layout="wide", page_title="Quantum Terminal v2")
+# הגדרת עמוד רחב ומראה כהה כברירת מחדל
+st.set_page_config(layout="wide", page_title="Quantum Terminal v2", initial_sidebar_state="collapsed")
 
 # --- CSS עיצוב פינטק פרימיום מודרני ---
 st.markdown("""
@@ -31,7 +32,7 @@ st.markdown("""
     </style>
 """, unsafe_allow_html=True)
 
-# --- מאגר המניות המלא ---
+# --- מאגר המניות המלא מחולק לקבוצות ---
 MARKET_DATA = {
     "NASDAQ_A": ["AAPL", "MSFT", "NVDA", "AMZN", "META", "GOOGL", "GOOG", "TSLA", "AVGO", "PEP", "COST", "CSCO", "TMUS", "ADBE", "AMD", "NFLX", "TXN", "AMGN", "INTU", "HON", "AMAT", "QCOM", "BKNG", "ISRG", "VRTX"],
     "NASDAQ_B": ["MDLZ", "REGN", "LRCX", "PANW", "SNPS", "KLAC", "ASML", "MELI", "MAR", "CTAS", "ORLY", "CRWD", "NXPI", "WDAY", "FTNT", "PCAR", "MNST", "ADSK", "PAYX", "ROST", "AEP", "CPRT", "KDP", "CHTR", "MCHP"],
@@ -60,22 +61,70 @@ def run_scanner(ticker, scan_type):
     except: return None
     return None
 
-def draw_premium_chart(df, ticker):
-    # תיקון קריטי: ניקוי אזור הזמן מהאינדקס למניעת ValueError
+def draw_premium_chart(df, ticker, mode):
+    # ניקוי אזור הזמן מהאינדקס למניעת ValueError
     df_clean = df.copy()
     if df_clean.index.tz is not None:
         df_clean.index = df_clean.index.tz_localize(None)
         
-    fig = go.Figure()
-    fig.add_trace(go.Scatter(x=df_clean.index, y=df_clean['Close'], line=dict(color='#E2B4BD', width=2), name='Price'))
-    fig.add_trace(go.Scatter(x=df_clean.index, y=df_clean['MA20'], line=dict(color='#4A3E6D', width=1, dash='dot'), name='MA20'))
+    # לוקחים רק את 30 ימי המסחר האחרונים לתצוגה נקייה וממוקדת
+    df_slice = df_clean.tail(30)
     
+    # חישוב גבולות ציר ה-Y בצורה אוטומטית עם מרווח נשימה של 5%
+    y_min = df_slice['Close'].min() * 0.95
+    y_max = df_slice['Close'].max() * 1.05
+    
+    fig = go.Figure()
+    
+    # קו מחיר אלגנטי
+    fig.add_trace(go.Scatter(
+        x=df_slice.index, y=df_slice['Close'], 
+        line=dict(color='#E2B4BD', width=2.5), 
+        name='Price', antialias=True
+    ))
+    
+    # ממוצע נע 20
+    fig.add_trace(go.Scatter(
+        x=df_slice.index, y=df_slice['MA20'], 
+        line=dict(color='#4A3E6D', width=1.5, dash='dot'), 
+        name='MA20'
+    ))
+    
+    # הוספת נקודת איתות בולטת על הנר האחרון
+    signal_color = '#4AD486' if mode == "REVERSAL" else '#F4A261'
+    fig.add_trace(go.Scatter(
+        x=[df_slice.index[-1]], y=[df_slice['Close'].iloc[-1]],
+        mode='markers',
+        marker=dict(color=signal_color, size=10, line=dict(color='#0A0712', width=2)),
+        name='Signal'
+    ))
+    
+    # נעילת הגרף מתקלות תנועה ומגע במובייל
     fig.update_layout(
-        template="plotly_dark", paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
-        height=260, margin=dict(l=0, r=0, t=10, b=0),
-        xaxis=dict(showgrid=False, tickfont=dict(color='#5C5374', size=10)),
-        yaxis=dict(showgrid=True, gridcolor='#1A1430', tickfont=dict(color='#5C5374', size=10), side='right'),
-        showlegend=False
+        template="plotly_dark", 
+        paper_bgcolor="rgba(0,0,0,0)", 
+        plot_bgcolor="rgba(0,0,0,0)",
+        height=240, 
+        margin=dict(l=10, r=10, t=10, b=10),
+        
+        # הגדרות ציר X - ביטול אינטראקציה
+        xaxis=dict(
+            showgrid=False, 
+            tickfont=dict(color='#5C5374', size=10),
+            fixedrange=True
+        ),
+        
+        # הגדרות ציר Y - קיבוע טווח וביטול אינטראקציה
+        yaxis=dict(
+            showgrid=True, 
+            gridcolor='#1A1430', 
+            tickfont=dict(color='#5C5374', size=10), 
+            side='right',
+            range=[y_min, y_max],
+            fixedrange=True
+        ),
+        showlegend=False,
+        hovermode=False # מנטרל את הפופ-אפים המציקים כשנוגעים בגרף
     )
     return fig
 
@@ -127,6 +176,7 @@ for i, group_id in enumerate(sections_keys):
                                 </div>
                             """, unsafe_allow_html=True)
                             
-                            st.plotly_chart(draw_premium_chart(df_ticker, ticker), use_container_width=True, config={'displayModeBar': False})
+                            # שליחת ה-mode לפונקציית הציור החדשה
+                            st.plotly_chart(draw_premium_chart(df_ticker, ticker, mode), use_container_width=True, config={'displayModeBar': False})
                 else:
                     st.info("לא אותרו הזדמנויות מסחר בקבוצה זו תחת התנאים שנבחרו.")
