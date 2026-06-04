@@ -19,16 +19,30 @@ st.markdown("""
     .stTabs [data-baseweb="tab"] { background-color: #151026; border-radius: 20px; color: #938AA9; padding: 8px 20px; border: 1px solid #231B3D; font-size: 0.85rem; }
     .stTabs [aria-selected="true"] { background-color: #2D2447 !important; color: #00B887 !important; border-color: #00B887 !important; font-weight: 600; }
     
-    /* כרטיסיות מניות */
-    .premium-card { background: #0B0E14; border: 1px solid #1F173A; border-radius: 16px; padding: 20px; margin-bottom: 15px; }
-    .ticker-symbol { font-size: 1.8rem; font-weight: 700; color: #FFFFFF; }
-    .badge { padding: 4px 12px; border-radius: 20px; font-size: 0.75rem; font-weight: 600; }
+    /* כרטיסיית מניה משולבת */
+    .stock-container { background: #0B0E14; border: 1px solid #1F2433; border-radius: 16px; padding: 16px; margin-bottom: 20px; }
+    .info-panel { background: #111522; border: 1px solid #1F2538; border-radius: 12px; padding: 14px; margin-bottom: 10px; }
+    .ticker-symbol { font-size: 1.6rem; font-weight: 700; color: #FFFFFF; display: block; }
+    .badge { padding: 4px 10px; border-radius: 20px; font-size: 0.75rem; font-weight: 600; display: inline-block; margin-top: 4px; }
     .badge-reversal { background-color: rgba(0, 184, 135, 0.15); color: #00B887; }
     .badge-breakout { background-color: rgba(255, 159, 28, 0.15); color: #FF9F1C; }
     
     /* כפתור הפעלה */
     .stButton>button { background: linear-gradient(180deg, #1A202C, #0B0E14); color: #E6E1F3; border: 1px solid #2D3748; border-radius: 12px; padding: 10px 24px; font-weight: 600; width: 100%; transition: all 0.3s; }
     .stButton>button:hover { border-color: #00B887; color: #00B887; }
+    
+    /* עיצוב רובריקות הבחירה למתנדים לאורך */
+    div[data-testid="stCheckbox"] {
+        background-color: #111522;
+        border: 1px solid #1F2538;
+        padding: 6px 14px;
+        border-radius: 8px;
+        margin-bottom: 6px;
+        transition: all 0.2s ease;
+    }
+    div[data-testid="stCheckbox"]:hover {
+        border-color: #00B887;
+    }
     </style>
 """, unsafe_allow_html=True)
 
@@ -88,9 +102,8 @@ def draw_webull_style_chart(df, ticker, show_bb, show_rsi, show_macd, show_mfi):
     if df_clean.index.tz is not None:
         df_clean.index = df_clean.index.tz_localize(None)
         
-    df_slice = df_clean.tail(75) # מספיק נרות כדי לראות מגמה
+    df_slice = df_clean.tail(75)
     
-    # חישוב שורות פאנלים באופן דינמי
     panels = [("Price", 0.5), ("Volume", 0.15)]
     if show_macd: panels.append(("MACD", 0.2))
     if show_rsi: panels.append(("RSI", 0.15))
@@ -110,7 +123,6 @@ def draw_webull_style_chart(df, ticker, show_bb, show_rsi, show_macd, show_mfi):
         name='Price'
     ), row=1, col=1)
     
-    # ממוצע נע 20
     fig.add_trace(go.Scatter(x=df_slice.index, y=df_slice['MA20'], line=dict(color='#3A86FF', width=1.2), name='MA20'), row=1, col=1)
     
     if show_bb:
@@ -146,19 +158,11 @@ def draw_webull_style_chart(df, ticker, show_bb, show_rsi, show_macd, show_mfi):
         fig.add_shape(type="line", x0=df_slice.index[0], y0=20, x1=df_slice.index[-1], y1=20, line=dict(color="rgba(255,255,255,0.15)", width=1, dash="dash"), row=current_row, col=1)
         fig.update_yaxes(range=[5, 95], row=current_row, col=1)
 
-    # --- Layout & Styling ---
     fig.update_layout(
-        template="plotly_dark",
-        paper_bgcolor="#0B0E14",
-        plot_bgcolor="#0B0E14",
-        height=350 + (len(panels)-2)*100,
-        margin=dict(l=5, r=45, t=10, b=10),
-        showlegend=False,
-        xaxis_rangeslider_visible=False,
-        hovermode=False,
-        dragmode=False
+        template="plotly_dark", paper_bgcolor="#0B0E14", plot_bgcolor="#0B0E14",
+        height=340 + (len(panels)-2)*90, margin=dict(l=5, r=40, t=10, b=10),
+        showlegend=False, xaxis_rangeslider_visible=False, hovermode=False, dragmode=False
     )
-    
     fig.update_xaxes(showgrid=False, zeroline=False, tickfont=dict(color='#5C5374', size=9), fixedrange=True)
     fig.update_yaxes(showgrid=True, gridcolor='rgba(255,255,255,0.05)', zeroline=False, tickfont=dict(color='#5C5374', size=9), side='right', fixedrange=True)
     
@@ -166,7 +170,7 @@ def draw_webull_style_chart(df, ticker, show_bb, show_rsi, show_macd, show_mfi):
 
 # --- ממשק משתמש ראשי ---
 st.markdown('<h1 class="main-title">Quantum Terminal</h1>', unsafe_allow_html=True)
-st.markdown('<p class="sub-title">מערכת סריקה מתקדמת בתצורת Webull Pro</p>', unsafe_allow_html=True)
+st.markdown('<p class="sub-title">מערכת סריקה מתקדמת בתצורת Webull Pro Pro</p>', unsafe_allow_html=True)
 
 tabs_names = ["NASDAQ א'", "NASDAQ ב'", "NASDAQ ג'", "NASDAQ ד'", "S&P500 א'", "S&P500 ב'", "DOW מלא", "MIDCAP"]
 tabs = st.tabs(tabs_names)
@@ -200,30 +204,43 @@ for i, group_id in enumerate(sections_keys):
                     with grid_cols[idx % 2]:
                         badge_class = "badge-reversal" if active_mode == "REVERSAL" else "badge-breakout"
                         badge_text = "Reversal" if active_mode == "REVERSAL" else "Breakout"
+                        price_color = "#00B887" if active_mode == "REVERSAL" else "#FF9F1C"
                         
-                        st.markdown(f"""
-                            <div class="premium-card">
-                                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px;">
+                        # עטיפת המניה כולה בקופסה ייעודית
+                        st.markdown('<div class="stock-container">', unsafe_allow_html=True)
+                        
+                        # חלוקה פנימית: עמודה שמאלית קטנה לבקרה, ימנית גדולה לגרף
+                        col_left, col_right = st.columns([1, 3.2])
+                        
+                        with col_left:
+                            # פאנל נתוני מניה אנכי
+                            st.markdown(f"""
+                                <div class="info-panel">
                                     <span class="ticker-symbol">{ticker}</span>
                                     <span class="badge {badge_class}">{badge_text}</span>
+                                    <div style="font-size: 1.3rem; font-weight: 700; color: {price_color}; margin-top: 10px;">
+                                        ${df_ticker['Close'].iloc[-1]:.2f}
+                                    </div>
+                                    <div style="color: #7E7497; font-size: 0.75rem; margin-top: 2px;">
+                                        Vol: {(df_ticker['Volume'].iloc[-1]/1e6):.1f}M
+                                    </div>
                                 </div>
-                                <div style="font-size: 1.2rem; font-weight: 500; color: #FFFFFF; margin-bottom: 10px;">
-                                    ${df_ticker['Close'].iloc[-1]:.2f}
-                                </div>
-                        """, unsafe_allow_html=True)
+                            """, unsafe_allow_html=True)
+                            
+                            # מתנדים לאורך - אחד מתחת לשני
+                            bb = st.checkbox("BB", key=f"bb_{ticker}_{i}")
+                            rsi = st.checkbox("RSI", key=f"rsi_{ticker}_{i}")
+                            macd = st.checkbox("MACD", key=f"macd_{ticker}_{i}")
+                            mfi = st.checkbox("MFI", key=f"mfi_{ticker}_{i}")
                         
-                        # רובריקות לבחירת מתנדים מעל הגרף וללא רקע מוגזם
-                        c1, c2, c3, c4 = st.columns(4)
-                        with c1: bb = st.checkbox("BB", key=f"bb_{ticker}_{i}")
-                        with c2: rsi = st.checkbox("RSI", key=f"rsi_{ticker}_{i}")
-                        with c3: macd = st.checkbox("MACD", key=f"macd_{ticker}_{i}")
-                        with c4: mfi = st.checkbox("MFI", key=f"mfi_{ticker}_{i}")
+                        with col_right:
+                            # הגרף המקצועי לרוחב מלא
+                            st.plotly_chart(
+                                draw_webull_style_chart(df_ticker, ticker, bb, rsi, macd, mfi), 
+                                use_container_width=True, 
+                                config={'displayModeBar': False}
+                            )
                         
-                        st.plotly_chart(
-                            draw_webull_style_chart(df_ticker, ticker, bb, rsi, macd, mfi), 
-                            use_container_width=True, 
-                            config={'displayModeBar': False}
-                        )
                         st.markdown('</div>', unsafe_allow_html=True)
             else:
                 st.info("לא אותרו איתותים בקבוצה זו תחת התנאים שנבחרו.")
