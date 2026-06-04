@@ -92,7 +92,6 @@ def calculate_indicators(df):
     return df
 
 def get_trigger_reason(df, active_mode):
-    """מייצרת ניתוח טכני מקצועי ומתמטי של סיבת האיתות הנוכחית"""
     last_row = df.iloc[-1]
     prev_row = df.iloc[-2]
     
@@ -102,7 +101,6 @@ def get_trigger_reason(df, active_mode):
         vol_ratio = (last_row['Volume'] / last_row['Vol20']) if last_row['Vol20'] > 0 else 1.0
         return f"פריצת מחיר מלווה במחזור חריג. מחיר המניה פרץ את שיא 20 הימים האחרונים (${last_row['High20']:.2f}) כאשר נפח המסחר הנוכחי גבוה פי {vol_ratio:.1f} מממוצע הווליום התקופתי, מה שמקנה רמת אמינות גבוהה להמשכיות המגמה."
     else:
-        # מצב חיפוש חופשי - בדיקה דינמית איזה איתות פעיל כרגע (אם בכלל)
         if (last_row['Close'] > last_row['MA20']) and (prev_row['Close'] <= prev_row['MA20']):
             return "איתות פעיל: חציית MA20 שורית (Reversal Setup)."
         elif (last_row['Close'] > last_row['High20']) and (last_row['Volume'] > last_row['Vol20']):
@@ -202,7 +200,7 @@ def render_info_panel(ticker, df, badge_text, badge_class, price_color, active_m
     
     trigger_desc = get_trigger_reason(df, active_mode)
     
-    st.markdown(f"""
+    html_content = f"""
         <div class="info-panel">
             <span class="ticker-symbol">{ticker}</span>
             <span class="badge {badge_class}">{badge_text}</span>
@@ -251,11 +249,12 @@ def render_info_panel(ticker, df, badge_text, badge_class, price_color, active_m
                 <span class="indicator-desc">זרימת כסף (RSI משולב נפח מסחר). מראה אם כסף חכם נכנס (מתחת ל-20) או יוצא (מעל 80).</span>
             </div>
         </div>
-    """, unsafe_allow_html=True)
+    """
+    st.markdown(html_content, unsafe_allow_html=True)
 
 # --- ממשק משתמש ראשי ---
 st.markdown('<h1 class="main-title">Quantum Terminal</h1>', unsafe_allow_html=True)
-st.markdown('<p class="sub-title">מערכת סריקה וניתוח בתצורת Webull Pro Pro</p>', unsafe_allow_html=True)
+st.markdown('<p class="sub-title">מערכת סריקה וניתוח בתצורת Webull Pro</p>', unsafe_allow_html=True)
 
 tabs_names = ["🔍 חיפוש מניה", "NASDAQ א'", "NASDAQ ב'", "NASDAQ ג'", "NASDAQ ד'", "S&P500 א'", "S&P500 ב'", "DOW מלא", "MIDCAP"]
 tabs = st.tabs(tabs_names)
@@ -274,7 +273,7 @@ with tabs[0]:
                     stock_data = calculate_indicators(stock_data)
                     
                     st.markdown('<div class="stock-container">', unsafe_allow_html=True)
-                    col_left, col_right = st.columns([1.3, 3.7]) # הרחבה קלה של הפאנל השמאלי לטקסט האנליטי
+                    col_left, col_right = st.columns([1.3, 3.7])
                     
                     with col_left:
                         last_close = stock_data['Close'].iloc[-1]
