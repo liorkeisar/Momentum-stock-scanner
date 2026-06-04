@@ -1,6 +1,7 @@
 import streamlit as st
 import yfinance as yf
 import pandas as pd
+import numpy as np
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 from concurrent.futures import ThreadPoolExecutor
@@ -75,11 +76,27 @@ def run_scanner(ticker, scan_type):
         neg_flow = rmf.where(tp < tp.shift(1), 0).rolling(14).sum()
         df['MFI'] = 100 - (100 / (1 + (pos_flow / neg_flow)))
         
+        # חישוב היסטורי של איתותים לצורך סימון על הגרף
+        df['Buy_Signal'] = False
+        df['Sell_Signal'] = False
+        
         if scan_type == "REVERSAL":
-            if df['Close'].iloc[-1] > df['MA20'].iloc[-1] and df['Close'].iloc[-2] < df['MA20'].iloc[-2]:
+            # קנייה: חציה של ה-MA20 מלמטה למעלה
+            df['Buy_Signal'] = (df['Close'] > df['MA20']) & (df['Close'].shift(1) <= df['MA20'].shift(1))
+            # מכירה: חציה של ה-MA20 מלמעלה למטה
+            df['Sell_Signal'] = (df['Close'] < df['MA20']) & (df['Close'].shift(1) >= df['MA20'].shift(1))
+            
+            # בדיקה אם היום האחרון עומד בתנאי (בשביל עצם הסינון בסורק)
+            if df['Buy_Signal'].iloc[-1]:
                 return ticker, df
+                
         elif scan_type == "BREAKOUT":
-            if df['Close'].iloc[-1] > df['High20'].iloc[-1] and df['Volume'].iloc[-1] > df['Vol20'].iloc[-1]:
+            # קנייה: פריצת הגבוה של 20 יום + ווליום גבוה מהממוצע
+            df['Buy_Signal'] = (df['Close'] > df['High20']) & (df['Volume'] > df['Vol20'])
+            # מכירה: שבירה מתחת ל-MA20 אחרי שהייתה פריצה
+            df['Sell_Signal'] = (df['Close'] < df['MA20']) & (df['Close'].shift(1) >= df['MA20'].shift(1))
+            
+            if df['Buy_Signal'].iloc[-1]:
                 return ticker, df
     except: return None
     return None
@@ -91,7 +108,6 @@ def draw_fixed_pro_chart(df, ticker):
         
     df_slice = df_clean.tail(75)
     
-    # תצורה קבועה של 5 פאנלים ללא פשרות
     row_heights = [0.40, 0.12, 0.16, 0.16, 0.16]
     fig = make_subplots(rows=5, cols=1, shared_xaxes=True, row_heights=row_heights, vertical_spacing=0.015)
     
@@ -105,23 +121,41 @@ def draw_fixed_pro_chart(df, ticker):
     fig.add_trace(go.Scatter(x=df_slice.index, y=df_slice['BB_Upper'], line=dict(color='rgba(0,184,135,0.25)', width=1, dash='dash'), name='BB Up'), row=1, col=1)
     fig.add_trace(go.Scatter(x=df_slice.index, y=df_slice['BB_Lower'], line=dict(color='rgba(255,58,90,0.25)', width=1, dash='dash'), name='BB Dn'), row=1, col=1)
     
-    # --- פאנל 2: ווליום מובנה תואם צבעים ---
+    # --- הוספת חצי קנייה ומכירה על פאנל המחיר ---
+    buys = df_slice[df_slice['Buy_Signal'] == True]
+    sells = df_slice[df_slice['Sell_Signal'] == True]
+    
+    if not buys.empty:
+        fig.add_trace(go.Scatter(
+            x=buys.index, y=buys['Low'] * 0.985, # מיקום מעט מתחת לנמוך של הנר
+            mode='markers', marker=dict(symbol='triangle-up', size=11, color='#00B887', line=dict(width=1, color='#FFFFFF')),
+            name='Buy Call'
+        ), row=1, col=1)
+        
+    if not sells.empty:
+        fig.add_trace(go.Scatter(
+            x=sells.index, y=sells['High'] * 1.015, # מיקום מעט מעל הגבוה של הנר
+            mode='markers', marker=dict(symbol='triangle-down', size=11, color='#FF3A5A', line=dict(width=1, color='#FFFFFF')),
+            name='Sell Call'
+        ), row=1, col=1)
+    
+    # --- פאנל 2: ווליום ---
     vol_colors = ['#00B887' if row['Close'] >= row['Open'] else '#FF3A5A' for _, row in df_slice.iterrows()]
     fig.add_trace(go.Bar(x=df_slice.index, y=df_slice['Volume'], marker_color=vol_colors, name='Volume'), row=2, col=1)
     
-    # --- פאנל 3: MACD קבוע ---
+    # --- פאנל 3: MACD ---
     macd_colors = ['#00B887' if val >= 0 else '#FF3A5A' for val in df_slice['MACD_Hist']]
     fig.add_trace(go.Bar(x=df_slice.index, y=df_slice['MACD_Hist'], marker_color=macd_colors, name='Hist'), row=3, col=1)
     fig.add_trace(go.Scatter(x=df_slice.index, y=df_slice['MACD'], line=dict(color='#FCA311', width=1.2), name='MACD'), row=3, col=1)
     fig.add_trace(go.Scatter(x=df_slice.index, y=df_slice['MACD_Signal'], line=dict(color='#4CC9F0', width=1.2), name='Signal'), row=3, col=1)
     
-    # --- פאנל 4: RSI קבוע ---
+    # --- פאנל 4: RSI ---
     fig.add_trace(go.Scatter(x=df_slice.index, y=df_slice['RSI'], line=dict(color='#FF9F1C', width=1.2), name='RSI'), row=4, col=1)
     fig.add_shape(type="line", x0=df_slice.index[0], y0=70, x1=df_slice.index[-1], y1=70, line=dict(color="rgba(255,255,255,0.12)", width=1, dash="dash"), row=4, col=1)
     fig.add_shape(type="line", x0=df_slice.index[0], y0=30, x1=df_slice.index[-1], y1=30, line=dict(color="rgba(255,255,255,0.12)", width=1, dash="dash"), row=4, col=1)
     fig.update_yaxes(range=[10, 90], row=4, col=1)
     
-    # --- פאנל 5: MFI קבוע בחלק התחתון ---
+    # --- פאנל 5: MFI ---
     fig.add_trace(go.Scatter(x=df_slice.index, y=df_slice['MFI'], line=dict(color='#00F5D4', width=1.2), name='MFI'), row=5, col=1)
     fig.add_shape(type="line", x0=df_slice.index[0], y0=80, x1=df_slice.index[-1], y1=80, line=dict(color="rgba(255,255,255,0.12)", width=1, dash="dash"), row=5, col=1)
     fig.add_shape(type="line", x0=df_slice.index[0], y0=20, x1=df_slice.index[-1], y1=20, line=dict(color="rgba(255,255,255,0.12)", width=1, dash="dash"), row=5, col=1)
@@ -178,7 +212,6 @@ for i, group_id in enumerate(sections_keys):
                         
                         st.markdown('<div class="stock-container">', unsafe_allow_html=True)
                         
-                        # חלוקה אופטימלית: פאנל שמאלי צר, גרף ימני רחב
                         col_left, col_right = st.columns([1, 3.8])
                         
                         with col_left:
