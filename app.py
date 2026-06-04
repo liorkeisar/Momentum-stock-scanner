@@ -334,3 +334,51 @@ for i, group_id in enumerate(sections_keys):
                         st.markdown('</div>', unsafe_allow_html=True)
             else:
                 st.info("לא אותרו איתותים בקבוצה זו תחת התנאים שנבחרו.")
+import streamlit as st
+import yfinance as yf
+import pandas as pd
+import numpy as np
+import plotly.graph_objects as go
+from plotly.subplots import make_subplots
+from concurrent.futures import ThreadPoolExecutor
+
+st.set_page_config(layout="wide", page_title="Quantum Terminal")
+
+# --- CSS מעוצב ---
+st.markdown("""
+    <style>
+    .stock-container { background: #0B0E14; border: 1px solid #1F2433; border-radius: 16px; padding: 20px; margin-bottom: 20px; }
+    .info-panel { background: #111522; border: 1px solid #1F2538; border-radius: 12px; padding: 15px; }
+    .ticker-symbol { font-size: 1.8rem; font-weight: 700; color: #FFFFFF; }
+    .trigger-reason-box { background: rgba(255, 255, 255, 0.05); border-radius: 8px; padding: 10px; margin-top: 10px; font-size: 0.8rem; }
+    </style>
+""", unsafe_allow_html=True)
+
+# ... (שאר הפונקציות: calculate_indicators, get_trigger_reason, run_scanner - נשארות זהות) ...
+
+def render_info_panel(ticker, df, badge_text, badge_class, price_color, active_mode):
+    last_row = df.iloc[-1]
+    trigger_desc = get_trigger_reason(df, active_mode)
+    
+    # בניית ה-HTML כמחרוזת אחת
+    html_content = f"""
+    <div class="info-panel">
+        <div class="ticker-symbol">{ticker}</div>
+        <div style="color: {price_color}; font-size: 1.4rem; font-weight: bold;">${last_row['Close']:.2f}</div>
+        <div class="trigger-reason-box">
+            <b>🔍 Signal Analytics:</b><br>{trigger_desc}
+        </div>
+    </div>
+    """
+    # כאן התיקון המרכזי: שימוש ב-unsafe_allow_html=True
+    st.markdown(html_content, unsafe_allow_html=True)
+
+# ... (פונקציית draw_fixed_pro_chart - לוודא שכל הסוגריים נסגרים) ...
+# דוגמה לתיקון בתוך הפונקציה:
+# fig.add_trace(go.Scatter(x=df_slice.index, y=df_slice['MA20'], name='MA20'), row=1, col=1)
+# (וודא שאין פסיקים מיותרים או סוגריים פתוחים)
+
+# --- בחלק שבו אתה קורא ל-render_info_panel בסורק ---
+# בתוך הלולאה בטאבים:
+with col_left:
+    render_info_panel(ticker, df_ticker, badge_text, badge_class, price_color, active_mode)
