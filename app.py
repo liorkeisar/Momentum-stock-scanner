@@ -21,28 +21,15 @@ st.markdown("""
     
     /* כרטיסיית מניה משולבת */
     .stock-container { background: #0B0E14; border: 1px solid #1F2433; border-radius: 16px; padding: 16px; margin-bottom: 20px; }
-    .info-panel { background: #111522; border: 1px solid #1F2538; border-radius: 12px; padding: 14px; margin-bottom: 10px; }
-    .ticker-symbol { font-size: 1.6rem; font-weight: 700; color: #FFFFFF; display: block; }
-    .badge { padding: 4px 10px; border-radius: 20px; font-size: 0.75rem; font-weight: 600; display: inline-block; margin-top: 4px; }
+    .info-panel { background: #111522; border: 1px solid #1F2538; border-radius: 12px; padding: 14px; height: 100%; display: flex; flex-direction: column; justify-content: center; }
+    .ticker-symbol { font-size: 1.8rem; font-weight: 700; color: #FFFFFF; display: block; }
+    .badge { padding: 4px 10px; border-radius: 20px; font-size: 0.75rem; font-weight: 600; display: inline-block; margin-top: 6px; text-align: center; }
     .badge-reversal { background-color: rgba(0, 184, 135, 0.15); color: #00B887; }
     .badge-breakout { background-color: rgba(255, 159, 28, 0.15); color: #FF9F1C; }
     
     /* כפתור הפעלה */
     .stButton>button { background: linear-gradient(180deg, #1A202C, #0B0E14); color: #E6E1F3; border: 1px solid #2D3748; border-radius: 12px; padding: 10px 24px; font-weight: 600; width: 100%; transition: all 0.3s; }
     .stButton>button:hover { border-color: #00B887; color: #00B887; }
-    
-    /* עיצוב רובריקות הבחירה למתנדים לאורך */
-    div[data-testid="stCheckbox"] {
-        background-color: #111522;
-        border: 1px solid #1F2538;
-        padding: 6px 14px;
-        border-radius: 8px;
-        margin-bottom: 6px;
-        transition: all 0.2s ease;
-    }
-    div[data-testid="stCheckbox"]:hover {
-        border-color: #00B887;
-    }
     </style>
 """, unsafe_allow_html=True)
 
@@ -97,74 +84,57 @@ def run_scanner(ticker, scan_type):
     except: return None
     return None
 
-def draw_webull_style_chart(df, ticker, show_bb, show_rsi, show_macd, show_mfi):
+def draw_fixed_pro_chart(df, ticker):
     df_clean = df.copy()
     if df_clean.index.tz is not None:
         df_clean.index = df_clean.index.tz_localize(None)
         
     df_slice = df_clean.tail(75)
     
-    panels = [("Price", 0.5), ("Volume", 0.15)]
-    if show_macd: panels.append(("MACD", 0.2))
-    if show_rsi: panels.append(("RSI", 0.15))
-    if show_mfi: panels.append(("MFI", 0.15))
+    # תצורה קבועה של 5 פאנלים ללא פשרות
+    row_heights = [0.40, 0.12, 0.16, 0.16, 0.16]
+    fig = make_subplots(rows=5, cols=1, shared_xaxes=True, row_heights=row_heights, vertical_spacing=0.015)
     
-    rows = len(panels)
-    row_heights = [p[1] for p in panels]
-    total_weight = sum(row_heights)
-    row_heights = [h/total_weight for h in row_heights]
-    
-    fig = make_subplots(rows=rows, cols=1, shared_xaxes=True, row_heights=row_heights, vertical_spacing=0.02)
-    
-    # --- 1. Main Candlestick Chart ---
+    # --- פאנל 1: נרות יפניים + בולינג'ר ---
     fig.add_trace(go.Candlestick(
         x=df_slice.index, open=df_slice['Open'], high=df_slice['High'], low=df_slice['Low'], close=df_slice['Close'],
-        increasing_line_color='#00B887', decreasing_line_color='#FF3A5A',
-        name='Price'
+        increasing_line_color='#00B887', decreasing_line_color='#FF3A5A', name='Price'
     ), row=1, col=1)
     
     fig.add_trace(go.Scatter(x=df_slice.index, y=df_slice['MA20'], line=dict(color='#3A86FF', width=1.2), name='MA20'), row=1, col=1)
+    fig.add_trace(go.Scatter(x=df_slice.index, y=df_slice['BB_Upper'], line=dict(color='rgba(0,184,135,0.25)', width=1, dash='dash'), name='BB Up'), row=1, col=1)
+    fig.add_trace(go.Scatter(x=df_slice.index, y=df_slice['BB_Lower'], line=dict(color='rgba(255,58,90,0.25)', width=1, dash='dash'), name='BB Dn'), row=1, col=1)
     
-    if show_bb:
-        fig.add_trace(go.Scatter(x=df_slice.index, y=df_slice['BB_Upper'], line=dict(color='rgba(0,184,135,0.3)', width=1), name='BB Up'), row=1, col=1)
-        fig.add_trace(go.Scatter(x=df_slice.index, y=df_slice['BB_Lower'], line=dict(color='rgba(255,58,90,0.3)', width=1), name='BB Dn'), row=1, col=1)
-        
-    # --- 2. Volume Chart ---
+    # --- פאנל 2: ווליום מובנה תואם צבעים ---
     vol_colors = ['#00B887' if row['Close'] >= row['Open'] else '#FF3A5A' for _, row in df_slice.iterrows()]
     fig.add_trace(go.Bar(x=df_slice.index, y=df_slice['Volume'], marker_color=vol_colors, name='Volume'), row=2, col=1)
     
-    current_row = 3
+    # --- פאנל 3: MACD קבוע ---
+    macd_colors = ['#00B887' if val >= 0 else '#FF3A5A' for val in df_slice['MACD_Hist']]
+    fig.add_trace(go.Bar(x=df_slice.index, y=df_slice['MACD_Hist'], marker_color=macd_colors, name='Hist'), row=3, col=1)
+    fig.add_trace(go.Scatter(x=df_slice.index, y=df_slice['MACD'], line=dict(color='#FCA311', width=1.2), name='MACD'), row=3, col=1)
+    fig.add_trace(go.Scatter(x=df_slice.index, y=df_slice['MACD_Signal'], line=dict(color='#4CC9F0', width=1.2), name='Signal'), row=3, col=1)
     
-    # --- 3. MACD ---
-    if show_macd:
-        macd_colors = ['#00B887' if val >= 0 else '#FF3A5A' for val in df_slice['MACD_Hist']]
-        fig.add_trace(go.Bar(x=df_slice.index, y=df_slice['MACD_Hist'], marker_color=macd_colors, name='Hist'), row=current_row, col=1)
-        fig.add_trace(go.Scatter(x=df_slice.index, y=df_slice['MACD'], line=dict(color='#FCA311', width=1.2), name='MACD'), row=current_row, col=1)
-        fig.add_trace(go.Scatter(x=df_slice.index, y=df_slice['MACD_Signal'], line=dict(color='#4CC9F0', width=1.2), name='Signal'), row=current_row, col=1)
-        current_row += 1
-        
-    # --- 4. RSI ---
-    if show_rsi:
-        fig.add_trace(go.Scatter(x=df_slice.index, y=df_slice['RSI'], line=dict(color='#FF9F1C', width=1.2), name='RSI'), row=current_row, col=1)
-        fig.add_shape(type="line", x0=df_slice.index[0], y0=70, x1=df_slice.index[-1], y1=70, line=dict(color="rgba(255,255,255,0.15)", width=1, dash="dash"), row=current_row, col=1)
-        fig.add_shape(type="line", x0=df_slice.index[0], y0=30, x1=df_slice.index[-1], y1=30, line=dict(color="rgba(255,255,255,0.15)", width=1, dash="dash"), row=current_row, col=1)
-        fig.update_yaxes(range=[10, 90], row=current_row, col=1)
-        current_row += 1
-        
-    # --- 5. MFI ---
-    if show_mfi:
-        fig.add_trace(go.Scatter(x=df_slice.index, y=df_slice['MFI'], line=dict(color='#FF9F1C', width=1.2), name='MFI'), row=current_row, col=1)
-        fig.add_shape(type="line", x0=df_slice.index[0], y0=80, x1=df_slice.index[-1], y1=80, line=dict(color="rgba(255,255,255,0.15)", width=1, dash="dash"), row=current_row, col=1)
-        fig.add_shape(type="line", x0=df_slice.index[0], y0=20, x1=df_slice.index[-1], y1=20, line=dict(color="rgba(255,255,255,0.15)", width=1, dash="dash"), row=current_row, col=1)
-        fig.update_yaxes(range=[5, 95], row=current_row, col=1)
+    # --- פאנל 4: RSI קבוע ---
+    fig.add_trace(go.Scatter(x=df_slice.index, y=df_slice['RSI'], line=dict(color='#FF9F1C', width=1.2), name='RSI'), row=4, col=1)
+    fig.add_shape(type="line", x0=df_slice.index[0], y0=70, x1=df_slice.index[-1], y1=70, line=dict(color="rgba(255,255,255,0.12)", width=1, dash="dash"), row=4, col=1)
+    fig.add_shape(type="line", x0=df_slice.index[0], y0=30, x1=df_slice.index[-1], y1=30, line=dict(color="rgba(255,255,255,0.12)", width=1, dash="dash"), row=4, col=1)
+    fig.update_yaxes(range=[10, 90], row=4, col=1)
+    
+    # --- פאנל 5: MFI קבוע בחלק התחתון ---
+    fig.add_trace(go.Scatter(x=df_slice.index, y=df_slice['MFI'], line=dict(color='#00F5D4', width=1.2), name='MFI'), row=5, col=1)
+    fig.add_shape(type="line", x0=df_slice.index[0], y0=80, x1=df_slice.index[-1], y1=80, line=dict(color="rgba(255,255,255,0.12)", width=1, dash="dash"), row=5, col=1)
+    fig.add_shape(type="line", x0=df_slice.index[0], y0=20, x1=df_slice.index[-1], y1=20, line=dict(color="rgba(255,255,255,0.12)", width=1, dash="dash"), row=5, col=1)
+    fig.update_yaxes(range=[5, 95], row=5, col=1)
 
+    # הגדרות תצוגה
     fig.update_layout(
         template="plotly_dark", paper_bgcolor="#0B0E14", plot_bgcolor="#0B0E14",
-        height=340 + (len(panels)-2)*90, margin=dict(l=5, r=40, t=10, b=10),
+        height=580, margin=dict(l=5, r=40, t=10, b=10),
         showlegend=False, xaxis_rangeslider_visible=False, hovermode=False, dragmode=False
     )
     fig.update_xaxes(showgrid=False, zeroline=False, tickfont=dict(color='#5C5374', size=9), fixedrange=True)
-    fig.update_yaxes(showgrid=True, gridcolor='rgba(255,255,255,0.05)', zeroline=False, tickfont=dict(color='#5C5374', size=9), side='right', fixedrange=True)
+    fig.update_yaxes(showgrid=True, gridcolor='rgba(255,255,255,0.04)', zeroline=False, tickfont=dict(color='#5C5374', size=9), side='right', fixedrange=True)
     
     return fig
 
@@ -206,37 +176,28 @@ for i, group_id in enumerate(sections_keys):
                         badge_text = "Reversal" if active_mode == "REVERSAL" else "Breakout"
                         price_color = "#00B887" if active_mode == "REVERSAL" else "#FF9F1C"
                         
-                        # עטיפת המניה כולה בקופסה ייעודית
                         st.markdown('<div class="stock-container">', unsafe_allow_html=True)
                         
-                        # חלוקה פנימית: עמודה שמאלית קטנה לבקרה, ימנית גדולה לגרף
-                        col_left, col_right = st.columns([1, 3.2])
+                        # חלוקה אופטימלית: פאנל שמאלי צר, גרף ימני רחב
+                        col_left, col_right = st.columns([1, 3.8])
                         
                         with col_left:
-                            # פאנל נתוני מניה אנכי
                             st.markdown(f"""
                                 <div class="info-panel">
                                     <span class="ticker-symbol">{ticker}</span>
                                     <span class="badge {badge_class}">{badge_text}</span>
-                                    <div style="font-size: 1.3rem; font-weight: 700; color: {price_color}; margin-top: 10px;">
+                                    <div style="font-size: 1.4rem; font-weight: 700; color: {price_color}; margin-top: 15px;">
                                         ${df_ticker['Close'].iloc[-1]:.2f}
                                     </div>
-                                    <div style="color: #7E7497; font-size: 0.75rem; margin-top: 2px;">
+                                    <div style="color: #7E7497; font-size: 0.8rem; margin-top: 5px; font-weight: 500;">
                                         Vol: {(df_ticker['Volume'].iloc[-1]/1e6):.1f}M
                                     </div>
                                 </div>
                             """, unsafe_allow_html=True)
-                            
-                            # מתנדים לאורך - אחד מתחת לשני
-                            bb = st.checkbox("BB", key=f"bb_{ticker}_{i}")
-                            rsi = st.checkbox("RSI", key=f"rsi_{ticker}_{i}")
-                            macd = st.checkbox("MACD", key=f"macd_{ticker}_{i}")
-                            mfi = st.checkbox("MFI", key=f"mfi_{ticker}_{i}")
                         
                         with col_right:
-                            # הגרף המקצועי לרוחב מלא
                             st.plotly_chart(
-                                draw_webull_style_chart(df_ticker, ticker, bb, rsi, macd, mfi), 
+                                draw_fixed_pro_chart(df_ticker, ticker), 
                                 use_container_width=True, 
                                 config={'displayModeBar': False}
                             )
