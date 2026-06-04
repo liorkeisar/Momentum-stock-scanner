@@ -22,18 +22,12 @@ st.markdown("""
     
     /* כרטיסיית מניה משולבת */
     .stock-container { background: #0B0E14; border: 1px solid #1F2433; border-radius: 16px; padding: 16px; margin-bottom: 20px; }
-    .info-panel { background: #111522; border: 1px solid #1F2538; border-radius: 12px; padding: 14px; height: 100%; display: flex; flex-direction: column; justify-content: flex-start; }
+    .info-panel { background: #111522; border: 1px solid #1F2538; border-radius: 12px; padding: 14px; height: 100%; display: flex; flex-direction: column; justify-content: center; }
     .ticker-symbol { font-size: 1.8rem; font-weight: 700; color: #FFFFFF; display: block; }
     .badge { padding: 4px 10px; border-radius: 20px; font-size: 0.75rem; font-weight: 600; display: inline-block; margin-top: 6px; text-align: center; }
     .badge-reversal { background-color: rgba(0, 184, 135, 0.15); color: #00B887; }
     .badge-breakout { background-color: rgba(255, 159, 28, 0.15); color: #FF9F1C; }
     .badge-search { background-color: rgba(58, 134, 255, 0.15); color: #3A86FF; }
-    
-    /* אלמנטים של אינדיקטורים במקרא */
-    .indicator-box { margin-top: 12px; padding-top: 8px; border-top: 1px solid #1F2538; }
-    .indicator-row { display: flex; justify-content: space-between; font-size: 0.78rem; margin-bottom: 4px; }
-    .indicator-name { color: #938AA9; font-weight: 500; }
-    .indicator-desc { color: #5C5374; font-size: 0.7rem; display: block; margin-bottom: 6px; line-height: 1.1; }
     
     /* כפתור הפעלה ותיבות קלט */
     .stButton>button { background: linear-gradient(180deg, #1A202C, #0B0E14); color: #E6E1F3; border: 1px solid #2D3748; border-radius: 12px; padding: 10px 24px; font-weight: 600; width: 100%; transition: all 0.3s; }
@@ -55,6 +49,7 @@ MARKET_DATA = {
 }
 
 def calculate_indicators(df):
+    """פונקציית עזר לחישוב כל המדדים והאיתותים על ה-DataFrame"""
     df['MA20'] = df['Close'].rolling(20).mean()
     df['High20'] = df['High'].rolling(20).max().shift(1)
     df['Vol20'] = df['Volume'].rolling(20).mean()
@@ -81,6 +76,7 @@ def calculate_indicators(df):
     neg_flow = rmf.where(tp < tp.shift(1), 0).rolling(14).sum()
     df['MFI'] = 100 - (100 / (1 + (pos_flow / neg_flow)))
     
+    # חישוב איתותים משולב (הצגת איתותים משתי האסטרטגיות במקביל במצב חימוש/חיפוש)
     df['Buy_Signal'] = ((df['Close'] > df['MA20']) & (df['Close'].shift(1) <= df['MA20'].shift(1))) | \
                        ((df['Close'] > df['High20']) & (df['Volume'] > df['Vol20']))
                        
@@ -93,6 +89,7 @@ def run_scanner(ticker, scan_type):
         if len(df) < 50: return None
         df = calculate_indicators(df)
         
+        # סינון הסורק לפי הבחירה הספציפית בטאב
         if scan_type == "REVERSAL":
             is_valid = (df['Close'].iloc[-1] > df['MA20'].iloc[-1]) & (df['Close'].iloc[-2] < df['MA20'].iloc[-2])
         elif scan_type == "BREAKOUT":
@@ -113,6 +110,7 @@ def draw_fixed_pro_chart(df, ticker):
     row_heights = [0.40, 0.12, 0.16, 0.16, 0.16]
     fig = make_subplots(rows=5, cols=1, shared_xaxes=True, row_heights=row_heights, vertical_spacing=0.015)
     
+    # --- פאנל 1: נרות יפניים + בולינג'ר ---
     fig.add_trace(go.Candlestick(
         x=df_slice.index, open=df_slice['Open'], high=df_slice['High'], low=df_slice['Low'], close=df_slice['Close'],
         increasing_line_color='#00B887', decreasing_line_color='#FF3A5A', name='Price'
@@ -122,6 +120,7 @@ def draw_fixed_pro_chart(df, ticker):
     fig.add_trace(go.Scatter(x=df_slice.index, y=df_slice['BB_Upper'], line=dict(color='rgba(0,184,135,0.25)', width=1, dash='dash'), name='BB Up'), row=1, col=1)
     fig.add_trace(go.Scatter(x=df_slice.index, y=df_slice['BB_Lower'], line=dict(color='rgba(255,58,90,0.25)', width=1, dash='dash'), name='BB Dn'), row=1, col=1)
     
+    # --- הוספת חצי קנייה ומכירה ---
     buys = df_slice[df_slice['Buy_Signal'] == True]
     sells = df_slice[df_slice['Sell_Signal'] == True]
     
@@ -139,24 +138,29 @@ def draw_fixed_pro_chart(df, ticker):
             name='Sell Call'
         ), row=1, col=1)
     
+    # --- פאנל 2: ווליום ---
     vol_colors = ['#00B887' if row['Close'] >= row['Open'] else '#FF3A5A' for _, row in df_slice.iterrows()]
     fig.add_trace(go.Bar(x=df_slice.index, y=df_slice['Volume'], marker_color=vol_colors, name='Volume'), row=2, col=1)
     
+    # --- פאנל 3: MACD ---
     macd_colors = ['#00B887' if val >= 0 else '#FF3A5A' for val in df_slice['MACD_Hist']]
     fig.add_trace(go.Bar(x=df_slice.index, y=df_slice['MACD_Hist'], marker_color=macd_colors, name='Hist'), row=3, col=1)
     fig.add_trace(go.Scatter(x=df_slice.index, y=df_slice['MACD'], line=dict(color='#FCA311', width=1.2), name='MACD'), row=3, col=1)
     fig.add_trace(go.Scatter(x=df_slice.index, y=df_slice['MACD_Signal'], line=dict(color='#4CC9F0', width=1.2), name='Signal'), row=3, col=1)
     
+    # --- פאנל 4: RSI ---
     fig.add_trace(go.Scatter(x=df_slice.index, y=df_slice['RSI'], line=dict(color='#FF9F1C', width=1.2), name='RSI'), row=4, col=1)
     fig.add_shape(type="line", x0=df_slice.index[0], y0=70, x1=df_slice.index[-1], y1=70, line=dict(color="rgba(255,255,255,0.12)", width=1, dash="dash"), row=4, col=1)
     fig.add_shape(type="line", x0=df_slice.index[0], y0=30, x1=df_slice.index[-1], y1=30, line=dict(color="rgba(255,255,255,0.12)", width=1, dash="dash"), row=4, col=1)
     fig.update_yaxes(range=[10, 90], row=4, col=1)
     
+    # --- פאנל 5: MFI ---
     fig.add_trace(go.Scatter(x=df_slice.index, y=df_slice['MFI'], line=dict(color='#00F5D4', width=1.2), name='MFI'), row=5, col=1)
     fig.add_shape(type="line", x0=df_slice.index[0], y0=80, x1=df_slice.index[-1], y1=80, line=dict(color="rgba(255,255,255,0.12)", width=1, dash="dash"), row=5, col=1)
     fig.add_shape(type="line", x0=df_slice.index[0], y0=20, x1=df_slice.index[-1], y1=20, line=dict(color="rgba(255,255,255,0.12)", width=1, dash="dash"), row=5, col=1)
     fig.update_yaxes(range=[5, 95], row=5, col=1)
 
+    # הגדרות תצוגה
     fig.update_layout(
         template="plotly_dark", paper_bgcolor="#0B0E14", plot_bgcolor="#0B0E14",
         height=580, margin=dict(l=5, r=40, t=10, b=10),
@@ -167,67 +171,11 @@ def draw_fixed_pro_chart(df, ticker):
     
     return fig
 
-def render_info_panel(ticker, df, badge_text, badge_class, price_color):
-    """פונקציה לייצור פאנל הנתונים השמאלי כולל מקרא אינדיקטורים מפורט וערכים עדכניים"""
-    last_row = df.iloc[-1]
-    rsi_val = last_row['RSI']
-    mfi_val = last_row['MFI']
-    macd_hist = last_row['MACD_Hist']
-    
-    rsi_color = "#FF3A5A" if rsi_val > 70 else ("#00B887" if rsi_val < 30 else "#E6E1F3")
-    mfi_color = "#FF3A5A" if mfi_val > 80 else ("#00B887" if mfi_val < 20 else "#E6E1F3")
-    macd_color = "#00B887" if macd_hist >= 0 else "#FF3A5A"
-    
-    st.markdown(f"""
-        <div class="info-panel">
-            <span class="ticker-symbol">{ticker}</span>
-            <span class="badge {badge_class}">{badge_text}</span>
-            
-            <div style="font-size: 1.4rem; font-weight: 700; color: {price_color}; margin-top: 10px;">
-                ${last_row['Close']:.2f}
-            </div>
-            <div style="color: #7E7497; font-size: 0.75rem; margin-bottom: 10px; font-weight: 500;">
-                Vol: {(last_row['Volume']/1e6):.1f}M
-            </div>
-            
-            <div class="indicator-box">
-                <div class="indicator-row">
-                    <span class="indicator-name">BB (בולינג'ר)</span>
-                    <span style="color: #3A86FF; font-weight:700;">מחיר/רצועה</span>
-                </div>
-                <span class="indicator-desc">רצועות תנודתיות על הגרף. פריצה מחוץ לרצועה מעידה על מצב קיצון.</span>
-            </div>
-            
-            <div class="indicator-box">
-                <div class="indicator-row">
-                    <span class="indicator-name">MACD</span>
-                    <span style="color: {macd_color}; font-weight:700;">{macd_hist:.2f}</span>
-                </div>
-                <span class="indicator-desc">מומנטום מגמה. עמודות ירוקות מעידות על מומנטום שורי, אדומות על דובי.</span>
-            </div>
-            
-            <div class="indicator-box">
-                <div class="indicator-row">
-                    <span class="indicator-name">RSI</span>
-                    <span style="color: {rsi_color}; font-weight:700;">{rsi_val:.1f}</span>
-                </div>
-                <span class="indicator-desc">חוזק יחסי. מעל 70 קניית יתר (סיכון גבוה), מתחת ל-30 מכירת יתר (היפוך פוטנציאלי).</span>
-            </div>
-            
-            <div class="indicator-box">
-                <div class="indicator-row">
-                    <span class="indicator-name">MFI</span>
-                    <span style="color: {mfi_color}; font-weight:700;">{mfi_val:.1f}</span>
-                </div>
-                <span class="indicator-desc">זרימת כסף (RSI משולב נפח מסחר). מראה אם כסף חכם נכנס (מתחת ל-20) או יוצא (מעל 80).</span>
-            </div>
-        </div>
-    """, unsafe_allow_html=True)
-
 # --- ממשק משתמש ראשי ---
 st.markdown('<h1 class="main-title">Quantum Terminal</h1>', unsafe_allow_html=True)
 st.markdown('<p class="sub-title">מערכת סריקה וניתוח בתצורת Webull Pro Pro</p>', unsafe_allow_html=True)
 
+# הוספת לשונית החיפוש בהתחלה
 tabs_names = ["🔍 חיפוש מניה", "NASDAQ א'", "NASDAQ ב'", "NASDAQ ג'", "NASDAQ ד'", "S&P500 א'", "S&P500 ב'", "DOW מלא", "MIDCAP"]
 tabs = st.tabs(tabs_names)
 
@@ -244,29 +192,49 @@ with tabs[0]:
                 if len(stock_data) >= 20:
                     stock_data = calculate_indicators(stock_data)
                     
+                    # הצגת התוצאה באותה פריסה מקצועית
                     st.markdown('<div class="stock-container">', unsafe_allow_html=True)
-                    col_left, col_right = st.columns([1.2, 3.8])
+                    col_left, col_right = st.columns([1, 3.8])
                     
                     with col_left:
                         last_close = stock_data['Close'].iloc[-1]
                         prev_close = stock_data['Close'].iloc[-2]
                         pct_change = ((last_close - prev_close) / prev_close) * 100
                         change_color = "#00B887" if pct_change >= 0 else "#FF3A5A"
-                        render_info_panel(search_ticker, stock_data, "Analysis Mode", "badge-search", change_color)
+                        
+                        st.markdown(f"""
+                            <div class="info-panel">
+                                <span class="ticker-symbol">{search_ticker}</span>
+                                <span class="badge badge-search">Analysis Mode</span>
+                                <div style="font-size: 1.4rem; font-weight: 700; color: {change_color}; margin-top: 15px;">
+                                    ${last_close:.2f}
+                                </div>
+                                <div style="color: {change_color}; font-size: 0.85rem; font-weight: 600;">
+                                    {'+' if pct_change >= 0 else ''}{pct_change:.2f}%
+                                </div>
+                                <div style="color: #7E7497; font-size: 0.8rem; margin-top: 5px; font-weight: 500;">
+                                    Vol: {(stock_data['Volume'].iloc[-1]/1e6):.1f}M
+                                </div>
+                            </div>
+                        """, unsafe_allow_html=True)
                     
                     with col_right:
-                        st.plotly_chart(draw_fixed_pro_chart(stock_data, search_ticker), use_container_width=True, config={'displayModeBar': False})
+                        st.plotly_chart(
+                            draw_fixed_pro_chart(stock_data, search_ticker), 
+                            use_container_width=True, 
+                            config={'displayModeBar': False}
+                        )
                     st.markdown('</div>', unsafe_allow_html=True)
                 else:
                     st.error("לא נמצאו מספיק נתונים היסטוריים עבור הטיקר שהוזן.")
             except Exception as e:
                 st.error(f"שגיאה במשיכת הנתונים. ודא שהסימול נכון. ({str(e)})")
 
-# --- שאר הלשוניות: סורק הקבוצות ---
+# --- שאר הלשוניות: סורק הקבוצות הקבוע ---
 sections_keys = ["NASDAQ_A", "NASDAQ_B", "NASDAQ_C", "NASDAQ_D", "SP500_A", "SP500_B", "DOW_FULL", "MIDCAP"]
 
 for i, group_id in enumerate(sections_keys):
-    with tabs[i + 1]:
+    with tabs[i + 1]: # +1 כי הלשונית הראשונה היא חיפוש
         col_ctrl, _ = st.columns([1, 2])
         with col_ctrl:
             mode = st.radio("אסטרטגיה:", ["REVERSAL", "BREAKOUT"], key=f"radio_{i}", horizontal=True)
@@ -296,13 +264,28 @@ for i, group_id in enumerate(sections_keys):
                         price_color = "#00B887" if active_mode == "REVERSAL" else "#FF9F1C"
                         
                         st.markdown('<div class="stock-container">', unsafe_allow_html=True)
-                        col_left, col_right = st.columns([1.2, 3.8])
+                        col_left, col_right = st.columns([1, 3.8])
                         
                         with col_left:
-                            render_info_panel(ticker, df_ticker, badge_text, badge_class, price_color)
+                            st.markdown(f"""
+                                <div class="info-panel">
+                                    <span class="ticker-symbol">{ticker}</span>
+                                    <span class="badge {badge_class}">{badge_text}</span>
+                                    <div style="font-size: 1.4rem; font-weight: 700; color: {price_color}; margin-top: 15px;">
+                                        ${df_ticker['Close'].iloc[-1]:.2f}
+                                    </div>
+                                    <div style="color: #7E7497; font-size: 0.8rem; margin-top: 5px; font-weight: 500;">
+                                        Vol: {(df_ticker['Volume'].iloc[-1]/1e6):.1f}M
+                                    </div>
+                                </div>
+                            """, unsafe_allow_html=True)
                         
                         with col_right:
-                            st.plotly_chart(draw_fixed_pro_chart(df_ticker, ticker), use_container_width=True, config={'displayModeBar': False})
+                            st.plotly_chart(
+                                draw_fixed_pro_chart(df_ticker, ticker), 
+                                use_container_width=True, 
+                                config={'displayModeBar': False}
+                            )
                         st.markdown('</div>', unsafe_allow_html=True)
             else:
                 st.info("לא אותרו איתותים בקבוצה זו תחת התנאים שנבחרו.")
