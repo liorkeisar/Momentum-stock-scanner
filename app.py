@@ -103,4 +103,127 @@ def draw_webull_style_chart(df, ticker, show_bb, show_rsi, show_macd, show_mfi):
     
     fig = make_subplots(rows=rows, cols=1, shared_xaxes=True, row_heights=row_heights, vertical_spacing=0.02)
     
-    # ---
+    # --- 1. Main Candlestick Chart ---
+    fig.add_trace(go.Candlestick(
+        x=df_slice.index, open=df_slice['Open'], high=df_slice['High'], low=df_slice['Low'], close=df_slice['Close'],
+        increasing_line_color='#00B887', decreasing_line_color='#FF3A5A',
+        name='Price'
+    ), row=1, col=1)
+    
+    # ממוצע נע 20
+    fig.add_trace(go.Scatter(x=df_slice.index, y=df_slice['MA20'], line=dict(color='#3A86FF', width=1.2), name='MA20'), row=1, col=1)
+    
+    if show_bb:
+        fig.add_trace(go.Scatter(x=df_slice.index, y=df_slice['BB_Upper'], line=dict(color='rgba(0,184,135,0.3)', width=1), name='BB Up'), row=1, col=1)
+        fig.add_trace(go.Scatter(x=df_slice.index, y=df_slice['BB_Lower'], line=dict(color='rgba(255,58,90,0.3)', width=1), name='BB Dn'), row=1, col=1)
+        
+    # --- 2. Volume Chart ---
+    vol_colors = ['#00B887' if row['Close'] >= row['Open'] else '#FF3A5A' for _, row in df_slice.iterrows()]
+    fig.add_trace(go.Bar(x=df_slice.index, y=df_slice['Volume'], marker_color=vol_colors, name='Volume'), row=2, col=1)
+    
+    current_row = 3
+    
+    # --- 3. MACD ---
+    if show_macd:
+        macd_colors = ['#00B887' if val >= 0 else '#FF3A5A' for val in df_slice['MACD_Hist']]
+        fig.add_trace(go.Bar(x=df_slice.index, y=df_slice['MACD_Hist'], marker_color=macd_colors, name='Hist'), row=current_row, col=1)
+        fig.add_trace(go.Scatter(x=df_slice.index, y=df_slice['MACD'], line=dict(color='#FCA311', width=1.2), name='MACD'), row=current_row, col=1)
+        fig.add_trace(go.Scatter(x=df_slice.index, y=df_slice['MACD_Signal'], line=dict(color='#4CC9F0', width=1.2), name='Signal'), row=current_row, col=1)
+        current_row += 1
+        
+    # --- 4. RSI ---
+    if show_rsi:
+        fig.add_trace(go.Scatter(x=df_slice.index, y=df_slice['RSI'], line=dict(color='#FF9F1C', width=1.2), name='RSI'), row=current_row, col=1)
+        fig.add_shape(type="line", x0=df_slice.index[0], y0=70, x1=df_slice.index[-1], y1=70, line=dict(color="rgba(255,255,255,0.15)", width=1, dash="dash"), row=current_row, col=1)
+        fig.add_shape(type="line", x0=df_slice.index[0], y0=30, x1=df_slice.index[-1], y1=30, line=dict(color="rgba(255,255,255,0.15)", width=1, dash="dash"), row=current_row, col=1)
+        fig.update_yaxes(range=[10, 90], row=current_row, col=1)
+        current_row += 1
+        
+    # --- 5. MFI ---
+    if show_mfi:
+        fig.add_trace(go.Scatter(x=df_slice.index, y=df_slice['MFI'], line=dict(color='#FF9F1C', width=1.2), name='MFI'), row=current_row, col=1)
+        fig.add_shape(type="line", x0=df_slice.index[0], y0=80, x1=df_slice.index[-1], y1=80, line=dict(color="rgba(255,255,255,0.15)", width=1, dash="dash"), row=current_row, col=1)
+        fig.add_shape(type="line", x0=df_slice.index[0], y0=20, x1=df_slice.index[-1], y1=20, line=dict(color="rgba(255,255,255,0.15)", width=1, dash="dash"), row=current_row, col=1)
+        fig.update_yaxes(range=[5, 95], row=current_row, col=1)
+
+    # --- Layout & Styling ---
+    fig.update_layout(
+        template="plotly_dark",
+        paper_bgcolor="#0B0E14",
+        plot_bgcolor="#0B0E14",
+        height=350 + (len(panels)-2)*100,
+        margin=dict(l=5, r=45, t=10, b=10),
+        showlegend=False,
+        xaxis_rangeslider_visible=False,
+        hovermode=False,
+        dragmode=False
+    )
+    
+    fig.update_xaxes(showgrid=False, zeroline=False, tickfont=dict(color='#5C5374', size=9), fixedrange=True)
+    fig.update_yaxes(showgrid=True, gridcolor='rgba(255,255,255,0.05)', zeroline=False, tickfont=dict(color='#5C5374', size=9), side='right', fixedrange=True)
+    
+    return fig
+
+# --- ממשק משתמש ראשי ---
+st.markdown('<h1 class="main-title">Quantum Terminal</h1>', unsafe_allow_html=True)
+st.markdown('<p class="sub-title">מערכת סריקה מתקדמת בתצורת Webull Pro</p>', unsafe_allow_html=True)
+
+tabs_names = ["NASDAQ א'", "NASDAQ ב'", "NASDAQ ג'", "NASDAQ ד'", "S&P500 א'", "S&P500 ב'", "DOW מלא", "MIDCAP"]
+tabs = st.tabs(tabs_names)
+sections_keys = ["NASDAQ_A", "NASDAQ_B", "NASDAQ_C", "NASDAQ_D", "SP500_A", "SP500_B", "DOW_FULL", "MIDCAP"]
+
+for i, group_id in enumerate(sections_keys):
+    with tabs[i]:
+        col_ctrl, _ = st.columns([1, 2])
+        with col_ctrl:
+            mode = st.radio("אסטרטגיה:", ["REVERSAL", "BREAKOUT"], key=f"radio_{i}", horizontal=True)
+            scan_clicked = st.button("הפעל סריקה", key=f"btn_{i}")
+        
+        st.markdown("<br>", unsafe_allow_html=True)
+        
+        if scan_clicked or st.session_state.get(f"results_ready_{group_id}", False):
+            if scan_clicked:
+                with st.spinner("סורק נתוני שוק..."):
+                    tickers = MARKET_DATA.get(group_id, [])
+                    with ThreadPoolExecutor(max_workers=10) as ex:
+                        results = list(ex.map(lambda t: run_scanner(t, mode), tickers))
+                    st.session_state[f"data_{group_id}"] = {r[0]: r[1] for r in results if r is not None}
+                    st.session_state[f"results_ready_{group_id}"] = True
+                    st.session_state[f"current_mode_{group_id}"] = mode
+            
+            found_data = st.session_state.get(f"data_{group_id}", {})
+            active_mode = st.session_state.get(f"current_mode_{group_id}", mode)
+            
+            if found_data:
+                grid_cols = st.columns(2)
+                for idx, (ticker, df_ticker) in enumerate(found_data.items()):
+                    with grid_cols[idx % 2]:
+                        badge_class = "badge-reversal" if active_mode == "REVERSAL" else "badge-breakout"
+                        badge_text = "Reversal" if active_mode == "REVERSAL" else "Breakout"
+                        
+                        st.markdown(f"""
+                            <div class="premium-card">
+                                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px;">
+                                    <span class="ticker-symbol">{ticker}</span>
+                                    <span class="badge {badge_class}">{badge_text}</span>
+                                </div>
+                                <div style="font-size: 1.2rem; font-weight: 500; color: #FFFFFF; margin-bottom: 10px;">
+                                    ${df_ticker['Close'].iloc[-1]:.2f}
+                                </div>
+                        """, unsafe_allow_html=True)
+                        
+                        # רובריקות לבחירת מתנדים מעל הגרף וללא רקע מוגזם
+                        c1, c2, c3, c4 = st.columns(4)
+                        with c1: bb = st.checkbox("BB", key=f"bb_{ticker}_{i}")
+                        with c2: rsi = st.checkbox("RSI", key=f"rsi_{ticker}_{i}")
+                        with c3: macd = st.checkbox("MACD", key=f"macd_{ticker}_{i}")
+                        with c4: mfi = st.checkbox("MFI", key=f"mfi_{ticker}_{i}")
+                        
+                        st.plotly_chart(
+                            draw_webull_style_chart(df_ticker, ticker, bb, rsi, macd, mfi), 
+                            use_container_width=True, 
+                            config={'displayModeBar': False}
+                        )
+                        st.markdown('</div>', unsafe_allow_html=True)
+            else:
+                st.info("לא אותרו איתותים בקבוצה זו תחת התנאים שנבחרו.")
