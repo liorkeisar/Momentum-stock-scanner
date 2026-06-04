@@ -2,9 +2,9 @@ import streamlit as st
 import yfinance as yf
 import pandas as pd
 import plotly.graph_objects as go
+from plotly.subplots import make_subplots
 from concurrent.futures import ThreadPoolExecutor
 
-# הגדרת עמוד רחב ומראה כהה כברירת מחדל
 st.set_page_config(layout="wide", page_title="Quantum Terminal v2", initial_sidebar_state="collapsed")
 
 # --- CSS עיצוב פינטק פרימיום מודרני ---
@@ -20,7 +20,7 @@ st.markdown("""
     .stTabs [aria-selected="true"] { background-color: #E2B4BD !important; color: #0A0712 !important; border-color: #E2B4BD !important; font-weight: 600; }
     
     /* כרטיסיות מניות */
-    .premium-card { background: #120D24; border: 1px solid #1F173A; border-radius: 20px; padding: 24px; margin-bottom: 20px; }
+    .premium-card { background: #120D24; border: 1px solid #1F173A; border-radius: 20px; padding: 24px; margin-bottom: 15px; }
     .ticker-symbol { font-size: 1.8rem; font-weight: 700; color: #FFFFFF; }
     .badge { padding: 6px 14px; border-radius: 30px; font-size: 0.8rem; font-weight: 600; }
     .badge-reversal { background-color: rgba(74, 212, 134, 0.12); color: #4AD486; }
@@ -29,6 +29,18 @@ st.markdown("""
     /* כפתור הפעלה */
     .stButton>button { background: linear-gradient(180deg, #241A42, #191230); color: #E6E1F3; border: 1px solid #33265C; border-radius: 14px; padding: 12px 28px; font-weight: 600; width: 100%; }
     .stButton>button:hover { border-color: #E2B4BD; color: #E2B4BD; }
+    
+    /* עיצוב רובריקות הבחירה למתנדים */
+    div[data-testid="stCheckbox"] {
+        background-color: #151026;
+        border: 1px solid #231B3D;
+        padding: 8px 16px;
+        border-radius: 12px;
+        transition: all 0.2s ease;
+    }
+    div[data-testid="stCheckbox"]:hover {
+        border-color: #E2B4BD;
+    }
     </style>
 """, unsafe_allow_html=True)
 
@@ -48,9 +60,37 @@ def run_scanner(ticker, scan_type):
     try:
         df = yf.Ticker(ticker).history(period="100d")
         if len(df) < 50: return None
+        
+        # חישוב מתנדים בסיסיים לסריקה וגרפים
         df['MA20'] = df['Close'].rolling(20).mean()
         df['High20'] = df['High'].rolling(20).max().shift(1)
         df['Vol20'] = df['Volume'].rolling(20).mean()
+        
+        # חישוב אינדיקטורים מורחבים
+        std20 = df['Close'].rolling(20).std()
+        df['BB_Upper'] = df['MA20'] + (std20 * 2)
+        df['BB_Lower'] = df['MA20'] - (std20 * 2)
+        
+        # RSI
+        delta = df['Close'].diff()
+        gain = (delta.where(delta > 0, 0)).rolling(14).mean()
+        loss = (-delta.where(delta < 0, 0)).rolling(14).mean()
+        rs = gain / loss
+        df['RSI'] = 100 - (100 / (1 + rs))
+        
+        # MACD
+        exp12 = df['Close'].ewm(span=12, adjust=False).mean()
+        exp26 = df['Close'].ewm(span=26, adjust=False).mean()
+        df['MACD'] = exp12 - exp26
+        df['MACD_Signal'] = df['MACD'].ewm(span=9, adjust=False).mean()
+        df['MACD_Hist'] = df['MACD'] - df['MACD_Signal']
+        
+        # MFI (Money Flow Index)
+        tp = (df['High'] + df['Low'] + df['Close']) / 3
+        rmf = tp * df['Volume']
+        pos_flow = rmf.where(tp > tp.shift(1), 0).rolling(14).sum()
+        neg_flow = rmf.where(tp < tp.shift(1), 0).rolling(14).sum()
+        df['MFI'] = 100 - (100 / (1 + (pos_flow / neg_flow)))
         
         if scan_type == "REVERSAL":
             if df['Close'].iloc[-1] > df['MA20'].iloc[-1] and df['Close'].iloc[-2] < df['MA20'].iloc[-2]:
@@ -61,116 +101,31 @@ def run_scanner(ticker, scan_type):
     except: return None
     return None
 
-def draw_premium_chart(df, ticker, mode):
+def draw_premium_chart(df, ticker, mode, show_bb, show_rsi, show_macd, show_mfi):
     df_clean = df.copy()
     if df_clean.index.tz is not None:
         df_clean.index = df_clean.index.tz_localize(None)
         
-    # הצגת 30 ימי המסחר האחרונים בלבד
     df_slice = df_clean.tail(30)
     
-    # חישוב גבולות ציר ה-Y עם מרווח של 5%
-    y_min = df_slice['Close'].min() * 0.95
-    y_max = df_slice['Close'].max() * 1.05
+    # קביעת כמות פאנלים (Subplots) לפי המתנדים שנבחרו
+    rows = 1
+    row_heights = [1.0]
     
-    fig = go.Figure()
+    if show_rsi: rows += 1; row_heights.append(0.3)
+    if show_macd: rows += 1; row_heights.append(0.3)
+    if show_mfi: rows += 1; row_heights.append(0.3)
     
-    # קו מחיר נקי
+    # נרמול גבהים מחדש של הפאנלים
+    total_weight = sum(row_heights)
+    row_heights = [h/total_weight for h in row_heights]
+    
+    fig = make_subplots(rows=rows, cols=1, shared_xaxes=True, row_heights=row_heights, vertical_spacing=0.05)
+    
+    # 1. גרף מחיר ראשי - שטח מוצלל (Gradient Area Style)
     fig.add_trace(go.Scatter(
         x=df_slice.index, y=df_slice['Close'], 
         line=dict(color='#E2B4BD', width=2.5), 
+        fill='tozeroy', fillcolor='rgba(226, 180, 189, 0.04)',
         name='Price'
-    ))
-    
-    # ממוצע נע 20
-    fig.add_trace(go.Scatter(
-        x=df_slice.index, y=df_slice['MA20'], 
-        line=dict(color='#4A3E6D', width=1.5, dash='dot'), 
-        name='MA20'
-    ))
-    
-    # נקודת איתות בולטת על היום האחרון
-    signal_color = '#4AD486' if mode == "REVERSAL" else '#F4A261'
-    fig.add_trace(go.Scatter(
-        x=[df_slice.index[-1]], y=[df_slice['Close'].iloc[-1]],
-        mode='markers',
-        marker=dict(color=signal_color, size=10, line=dict(color='#0A0712', width=2)),
-        name='Signal'
-    ))
-    
-    # הגדרות תצוגה ונעילת אינטראקציה מול מגע במובייל
-    fig.update_layout(
-        template="plotly_dark", 
-        paper_bgcolor="rgba(0,0,0,0)", 
-        plot_bgcolor="rgba(0,0,0,0)",
-        height=240, 
-        margin=dict(l=10, r=10, t=10, b=10),
-        xaxis=dict(
-            showgrid=False, 
-            tickfont=dict(color='#5C5374', size=10),
-            fixedrange=True  # נועל גרירה וזום בציר X
-        ),
-        yaxis=dict(
-            showgrid=True, 
-            gridcolor='#1A1430', 
-            tickfont=dict(color='#5C5374', size=10), 
-            side='right',
-            range=[y_min, y_max],
-            fixedrange=True  # נועל גרירה וזום בציר Y
-        ),
-        showlegend=False,
-        hovermode=False  # ביטול פופ-אפים מציקים במגע
-    )
-    return fig
-
-# --- ממשק משתמש ---
-st.markdown('<h1 class="main-title">Quantum Terminal</h1>', unsafe_allow_html=True)
-st.markdown('<p class="sub-title">מערכת סריקה מתקדמת מבוססת קבוצות עבודה יציבות</p>', unsafe_allow_html=True)
-
-tabs_names = ["NASDAQ א'", "NASDAQ ב'", "NASDAQ ג'", "NASDAQ ד'", "S&P500 א'", "S&P500 ב'", "DOW מלא", "MIDCAP 400"]
-tabs = st.tabs(tabs_names)
-
-sections_keys = ["NASDAQ_A", "NASDAQ_B", "NASDAQ_C", "NASDAQ_D", "SP500_A", "SP500_B", "DOW_FULL", "MIDCAP"]
-
-for i, group_id in enumerate(sections_keys):
-    with tabs[i]:
-        col_ctrl, _ = st.columns([1, 2])
-        with col_ctrl:
-            mode = st.radio("אסטרטגיה:", ["REVERSAL", "BREAKOUT"], key=f"radio_{i}", horizontal=True)
-            scan_clicked = st.button("הפעל סריקה", key=f"btn_{i}")
-        
-        st.markdown("<br>", unsafe_allow_html=True)
-        
-        if scan_clicked:
-            with st.spinner("מנתח מגמות שוק..."):
-                tickers = MARKET_DATA.get(group_id, [])
-                with ThreadPoolExecutor(max_workers=10) as ex:
-                    results = list(ex.map(lambda t: run_scanner(t, mode), tickers))
-                
-                found_data = {r[0]: r[1] for r in results if r is not None}
-                
-                if found_data:
-                    grid_cols = st.columns(2)
-                    for idx, (ticker, df_ticker) in enumerate(found_data.items()):
-                        with grid_cols[idx % 2]:
-                            badge_class = "badge-reversal" if mode == "REVERSAL" else "badge-breakout"
-                            badge_text = "Reversal Signal" if mode == "REVERSAL" else "Breakout Signal"
-                            
-                            st.markdown(f"""
-                                <div class="premium-card">
-                                    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px;">
-                                        <span class="ticker-symbol">{ticker}</span>
-                                        <span class="badge {badge_class}">{badge_text}</span>
-                                    </div>
-                                    <div style="font-size: 1.1rem; font-weight: 500; color: #E6E1F3; margin-bottom: 5px;">
-                                        ${df_ticker['Close'].iloc[-1]:.2f}
-                                    </div>
-                                    <div style="color: #7E7497; font-size: 0.85rem; margin-bottom: 15px;">
-                                        נפח מסחר: {(df_ticker['Volume'].iloc[-1]/1e6):.2f}M
-                                    </div>
-                                </div>
-                            """, unsafe_allow_html=True)
-                            
-                            st.plotly_chart(draw_premium_chart(df_ticker, ticker, mode), use_container_width=True, config={'displayModeBar': False})
-                else:
-                    st.info("לא אותרו הזדמנויות מסחר בקבוצה זו תחת התנאים שנבחרו.")
+    ), row=1,
