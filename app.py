@@ -4,84 +4,111 @@ import pandas as pd
 import plotly.graph_objects as go
 from concurrent.futures import ThreadPoolExecutor
 
-# הגדרת עמוד רחב
-st.set_page_config(layout="wide", page_title="Quantum Terminal")
+# הגדרת עמוד רחב ומראה כהה כברירת מחדל
+st.set_page_config(layout="wide", page_title="Terminal v2", initial_sidebar_state="collapsed")
 
-# --- CSS עיצוב פינטק מודרני ומזמין (בהשראת האפליקציה) ---
+# --- CSS עיצוב פינטק פרימיום מודרני (סגנון אפליקציית נייטיב) ---
 st.markdown("""
     <style>
-    /* רקע כללי של האפליקציה */
+    /* הגדרות בסיס וצבעי רקע עמוקים */
     .stApp {
-        background-color: #0E0B16;
-        color: #F1EFF7;
-        font-family: 'Inter', system-ui, sans-serif;
+        background-color: #0A0712;
+        color: #E6E1F3;
+        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
     }
     
-    /* עיצוב הטאבים למעלה */
+    /* כותרות פרימיום */
+    .main-title {
+        font-size: 2.2rem;
+        font-weight: 800;
+        letter-spacing: -0.05rem;
+        background: linear-gradient(90deg, #F1EFF7, #E2B4BD);
+        -webkit-background-clip: text;
+        -webkit-text-fill-color: transparent;
+        margin-bottom: 5px;
+    }
+    .sub-title {
+        color: #7E7497;
+        font-size: 0.95rem;
+        margin-bottom: 35px;
+    }
+    
+    /* עיצוב רשת הטאבים - הפיכה לכפתורי קפסולה מודרניים */
     .stTabs [data-baseweb="tab-list"] {
-        gap: 8px;
-        background-color: #161224;
-        padding: 10px;
-        border-radius: 12px;
+        gap: 12px;
+        background-color: transparent;
+        padding: 0px;
+        margin-bottom: 25px;
+        border-bottom: 1px solid #1E1833;
     }
     .stTabs [data-baseweb="tab"] {
-        background-color: transparent;
-        border-radius: 8px;
-        color: #A39DB5;
-        padding: 8px 16px;
-        border: none;
+        background-color: #151026;
+        border-radius: 20px;
+        color: #938AA9;
+        padding: 8px 20px;
+        border: 1px solid #231B3D;
+        font-size: 0.85rem;
+        font-weight: 500;
+        transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
     }
     .stTabs [aria-selected="true"] {
-        background-color: #261E3D !important;
-        color: #E2B4BD !important;
-        font-weight: bold;
-    }
-    
-    /* כרטיסיות תוצאה צפות (Cards) */
-    .signal-container {
-        background: linear-gradient(145deg, #1C172E, #161224);
-        border: 1px solid #2C2447;
-        border-radius: 16px;
-        padding: 20px;
-        margin-bottom: 15px;
-        box-shadow: 0 8px 24px rgba(0,0,0,0.3);
-    }
-    
-    /* תגיות סטטוס מעוגלות */
-    .badge-buy {
-        background-color: rgba(74, 212, 134, 0.15);
-        color: #4AD486;
-        padding: 4px 12px;
-        border-radius: 20px;
-        font-size: 0.85rem;
+        background-color: #E2B4BD !important;
+        color: #0A0712 !important;
+        border-color: #E2B4BD !important;
         font-weight: 600;
-        display: inline-block;
-    }
-    .badge-break {
-        background-color: rgba(226, 180, 189, 0.15);
-        color: #E2B4BD;
-        padding: 4px 12px;
-        border-radius: 20px;
-        font-size: 0.85rem;
-        font-weight: 600;
-        display: inline-block;
+        box-shadow: 0 4px 15px rgba(226, 180, 189, 0.25);
     }
     
-    /* כפתורים מעוצבים */
+    /* כרטיסיות תוצאה (Cards) במראה צף ונקי */
+    .premium-card {
+        background: #120D24;
+        border: 1px solid #1F173A;
+        border-radius: 20px;
+        padding: 24px;
+        margin-bottom: 20px;
+        box-shadow: 0 12px 32px rgba(0,0,0,0.4);
+    }
+    
+    .ticker-symbol {
+        font-size: 1.8rem;
+        font-weight: 700;
+        color: #FFFFFF;
+        letter-spacing: -0.03rem;
+    }
+    
+    /* תגיות מעוגלות עדינות */
+    .badge {
+        padding: 6px 14px;
+        border-radius: 30px;
+        font-size: 0.8rem;
+        font-weight: 600;
+        text-transform: uppercase;
+        letter-spacing: 0.03rem;
+    }
+    .badge-reversal { background-color: rgba(74, 212, 134, 0.12); color: #4AD486; }
+    .badge-breakout { background-color: rgba(244, 162, 97, 0.12); color: #F4A261; }
+    
+    /* עיצוב כפתור ההפעלה שייראה כמו כפתור מערכת */
     .stButton>button {
-        background: #261E3D;
-        color: #F1EFF7;
-        border: 1px solid #3D3061;
-        border-radius: 10px;
-        padding: 10px 24px;
-        font-weight: 500;
+        background: linear-gradient(180deg, #241A42, #191230);
+        color: #E6E1F3;
+        border: 1px solid #33265C;
+        border-radius: 14px;
+        padding: 12px 28px;
+        font-weight: 600;
+        font-size: 0.9rem;
+        width: 100%;
+        box-shadow: 0 4px 12px rgba(0,0,0,0.2);
         transition: all 0.2s ease;
     }
     .stButton>button:hover {
-        background: #E2B4BD;
-        color: #0E0B16;
         border-color: #E2B4BD;
+        color: #E2B4BD;
+        box-shadow: 0 4px 16px rgba(226, 180, 189, 0.1);
     }
+    
+    /* ביטול גבולות מיותרים של Streamlit */
+    hr { border-color: #1E1833; }
     </style>
 """, unsafe_allow_html=True)
 
@@ -122,28 +149,30 @@ def run_scanner(ticker, scan_type):
     except: return None
     return None
 
-def draw_clean_chart(df, ticker):
+def draw_premium_chart(df, ticker):
     fig = go.Figure()
-    # קו מחיר חלק בגוון פסטל בהשראת האפליקציה החדשה
-    fig.add_trace(go.Scatter(x=df.index, y=df['Close'], line=dict(color='#E2B4BD', width=2.5), name='Price'))
-    fig.add_trace(go.Scatter(x=df.index, y=df['MA20'], line=dict(color='#A39DB5', width=1, dash='dash'), name='MA20'))
+    # קו מחיר דק ואלגנטי בצבע ורוד-פסטל נקי
+    fig.add_trace(go.Scatter(x=df.index, y=df['Close'], line=dict(color='#E2B4BD', width=2), name='Price', antialias=True))
+    # ממוצע נע בגוון סגול עמוק משולב ברקע
+    fig.add_trace(go.Scatter(x=df.index, y=df['MA20'], line=dict(color='#4A3E6D', width=1, dash='dot'), name='MA20'))
     
     fig.update_layout(
         template="plotly_dark",
         paper_bgcolor="rgba(0,0,0,0)",
         plot_bgcolor="rgba(0,0,0,0)",
-        height=300,
-        margin=dict(l=10, r=10, t=10, b=10),
-        xaxis=dict(showgrid=False),
-        yaxis=dict(showgrid=True, gridcolor='#2C2447')
+        height=260,
+        margin=dict(l=0, r=0, t=10, b=0),
+        xaxis=dict(showgrid=False, tickfont=dict(color='#5C5374', size=10)),
+        yaxis=dict(showgrid=True, gridcolor='#1A1430', tickfont=dict(color='#5C5374', size=10), side='right'),
+        showlegend=False
     )
     return fig
 
-# --- כותרת המערכת ---
-st.write("## 🔮 Quantum Terminal")
-st.write("<p style='color:#A39DB5;'>מערכת סריקה מתקדמת מבוססת קבוצות עבודה יציבות</p>", unsafe_allow_html=True)
+# --- כותרת המערכת במראה נקי ---
+st.markdown('<h1 class="main-title">Quantum Terminal</h1>', unsafe_allow_html=True)
+st.markdown('<p class="sub-title">מערכת סריקה מתקדמת מבוססת קבוצות עבודה יציבות</p>', unsafe_allow_html=True)
 
-# יצירת הטאבים
+# יצירת הטאבים (כעת מעוצבים כפתורי קפסולה)
 tabs = st.tabs([
     "NASDAQ א'", "NASDAQ ב'", "NASDAQ ג'", "NASDAQ ד'", 
     "S&P500 א'", "S&P500 ב'", 
@@ -159,38 +188,48 @@ sections = [
 
 for i, (group_id, label) in enumerate(sections):
     with tabs[i]:
-        col_controls, col_space = st.columns([1, 2])
-        with col_controls:
-            mode = st.radio("אסטרטגיית ניתוח:", ["REVERSAL", "BREAKOUT"], key=f"radio_{i}", horizontal=True)
-            scan_clicked = st.button(f"הפעל סריקה חכמה", key=f"btn_{i}")
+        # ארגון פקדים נקי במבנה טורי קומפקטי
+        col_ctrl, col_space = st.columns([1, 2])
+        with col_ctrl:
+            mode = st.radio("אסטרטגיה:", ["REVERSAL", "BREAKOUT"], key=f"radio_{i}", horizontal=True)
+            scan_clicked = st.button(f"הפעל סריקה", key=f"btn_{i}")
+        
+        st.markdown("<br>", unsafe_allow_html=True)
         
         if scan_clicked:
-            with st.spinner("מנתח את מגמות השוק..."):
+            with st.spinner("מנתח מגמות שוק..."):
                 tickers = get_sectional_tickers(group_id)
                 with ThreadPoolExecutor(max_workers=10) as ex:
                     results = list(ex.map(lambda t: run_scanner(t, mode), tickers))
                 
-                # סינון תוצאות ריקות
                 found_data = {r[0]: r[1] for r in results if r is not None}
                 
                 if found_data:
-                    st.write("### 🎯 הזדמנויות מסחר שזוהו:")
+                    # יצירת רשת נקייה של 2 עמודות עבור כרטיסיות התוצאה
+                    grid_cols = st.columns(2)
                     
-                    # הצגת התוצאות בכרטיסיות פינטק רכות
-                    for ticker, df_ticker in found_data.items():
-                        badge_html = f"<span class='badge-buy'>BUY / {mode}</span>" if mode == "REVERSAL" else f"<span class='badge-break'>BREAKOUT</span>"
-                        
-                        st.markdown(f"""
-                            <div class="signal-container">
-                                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px;">
-                                    <span style="font-size: 1.6rem; font-weight: 700; color: #F1EFF7;">{ticker}</span>
-                                    {badge_html}
+                    for idx, (ticker, df_ticker) in enumerate(found_data.items()):
+                        with grid_cols[idx % 2]:
+                            badge_class = "badge-reversal" if mode == "REVERSAL" else "badge-breakout"
+                            badge_text = "Reversal Signal" if mode == "REVERSAL" else "Breakout Signal"
+                            
+                            # הדפסת מבנה ה-Card המעוגל
+                            st.markdown(f"""
+                                <div class="premium-card">
+                                    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px;">
+                                        <span class="ticker-symbol">{ticker}</span>
+                                        <span class="badge {badge_class}">{badge_text}</span>
+                                    </div>
+                                    <div style="font-size: 1.1rem; font-weight: 500; color: #E6E1F3; margin-bottom: 5px;">
+                                        ${df_ticker['Close'].iloc[-1]:.2f}
+                                    </div>
+                                    <div style="color: #7E7497; font-size: 0.85rem; margin-bottom: 15px;">
+                                        נפח מסחר: {(df_ticker['Volume'].iloc[-1]/1e6):.2f}M
+                                    </div>
                                 </div>
-                                <p style="color: #A39DB5; font-size: 0.9rem; margin-top: -10px;">מחיר אחרון: ${df_ticker['Close'].iloc[-1]:.2f}</p>
-                            </div>
-                        """, unsafe_allow_html=True)
-                        
-                        # הצגת גרף נקי ומעוצב מתחת לכרטיסייה
-                        st.plotly_chart(draw_clean_chart(df_ticker, ticker), use_container_width=True)
+                            """, unsafe_allow_html=True)
+                            
+                            # הזרקת הגרף בצורה חלקה ישירות מתחת לנתוני הכרטיסייה
+                            st.plotly_chart(draw_premium_chart(df_ticker, ticker), use_container_width=True, config={'displayModeBar': False})
                 else:
-                    st.info("לא אותרו הזדמנויות מסחר העונות על הגדרות אלו כרגע בקבוצה זו.")
+                    st.info("לא אותרו הזדמנויות מסחר בקבוצה זו תחת התנאים שנבחרו.")
