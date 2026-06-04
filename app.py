@@ -27,10 +27,13 @@ st.markdown("""
     .badge { padding: 4px 10px; border-radius: 20px; font-size: 0.75rem; font-weight: 600; display: inline-block; margin-top: 6px; text-align: center; }
     .badge-reversal { background-color: rgba(0, 184, 135, 0.15); color: #00B887; }
     .badge-breakout { background-color: rgba(255, 159, 28, 0.15); color: #FF9F1C; }
+    .badge-search { background-color: rgba(58, 134, 255, 0.15); color: #3A86FF; }
     
-    /* כפתור הפעלה */
+    /* כפתור הפעלה ותיבות קלט */
     .stButton>button { background: linear-gradient(180deg, #1A202C, #0B0E14); color: #E6E1F3; border: 1px solid #2D3748; border-radius: 12px; padding: 10px 24px; font-weight: 600; width: 100%; transition: all 0.3s; }
     .stButton>button:hover { border-color: #00B887; color: #00B887; }
+    div[data-testid="stTextInput"] input { background-color: #111522 !important; color: #FFFFFF !important; border: 1px solid #1F2538 !important; border-radius: 10px !important; }
+    div[data-testid="stTextInput"] input:focus { border-color: #00B887 !important; }
     </style>
 """, unsafe_allow_html=True)
 
@@ -45,59 +48,55 @@ MARKET_DATA = {
     "MIDCAP": ["FDS", "PNR", "RS", "TKO", "POOL", "WSO", "ELF", "JBL", "MTH", "CBOE", "XYL", "HAE", "AAL", "TEX", "MTD", "WFR", "LANC", "OLLIE", "CHDN", "SAIA", "TREX", "YETI", "CROX", "DECK", "SKX", "LOPE"]
 }
 
+def calculate_indicators(df):
+    """פונקציית עזר לחישוב כל המדדים והאיתותים על ה-DataFrame"""
+    df['MA20'] = df['Close'].rolling(20).mean()
+    df['High20'] = df['High'].rolling(20).max().shift(1)
+    df['Vol20'] = df['Volume'].rolling(20).mean()
+    
+    std20 = df['Close'].rolling(20).std()
+    df['BB_Upper'] = df['MA20'] + (std20 * 2)
+    df['BB_Lower'] = df['MA20'] - (std20 * 2)
+    
+    delta = df['Close'].diff()
+    gain = (delta.where(delta > 0, 0)).rolling(14).mean()
+    loss = (-delta.where(delta < 0, 0)).rolling(14).mean()
+    rs = gain / loss
+    df['RSI'] = 100 - (100 / (1 + rs))
+    
+    exp12 = df['Close'].ewm(span=12, adjust=False).mean()
+    exp26 = df['Close'].ewm(span=26, adjust=False).mean()
+    df['MACD'] = exp12 - exp26
+    df['MACD_Signal'] = df['MACD'].ewm(span=9, adjust=False).mean()
+    df['MACD_Hist'] = df['MACD'] - df['MACD_Signal']
+    
+    tp = (df['High'] + df['Low'] + df['Close']) / 3
+    rmf = tp * df['Volume']
+    pos_flow = rmf.where(tp > tp.shift(1), 0).rolling(14).sum()
+    neg_flow = rmf.where(tp < tp.shift(1), 0).rolling(14).sum()
+    df['MFI'] = 100 - (100 / (1 + (pos_flow / neg_flow)))
+    
+    # חישוב איתותים משולב (הצגת איתותים משתי האסטרטגיות במקביל במצב חימוש/חיפוש)
+    df['Buy_Signal'] = ((df['Close'] > df['MA20']) & (df['Close'].shift(1) <= df['MA20'].shift(1))) | \
+                       ((df['Close'] > df['High20']) & (df['Volume'] > df['Vol20']))
+                       
+    df['Sell_Signal'] = (df['Close'] < df['MA20']) & (df['Close'].shift(1) >= df['MA20'].shift(1))
+    return df
+
 def run_scanner(ticker, scan_type):
     try:
         df = yf.Ticker(ticker).history(period="120d")
         if len(df) < 50: return None
+        df = calculate_indicators(df)
         
-        df['MA20'] = df['Close'].rolling(20).mean()
-        df['High20'] = df['High'].rolling(20).max().shift(1)
-        df['Vol20'] = df['Volume'].rolling(20).mean()
-        
-        std20 = df['Close'].rolling(20).std()
-        df['BB_Upper'] = df['MA20'] + (std20 * 2)
-        df['BB_Lower'] = df['MA20'] - (std20 * 2)
-        
-        delta = df['Close'].diff()
-        gain = (delta.where(delta > 0, 0)).rolling(14).mean()
-        loss = (-delta.where(delta < 0, 0)).rolling(14).mean()
-        rs = gain / loss
-        df['RSI'] = 100 - (100 / (1 + rs))
-        
-        exp12 = df['Close'].ewm(span=12, adjust=False).mean()
-        exp26 = df['Close'].ewm(span=26, adjust=False).mean()
-        df['MACD'] = exp12 - exp26
-        df['MACD_Signal'] = df['MACD'].ewm(span=9, adjust=False).mean()
-        df['MACD_Hist'] = df['MACD'] - df['MACD_Signal']
-        
-        tp = (df['High'] + df['Low'] + df['Close']) / 3
-        rmf = tp * df['Volume']
-        pos_flow = rmf.where(tp > tp.shift(1), 0).rolling(14).sum()
-        neg_flow = rmf.where(tp < tp.shift(1), 0).rolling(14).sum()
-        df['MFI'] = 100 - (100 / (1 + (pos_flow / neg_flow)))
-        
-        # חישוב היסטורי של איתותים לצורך סימון על הגרף
-        df['Buy_Signal'] = False
-        df['Sell_Signal'] = False
-        
+        # סינון הסורק לפי הבחירה הספציפית בטאב
         if scan_type == "REVERSAL":
-            # קנייה: חציה של ה-MA20 מלמטה למעלה
-            df['Buy_Signal'] = (df['Close'] > df['MA20']) & (df['Close'].shift(1) <= df['MA20'].shift(1))
-            # מכירה: חציה של ה-MA20 מלמעלה למטה
-            df['Sell_Signal'] = (df['Close'] < df['MA20']) & (df['Close'].shift(1) >= df['MA20'].shift(1))
-            
-            # בדיקה אם היום האחרון עומד בתנאי (בשביל עצם הסינון בסורק)
-            if df['Buy_Signal'].iloc[-1]:
-                return ticker, df
-                
+            is_valid = (df['Close'].iloc[-1] > df['MA20'].iloc[-1]) & (df['Close'].iloc[-2] < df['MA20'].iloc[-2])
         elif scan_type == "BREAKOUT":
-            # קנייה: פריצת הגבוה של 20 יום + ווליום גבוה מהממוצע
-            df['Buy_Signal'] = (df['Close'] > df['High20']) & (df['Volume'] > df['Vol20'])
-            # מכירה: שבירה מתחת ל-MA20 אחרי שהייתה פריצה
-            df['Sell_Signal'] = (df['Close'] < df['MA20']) & (df['Close'].shift(1) >= df['MA20'].shift(1))
+            is_valid = (df['Close'].iloc[-1] > df['High20'].iloc[-1]) & (df['Volume'].iloc[-1] > df['Vol20'].iloc[-1])
             
-            if df['Buy_Signal'].iloc[-1]:
-                return ticker, df
+        if is_valid:
+            return ticker, df
     except: return None
     return None
 
@@ -121,20 +120,20 @@ def draw_fixed_pro_chart(df, ticker):
     fig.add_trace(go.Scatter(x=df_slice.index, y=df_slice['BB_Upper'], line=dict(color='rgba(0,184,135,0.25)', width=1, dash='dash'), name='BB Up'), row=1, col=1)
     fig.add_trace(go.Scatter(x=df_slice.index, y=df_slice['BB_Lower'], line=dict(color='rgba(255,58,90,0.25)', width=1, dash='dash'), name='BB Dn'), row=1, col=1)
     
-    # --- הוספת חצי קנייה ומכירה על פאנל המחיר ---
+    # --- הוספת חצי קנייה ומכירה ---
     buys = df_slice[df_slice['Buy_Signal'] == True]
     sells = df_slice[df_slice['Sell_Signal'] == True]
     
     if not buys.empty:
         fig.add_trace(go.Scatter(
-            x=buys.index, y=buys['Low'] * 0.985, # מיקום מעט מתחת לנמוך של הנר
+            x=buys.index, y=buys['Low'] * 0.985,
             mode='markers', marker=dict(symbol='triangle-up', size=11, color='#00B887', line=dict(width=1, color='#FFFFFF')),
             name='Buy Call'
         ), row=1, col=1)
         
     if not sells.empty:
         fig.add_trace(go.Scatter(
-            x=sells.index, y=sells['High'] * 1.015, # מיקום מעט מעל הגבוה של הנר
+            x=sells.index, y=sells['High'] * 1.015,
             mode='markers', marker=dict(symbol='triangle-down', size=11, color='#FF3A5A', line=dict(width=1, color='#FFFFFF')),
             name='Sell Call'
         ), row=1, col=1)
@@ -174,14 +173,68 @@ def draw_fixed_pro_chart(df, ticker):
 
 # --- ממשק משתמש ראשי ---
 st.markdown('<h1 class="main-title">Quantum Terminal</h1>', unsafe_allow_html=True)
-st.markdown('<p class="sub-title">מערכת סריקה מתקדמת בתצורת Webull Pro Pro</p>', unsafe_allow_html=True)
+st.markdown('<p class="sub-title">מערכת סריקה וניתוח בתצורת Webull Pro Pro</p>', unsafe_allow_html=True)
 
-tabs_names = ["NASDAQ א'", "NASDAQ ב'", "NASDAQ ג'", "NASDAQ ד'", "S&P500 א'", "S&P500 ב'", "DOW מלא", "MIDCAP"]
+# הוספת לשונית החיפוש בהתחלה
+tabs_names = ["🔍 חיפוש מניה", "NASDAQ א'", "NASDAQ ב'", "NASDAQ ג'", "NASDAQ ד'", "S&P500 א'", "S&P500 ב'", "DOW מלא", "MIDCAP"]
 tabs = st.tabs(tabs_names)
+
+# --- לשונית 1: חיפוש ידני ---
+with tabs[0]:
+    col_search, _ = st.columns([1.5, 2])
+    with col_search:
+        search_ticker = st.text_input("הזן סימול מניה (לדוגמה: AAPL, TSLA, NVDA):", value="").strip().upper()
+    
+    if search_ticker:
+        with st.spinner(f"מושך נתונים עבור {search_ticker}..."):
+            try:
+                stock_data = yf.Ticker(search_ticker).history(period="120d")
+                if len(stock_data) >= 20:
+                    stock_data = calculate_indicators(stock_data)
+                    
+                    # הצגת התוצאה באותה פריסה מקצועית
+                    st.markdown('<div class="stock-container">', unsafe_allow_html=True)
+                    col_left, col_right = st.columns([1, 3.8])
+                    
+                    with col_left:
+                        last_close = stock_data['Close'].iloc[-1]
+                        prev_close = stock_data['Close'].iloc[-2]
+                        pct_change = ((last_close - prev_close) / prev_close) * 100
+                        change_color = "#00B887" if pct_change >= 0 else "#FF3A5A"
+                        
+                        st.markdown(f"""
+                            <div class="info-panel">
+                                <span class="ticker-symbol">{search_ticker}</span>
+                                <span class="badge badge-search">Analysis Mode</span>
+                                <div style="font-size: 1.4rem; font-weight: 700; color: {change_color}; margin-top: 15px;">
+                                    ${last_close:.2f}
+                                </div>
+                                <div style="color: {change_color}; font-size: 0.85rem; font-weight: 600;">
+                                    {'+' if pct_change >= 0 else ''}{pct_change:.2f}%
+                                </div>
+                                <div style="color: #7E7497; font-size: 0.8rem; margin-top: 5px; font-weight: 500;">
+                                    Vol: {(stock_data['Volume'].iloc[-1]/1e6):.1f}M
+                                </div>
+                            </div>
+                        """, unsafe_allow_html=True)
+                    
+                    with col_right:
+                        st.plotly_chart(
+                            draw_fixed_pro_chart(stock_data, search_ticker), 
+                            use_container_width=True, 
+                            config={'displayModeBar': False}
+                        )
+                    st.markdown('</div>', unsafe_allow_html=True)
+                else:
+                    st.error("לא נמצאו מספיק נתונים היסטוריים עבור הטיקר שהוזן.")
+            except Exception as e:
+                st.error(f"שגיאה במשיכת הנתונים. ודא שהסימול נכון. ({str(e)})")
+
+# --- שאר הלשוניות: סורק הקבוצות הקבוע ---
 sections_keys = ["NASDAQ_A", "NASDAQ_B", "NASDAQ_C", "NASDAQ_D", "SP500_A", "SP500_B", "DOW_FULL", "MIDCAP"]
 
 for i, group_id in enumerate(sections_keys):
-    with tabs[i]:
+    with tabs[i + 1]: # +1 כי הלשונית הראשונה היא חיפוש
         col_ctrl, _ = st.columns([1, 2])
         with col_ctrl:
             mode = st.radio("אסטרטגיה:", ["REVERSAL", "BREAKOUT"], key=f"radio_{i}", horizontal=True)
@@ -211,7 +264,6 @@ for i, group_id in enumerate(sections_keys):
                         price_color = "#00B887" if active_mode == "REVERSAL" else "#FF9F1C"
                         
                         st.markdown('<div class="stock-container">', unsafe_allow_html=True)
-                        
                         col_left, col_right = st.columns([1, 3.8])
                         
                         with col_left:
@@ -234,7 +286,6 @@ for i, group_id in enumerate(sections_keys):
                                 use_container_width=True, 
                                 config={'displayModeBar': False}
                             )
-                        
                         st.markdown('</div>', unsafe_allow_html=True)
             else:
                 st.info("לא אותרו איתותים בקבוצה זו תחת התנאים שנבחרו.")
