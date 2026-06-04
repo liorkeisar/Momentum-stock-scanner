@@ -3,61 +3,54 @@ import yfinance as yf
 import pandas as pd
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
-from concurrent.futures import ThreadPoolExecutor
 
-st.set_page_config(layout="wide", page_title="Quantum Terminal")
+# הגדרת דף רחב
+st.set_page_config(layout="wide", page_title="Quantum Terminal Pro")
 
-# --- CSS עיצוב ---
+# עיצוב CSS פנימי לשיפור המראה
 st.markdown("""
     <style>
-    .stock-container { background: #0B0E14; border: 1px solid #1F2433; border-radius: 16px; padding: 15px; margin-bottom: 20px; }
-    .info-panel { background: #111522; border: 1px solid #1F2538; border-radius: 12px; padding: 15px; }
-    .ticker-symbol { font-size: 1.8rem; font-weight: 700; color: #FFFFFF; }
-    .trigger-reason-box { background: rgba(255, 255, 255, 0.05); border-radius: 8px; padding: 10px; margin-top: 10px; font-size: 0.8rem; color: #A0AEC0; }
+    .metric-card { background-color: #111522; padding: 15px; border-radius: 10px; border: 1px solid #1F2538; }
+    .analysis-box { background-color: #1A202C; padding: 15px; border-radius: 10px; border: 1px dashed #4A5568; margin-top: 10px; }
     </style>
 """, unsafe_allow_html=True)
 
-# --- פונקציות לוגיות ---
-def calculate_indicators(df):
+# פונקציות עזר
+def get_data(ticker):
+    df = yf.Ticker(ticker).history(period="60d")
     df['MA20'] = df['Close'].rolling(20).mean()
-    df['High20'] = df['High'].rolling(20).max().shift(1)
-    df['Volume_MA'] = df['Volume'].rolling(20).mean()
     return df
 
-def get_trigger_reason(df, active_mode):
-    last = df.iloc[-1]
-    if active_mode == "REVERSAL":
-        return f"מחיר סגירה (${last['Close']:.2f}) חצה את ממוצע ה-20."
-    return f"פריצת שיא 20 יום ב-${last['High20']:.2f} עם ווליום חריג."
-
-def draw_premium_chart(df, ticker):
-    fig = make_subplots(rows=2, cols=1, shared_xaxes=True, row_heights=[0.7, 0.3], vertical_spacing=0.03)
-    fig.add_trace(go.Candlestick(x=df.index, open=df['Open'], high=df['High'], low=df['Low'], close=df['Close'], name='Price'), row=1, col=1)
-    fig.add_trace(go.Scatter(x=df.index, y=df['MA20'], name='MA20', line=dict(color='#E2B4BD', width=1.5)), row=1, col=1)
-    fig.add_trace(go.Bar(x=df.index, y=df['Volume'], name='Volume', marker_color='rgba(100, 100, 100, 0.5)'), row=2, col=1)
-    fig.update_layout(template="plotly_dark", height=500, margin=dict(l=10, r=10, t=10, b=10), showlegend=False)
+def draw_chart(df, ticker):
+    fig = go.Figure(data=[go.Candlestick(x=df.index, open=df['Open'], high=df['High'], low=df['Low'], close=df['Close'], name='Price')])
+    fig.add_trace(go.Scatter(x=df.index, y=df['MA20'], name='MA20', line=dict(color='#E2B4BD', width=2)))
+    fig.update_layout(template="plotly_dark", height=450, margin=dict(l=0, r=0, t=30, b=0))
     return fig
 
 # --- ממשק ---
-tabs = st.tabs(["🔍 חיפוש ידני", "🚀 סורק שוק"])
+st.title("Quantum Terminal")
 
-with tabs[0]:
-    ticker = st.text_input("הזן סימול:", value="NVDA").upper()
+# יצירת טאבים
+tab1, tab2 = st.tabs(["🔍 חיפוש מניה", "🚀 סורק שוק"])
+
+with tab1:
+    ticker = st.text_input("הזן סימול (לדוגמה: AAPL):", value="NVDA").upper()
     if ticker:
-        df = yf.Ticker(ticker).history(period="100d")
-        if not df.empty:
-            df = calculate_indicators(df)
-            c1, c2 = st.columns([1, 3])
-            with c1:
-                st.markdown(f'<div class="info-panel"><div class="ticker-symbol">{ticker}</div><div>${df["Close"].iloc[-1]:.2f}</div></div>', unsafe_allow_html=True)
-            with c2:
-                st.plotly_chart(draw_premium_chart(df, ticker), use_container_width=True)
+        df = get_data(ticker)
+        col1, col2 = st.columns([1, 3])
+        with col1:
+            st.markdown(f'<div class="metric-card"><h3>{ticker}</h3><p>מחיר: ${df["Close"].iloc[-1]:.2f}</p></div>', unsafe_allow_html=True)
+            st.markdown('<div class="analysis-box"><b>ניתוח טכני:</b><br>מגמה מחושבת לפי MA20.</div>', unsafe_allow_html=True)
+        with col2:
+            st.plotly_chart(draw_chart(df, ticker), use_container_width=True)
 
-with tabs[1]:
-    mode = st.radio("אסטרטגיה:", ["REVERSAL", "BREAKOUT"], horizontal=True)
+with tab2:
+    st.subheader("סורק שוק מהיר")
     if st.button("הפעל סריקה"):
-        # דוגמה לסורק פשוט
-        tickers = ["AAPL", "MSFT", "NVDA", "TSLA"]
-        for t in tickers:
-            df = calculate_indicators(yf.Ticker(t).history(period="50d"))
-            st.markdown(f'<div class="stock-container"><h4>{t}</h4></div>', unsafe_allow_html=True)
+        watchlist = ["AAPL", "MSFT", "NVDA", "TSLA", "AMD"]
+        for t in watchlist:
+            df = get_data(t)
+            # הצגה בטורים כדי לא להעמיס
+            cols = st.columns(2)
+            cols[0].write(f"**{t}**")
+            cols[1].metric("מחיר", f"${df['Close'].iloc[-1]:.2f}")
