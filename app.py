@@ -66,7 +66,7 @@ def calculate_indicators(df):
     delta = df['Close'].diff()
     gain = (delta.where(delta > 0, 0)).rolling(14).mean()
     loss = (-delta.where(delta < 0, 0)).rolling(14).mean()
-    rs = gain / loss
+    rs = gain / loss.replace(0, 1e-10) # הגנה מפני חלוקה באפס
     df['RSI'] = 100 - (100 / (1 + rs))
     
     exp12 = df['Close'].ewm(span=12, adjust=False).mean()
@@ -79,7 +79,7 @@ def calculate_indicators(df):
     rmf = tp * df['Volume']
     pos_flow = rmf.where(tp > tp.shift(1), 0).rolling(14).sum()
     neg_flow = rmf.where(tp < tp.shift(1), 0).rolling(14).sum()
-    df['MFI'] = 100 - (100 / (1 + (pos_flow / neg_flow)))
+    df['MFI'] = 100 - (100 / (1 + (pos_flow / neg_flow.replace(0, 1e-10)))) # הגנה
     
     df['Buy_Signal'] = ((df['Close'] > df['MA20']) & (df['Close'].shift(1) <= df['MA20'].shift(1))) | \
                        ((df['Close'] > df['High20']) & (df['Volume'] > df['Vol20']))
@@ -168,7 +168,6 @@ def draw_fixed_pro_chart(df, ticker):
     return fig
 
 def render_info_panel(ticker, df, badge_text, badge_class, price_color):
-    """פונקציה לייצור פאנל הנתונים השמאלי כולל מקרא אינדיקטורים מפורט וערכים עדכניים"""
     last_row = df.iloc[-1]
     rsi_val = last_row['RSI']
     mfi_val = last_row['MFI']
@@ -245,7 +244,7 @@ with tabs[0]:
                     stock_data = calculate_indicators(stock_data)
                     
                     st.markdown('<div class="stock-container">', unsafe_allow_html=True)
-                    col_left, col_right = st.columns([1.2, 3.8])
+                    col_left, col_right = st.columns([1.5, 3.5])
                     
                     with col_left:
                         last_close = stock_data['Close'].iloc[-1]
@@ -288,21 +287,22 @@ for i, group_id in enumerate(sections_keys):
             active_mode = st.session_state.get(f"current_mode_{group_id}", mode)
             
             if found_data:
-                grid_cols = st.columns(2)
-                for idx, (ticker, df_ticker) in enumerate(found_data.items()):
-                    with grid_cols[idx % 2]:
-                        badge_class = "badge-reversal" if active_mode == "REVERSAL" else "badge-breakout"
-                        badge_text = "Reversal" if active_mode == "REVERSAL" else "Breakout"
-                        price_color = "#00B887" if active_mode == "REVERSAL" else "#FF9F1C"
-                        
-                        st.markdown('<div class="stock-container">', unsafe_allow_html=True)
-                        col_left, col_right = st.columns([1.2, 3.8])
-                        
-                        with col_left:
-                            render_info_panel(ticker, df_ticker, badge_text, badge_class, price_color)
-                        
-                        with col_right:
-                            st.plotly_chart(draw_fixed_pro_chart(df_ticker, ticker), use_container_width=True, config={'displayModeBar': False})
-                        st.markdown('</div>', unsafe_allow_html=True)
+                # התיקון הקריטי: הורדת הפתיחה הכפולה של st.columns
+                for ticker, df_ticker in found_data.items():
+                    badge_class = "badge-reversal" if active_mode == "REVERSAL" else "badge-breakout"
+                    badge_text = "Reversal" if active_mode == "REVERSAL" else "Breakout"
+                    price_color = "#00B887" if active_mode == "REVERSAL" else "#FF9F1C"
+                    
+                    st.markdown('<div class="stock-container">', unsafe_allow_html=True)
+                    # פתיחת חלוקה לעמודות אך ורק פעם אחת לשורה
+                    col_left, col_right = st.columns([1.5, 3.5])
+                    
+                    with col_left:
+                        render_info_panel(ticker, df_ticker, badge_text, badge_class, price_color)
+                    
+                    with col_right:
+                        st.plotly_chart(draw_fixed_pro_chart(df_ticker, ticker), use_container_width=True, config={'displayModeBar': False})
+                    
+                    st.markdown('</div>', unsafe_allow_html=True)
             else:
                 st.info("לא אותרו איתותים בקבוצה זו תחת התנאים שנבחרו.")
