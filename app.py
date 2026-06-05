@@ -1,291 +1,452 @@
-import streamlit as st
-import yfinance as yf
-import pandas as pd
-import numpy as np
-import plotly.graph_objects as go
-from plotly.subplots import make_subplots
-from concurrent.futures import ThreadPoolExecutor
+import { useState, useEffect, useCallback } from "react";
 
-st.set_page_config(layout="wide", page_title="Quantum Terminal v2", initial_sidebar_state="collapsed")
+const TICKERS = ["NVDA","AXON","CRWD","PODD","GEV","LULU","SMCI","META"];
 
-# --- CSS עיצוב פינטק פרימיום מודרני ---
-st.markdown("""
-    <style>
-    .stApp { background-color: #0A0712; color: #E6E1F3; font-family: -apple-system, sans-serif; }
-    .main-title { font-size: 2.2rem; font-weight: 800; background: linear-gradient(90deg, #00B887, #E2B4BD); -webkit-background-clip: text; -webkit-text-fill-color: transparent; }
-    .sub-title { color: #7E7497; font-size: 0.95rem; margin-bottom: 35px; }
-    
-    /* טאבים */
-    .stTabs [data-baseweb="tab-list"] { gap: 12px; background-color: transparent; border-bottom: 1px solid #1E1833; }
-    .stTabs [data-baseweb="tab"] { background-color: #151026; border-radius: 20px; color: #938AA9; padding: 8px 20px; border: 1px solid #231B3D; font-size: 0.85rem; }
-    .stTabs [aria-selected="true"] { background-color: #2D2447 !important; color: #00B887 !important; border-color: #00B887 !important; font-weight: 600; }
-    
-    /* כרטיסיית מניה משולבת */
-    .stock-container { background: #0B0E14; border: 1px solid #1F2433; border-radius: 16px; padding: 16px; margin-bottom: 20px; }
-    .info-panel { background: #111522; border: 1px solid #1F2538; border-radius: 12px; padding: 14px; height: 100%; display: flex; flex-direction: column; justify-content: center; }
-    .ticker-symbol { font-size: 1.8rem; font-weight: 700; color: #FFFFFF; display: block; }
-    .badge { padding: 4px 10px; border-radius: 20px; font-size: 0.75rem; font-weight: 600; display: inline-block; margin-top: 6px; text-align: center; }
-    .badge-reversal { background-color: rgba(0, 184, 135, 0.15); color: #00B887; }
-    .badge-breakout { background-color: rgba(255, 159, 28, 0.15); color: #FF9F1C; }
-    .badge-search { background-color: rgba(58, 134, 255, 0.15); color: #3A86FF; }
-    
-    /* כפתור הפעלה ותיבות קלט */
-    .stButton>button { background: linear-gradient(180deg, #1A202C, #0B0E14); color: #E6E1F3; border: 1px solid #2D3748; border-radius: 12px; padding: 10px 24px; font-weight: 600; width: 100%; transition: all 0.3s; }
-    .stButton>button:hover { border-color: #00B887; color: #00B887; }
-    div[data-testid="stTextInput"] input { background-color: #111522 !important; color: #FFFFFF !important; border: 1px solid #1F2538 !important; border-radius: 10px !important; }
-    div[data-testid="stTextInput"] input:focus { border-color: #00B887 !important; }
-    </style>
-""", unsafe_allow_html=True)
+// ── Fetch real market data via Claude API + web search ────────────────────────
+async function fetchRealData(tickers) {
+  const prompt = `Get current stock market data for these tickers: ${tickers.join(", ")}.
+For each stock return ONLY a JSON array (no markdown, no explanation) with objects containing:
+- ticker (string)
+- price (number, current price)
+- change (number, % change today)
+- volume (number, today's volume in millions, e.g. 45.2)
+- avgVolume (number, 30-day avg volume in millions)
+- high52 (number, 52-week high)
+- low52 (number, 52-week low)
+- dayHigh (number)
+- dayLow (number)
+- sector (string)
 
-MARKET_DATA = {
-    "NASDAQ_A": ["AAPL", "MSFT", "NVDA", "AMZN", "META", "GOOGL", "GOOG", "TSLA", "AVGO", "PEP", "COST", "CSCO", "TMUS", "ADBE", "AMD", "NFLX", "TXN", "AMGN", "INTU", "HON", "AMAT", "QCOM", "BKNG", "ISRG", "VRTX"],
-    "NASDAQ_B": ["MDLZ", "REGN", "LRCX", "PANW", "SNPS", "KLAC", "ASML", "MELI", "MAR", "CTAS", "ORLY", "CRWD", "NXPI", "WDAY", "FTNT", "PCAR", "MNST", "ADSK", "PAYX", "ROST", "AEP", "CPRT", "KDP", "CHTR", "MCHP"],
-    "NASDAQ_C": ["AZN", "DDOG", "ODFL", "GILD", "PDD", "TEAM", "IDXX", "ADI", "GEHC", "BKR", "ON", "EXC", "MRVL", "CTSH", "EA", "CDNS", "ABNB", "CEG", "MDB", "VRSK", "FAST", "CSX", "DXCM", "ANSS", "FFIV"],
-    "NASDAQ_D": ["SBAC", "ALGN", "EBAY", "SIRI", "ZBRA", "ILMN", "WBA", "JD", "BIDU", "LCID", "ZM", "MRNA", "PYPL", "INTC", "MU", "DLTR", "EXPE", "LULU"],
-    "SP500_A": ["AAPL", "MSFT", "AMZN", "NVDA", "META", "GOOGL", "GOOG", "BRK.B", "TSLA", "UNH", "JPM", "XOM", "JNJ", "V", "PG", "MA", "AVGO", "HD", "CVX", "MRK", "ABBV", "LLY", "COST", "PEP", "ADBE", "WMT", "MCD", "CSCO", "CRM", "BAC"],
-    "SP500_B": ["ACN", "TMO", "LIN", "ORCL", "AMD", "CMCSA", "ABT", "TXN", "NKE", "PM", "UPS", "COP", "MS", "PFE", "NEE", "GE", "AXP", "T", "DHR", "PLD", "SBUX", "CAT", "BA", "DE", "ISRG", "HON", "LOW", "SPGI", "BLK", "NOW"],
-    "DOW_FULL": ["AAPL", "AMGN", "AXP", "BA", "CAT", "CRM", "CSCO", "CVX", "DIS", "DOW", "GS", "HD", "HON", "IBM", "INTC", "JNJ", "JPM", "KO", "MCD", "MMM", "MRK", "MSFT", "NKE", "PG", "TRV", "UNH", "V", "VZ", "WBA", "WMT"],
-    "MIDCAP": ["FDS", "PNR", "RS", "TKO", "POOL", "WSO", "ELF", "JBL", "MTH", "CBOE", "XYL", "HAE", "AAL", "TEX", "MTD", "WFR", "LANC", "OLLIE", "CHDN", "SAIA", "TREX", "YETI", "CROX", "DECK", "SKX", "LOPE"]
+Use web search to get the latest real data. Return ONLY the JSON array, nothing else.`;
+
+  const response = await fetch("https://api.anthropic.com/v1/messages", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      model: "claude-sonnet-4-20250514",
+      max_tokens: 1000,
+      tools: [{ type: "web_search_20250305", name: "web_search" }],
+      messages: [{ role: "user", content: prompt }]
+    })
+  });
+
+  const data = await response.json();
+  const text = data.content
+    .filter(b => b.type === "text")
+    .map(b => b.text)
+    .join("");
+
+  const clean = text.replace(/```json|```/g, "").trim();
+  return JSON.parse(clean);
 }
 
-def calculate_indicators(df):
-    """פונקציית עזר לחישוב כל המדדים והאיתותים על ה-DataFrame"""
-    df['MA20'] = df['Close'].rolling(20).mean()
-    df['High20'] = df['High'].rolling(20).max().shift(1)
-    df['Vol20'] = df['Volume'].rolling(20).mean()
-    
-    std20 = df['Close'].rolling(20).std()
-    df['BB_Upper'] = df['MA20'] + (std20 * 2)
-    df['BB_Lower'] = df['MA20'] - (std20 * 2)
-    
-    delta = df['Close'].diff()
-    gain = (delta.where(delta > 0, 0)).rolling(14).mean()
-    loss = (-delta.where(delta < 0, 0)).rolling(14).mean()
-    rs = gain / loss
-    df['RSI'] = 100 - (100 / (1 + rs))
-    
-    exp12 = df['Close'].ewm(span=12, adjust=False).mean()
-    exp26 = df['Close'].ewm(span=26, adjust=False).mean()
-    df['MACD'] = exp12 - exp26
-    df['MACD_Signal'] = df['MACD'].ewm(span=9, adjust=False).mean()
-    df['MACD_Hist'] = df['MACD'] - df['MACD_Signal']
-    
-    tp = (df['High'] + df['Low'] + df['Close']) / 3
-    rmf = tp * df['Volume']
-    pos_flow = rmf.where(tp > tp.shift(1), 0).rolling(14).sum()
-    neg_flow = rmf.where(tp < tp.shift(1), 0).rolling(14).sum()
-    df['MFI'] = 100 - (100 / (1 + (pos_flow / neg_flow)))
-    
-    # חישוב איתותים משולב (הצגת איתותים משתי האסטרטגיות במקביל במצב חימוש/חיפוש)
-    df['Buy_Signal'] = ((df['Close'] > df['MA20']) & (df['Close'].shift(1) <= df['MA20'].shift(1))) | \
-                       ((df['Close'] > df['High20']) & (df['Volume'] > df['Vol20']))
-                       
-    df['Sell_Signal'] = (df['Close'] < df['MA20']) & (df['Close'].shift(1) >= df['MA20'].shift(1))
-    return df
+// ── Classify setup ────────────────────────────────────────────────────────────
+function classify(s) {
+  const pctFrom52 = ((s.high52 - s.price) / s.high52) * 100;
+  const rvol = s.avgVolume > 0 ? s.volume / s.avgVolume : 1;
+  if (pctFrom52 < 2.5) return "breakout";
+  if (rvol > 1.5) return "momentum";
+  return "momentum";
+}
 
-def run_scanner(ticker, scan_type):
-    try:
-        df = yf.Ticker(ticker).history(period="120d")
-        if len(df) < 50: return None
-        df = calculate_indicators(df)
-        
-        # סינון הסורק לפי הבחירה הספציפית בטאב
-        if scan_type == "REVERSAL":
-            is_valid = (df['Close'].iloc[-1] > df['MA20'].iloc[-1]) & (df['Close'].iloc[-2] < df['MA20'].iloc[-2])
-        elif scan_type == "BREAKOUT":
-            is_valid = (df['Close'].iloc[-1] > df['High20'].iloc[-1]) & (df['Volume'].iloc[-1] > df['Vol20'].iloc[-1])
-            
-        if is_valid:
-            return ticker, df
-    except: return None
-    return None
+function calcRS(change, spyChange) {
+  const rel = change - spyChange;
+  return Math.min(99, Math.max(1, Math.round(50 + rel * 8)));
+}
 
-def draw_fixed_pro_chart(df, ticker):
-    df_clean = df.copy()
-    if df_clean.index.tz is not None:
-        df_clean.index = df_clean.index.tz_localize(None)
-        
-    df_slice = df_clean.tail(75)
-    
-    row_heights = [0.40, 0.12, 0.16, 0.16, 0.16]
-    fig = make_subplots(rows=5, cols=1, shared_xaxes=True, row_heights=row_heights, vertical_spacing=0.015)
-    
-    # --- פאנל 1: נרות יפניים + בולינג'ר ---
-    fig.add_trace(go.Candlestick(
-        x=df_slice.index, open=df_slice['Open'], high=df_slice['High'], low=df_slice['Low'], close=df_slice['Close'],
-        increasing_line_color='#00B887', decreasing_line_color='#FF3A5A', name='Price'
-    ), row=1, col=1)
-    
-    fig.add_trace(go.Scatter(x=df_slice.index, y=df_slice['MA20'], line=dict(color='#3A86FF', width=1.2), name='MA20'), row=1, col=1)
-    fig.add_trace(go.Scatter(x=df_slice.index, y=df_slice['BB_Upper'], line=dict(color='rgba(0,184,135,0.25)', width=1, dash='dash'), name='BB Up'), row=1, col=1)
-    fig.add_trace(go.Scatter(x=df_slice.index, y=df_slice['BB_Lower'], line=dict(color='rgba(255,58,90,0.25)', width=1, dash='dash'), name='BB Dn'), row=1, col=1)
-    
-    # --- הוספת חצי קנייה ומכירה ---
-    buys = df_slice[df_slice['Buy_Signal'] == True]
-    sells = df_slice[df_slice['Sell_Signal'] == True]
-    
-    if not buys.empty:
-        fig.add_trace(go.Scatter(
-            x=buys.index, y=buys['Low'] * 0.985,
-            mode='markers', marker=dict(symbol='triangle-up', size=11, color='#00B887', line=dict(width=1, color='#FFFFFF')),
-            name='Buy Call'
-        ), row=1, col=1)
-        
-    if not sells.empty:
-        fig.add_trace(go.Scatter(
-            x=sells.index, y=sells['High'] * 1.015,
-            mode='markers', marker=dict(symbol='triangle-down', size=11, color='#FF3A5A', line=dict(width=1, color='#FFFFFF')),
-            name='Sell Call'
-        ), row=1, col=1)
-    
-    # --- פאנל 2: ווליום ---
-    vol_colors = ['#00B887' if row['Close'] >= row['Open'] else '#FF3A5A' for _, row in df_slice.iterrows()]
-    fig.add_trace(go.Bar(x=df_slice.index, y=df_slice['Volume'], marker_color=vol_colors, name='Volume'), row=2, col=1)
-    
-    # --- פאנל 3: MACD ---
-    macd_colors = ['#00B887' if val >= 0 else '#FF3A5A' for val in df_slice['MACD_Hist']]
-    fig.add_trace(go.Bar(x=df_slice.index, y=df_slice['MACD_Hist'], marker_color=macd_colors, name='Hist'), row=3, col=1)
-    fig.add_trace(go.Scatter(x=df_slice.index, y=df_slice['MACD'], line=dict(color='#FCA311', width=1.2), name='MACD'), row=3, col=1)
-    fig.add_trace(go.Scatter(x=df_slice.index, y=df_slice['MACD_Signal'], line=dict(color='#4CC9F0', width=1.2), name='Signal'), row=3, col=1)
-    
-    # --- פאנל 4: RSI ---
-    fig.add_trace(go.Scatter(x=df_slice.index, y=df_slice['RSI'], line=dict(color='#FF9F1C', width=1.2), name='RSI'), row=4, col=1)
-    fig.add_shape(type="line", x0=df_slice.index[0], y0=70, x1=df_slice.index[-1], y1=70, line=dict(color="rgba(255,255,255,0.12)", width=1, dash="dash"), row=4, col=1)
-    fig.add_shape(type="line", x0=df_slice.index[0], y0=30, x1=df_slice.index[-1], y1=30, line=dict(color="rgba(255,255,255,0.12)", width=1, dash="dash"), row=4, col=1)
-    fig.update_yaxes(range=[10, 90], row=4, col=1)
-    
-    # --- פאנל 5: MFI ---
-    fig.add_trace(go.Scatter(x=df_slice.index, y=df_slice['MFI'], line=dict(color='#00F5D4', width=1.2), name='MFI'), row=5, col=1)
-    fig.add_shape(type="line", x0=df_slice.index[0], y0=80, x1=df_slice.index[-1], y1=80, line=dict(color="rgba(255,255,255,0.12)", width=1, dash="dash"), row=5, col=1)
-    fig.add_shape(type="line", x0=df_slice.index[0], y0=20, x1=df_slice.index[-1], y1=20, line=dict(color="rgba(255,255,255,0.12)", width=1, dash="dash"), row=5, col=1)
-    fig.update_yaxes(range=[5, 95], row=5, col=1)
+// ── Sparkline ─────────────────────────────────────────────────────────────────
+function Spark({ positive }) {
+  // Generate a plausible-looking intraday shape
+  const pts = Array.from({length: 12}, (_, i) => {
+    const trend = positive ? i * 0.8 : -i * 0.8;
+    return 50 + trend + (Math.sin(i * 1.3) * 8);
+  });
+  const w=80, h=32;
+  const min=Math.min(...pts), max=Math.max(...pts);
+  const range = max - min || 1;
+  const path = pts.map((v,i) => `${(i/(pts.length-1))*w},${h-((v-min)/range)*(h-4)-2}`).join(" ");
+  const color = positive ? "#22d3a0" : "#f87171";
+  return (
+    <svg width={w} height={h} viewBox={`0 0 ${w} ${h}`}>
+      <defs>
+        <linearGradient id={`g${positive}`} x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0%" stopColor={color} stopOpacity="0.25"/>
+          <stop offset="100%" stopColor={color} stopOpacity="0"/>
+        </linearGradient>
+      </defs>
+      <polyline points={`${path} ${w},${h} 0,${h}`} fill={`url(#g${positive})`}/>
+      <polyline points={path} fill="none" stroke={color} strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"/>
+    </svg>
+  );
+}
 
-    # הגדרות תצוגה
-    fig.update_layout(
-        template="plotly_dark", paper_bgcolor="#0B0E14", plot_bgcolor="#0B0E14",
-        height=580, margin=dict(l=5, r=40, t=10, b=10),
-        showlegend=False, xaxis_rangeslider_visible=False, hovermode=False, dragmode=False
-    )
-    fig.update_xaxes(showgrid=False, zeroline=False, tickfont=dict(color='#5C5374', size=9), fixedrange=True)
-    fig.update_yaxes(showgrid=True, gridcolor='rgba(255,255,255,0.04)', zeroline=False, tickfont=dict(color='#5C5374', size=9), side='right', fixedrange=True)
-    
-    return fig
+// ── Risk Calculator ───────────────────────────────────────────────────────────
+function RiskCalc({ onClose, prefill }) {
+  const [entry,  setEntry]  = useState(prefill?.price?.toFixed(2) || "");
+  const [stop,   setStop]   = useState("");
+  const [target, setTarget] = useState("");
+  const [riskAmt,setRisk]   = useState("500");
 
-# --- ממשק משתמש ראשי ---
-st.markdown('<h1 class="main-title">Quantum Terminal</h1>', unsafe_allow_html=True)
-st.markdown('<p class="sub-title">מערכת סריקה וניתוח בתצורת Webull Pro Pro</p>', unsafe_allow_html=True)
+  const calc = () => {
+    const e=+entry, s=+stop, t=+target, r=+riskAmt;
+    if (!e||!s||!r||Math.abs(e-s)<0.001) return null;
+    const riskPer = Math.abs(e-s);
+    const shares  = Math.floor(r/riskPer);
+    const position= shares*e;
+    const potential= t ? (t-e)*shares : null;
+    const rr = potential ? (potential/r).toFixed(2) : null;
+    return { shares, position:position.toFixed(0), potential:potential?.toFixed(0), rr };
+  };
+  const res = calc();
 
-# הוספת לשונית החיפוש בהתחלה
-tabs_names = ["🔍 חיפוש מניה", "NASDAQ א'", "NASDAQ ב'", "NASDAQ ג'", "NASDAQ ד'", "S&P500 א'", "S&P500 ב'", "DOW מלא", "MIDCAP"]
-tabs = st.tabs(tabs_names)
+  return (
+    <div style={{position:"fixed",inset:0,zIndex:50,display:"flex",alignItems:"flex-end",justifyContent:"center",background:"rgba(0,0,0,0.75)"}}>
+      <div onClick={e=>e.stopPropagation()} style={{background:"#0d1117",borderTop:"1px solid #21262d",borderRadius:"24px 24px 0 0",width:"100%",maxWidth:460,padding:"20px 18px 40px"}}>
+        <div style={{width:40,height:4,background:"#30363d",borderRadius:99,margin:"0 auto 18px"}}/>
+        <div style={{fontFamily:"'Syne',sans-serif",fontWeight:800,fontSize:18,color:"#e6edf3",marginBottom:18}}>מחשבון סיכון</div>
+        {prefill?.ticker && <div style={{fontSize:12,color:"#f0b429",marginBottom:12,fontWeight:700}}>{prefill.ticker} · ${prefill.price?.toFixed(2)}</div>}
+        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:14}}>
+          {[["כניסה $",entry,setEntry],["סטופ $",stop,setStop],["יעד $",target,setTarget],["סיכון $",riskAmt,setRisk]].map(([label,val,set])=>(
+            <div key={label}>
+              <div style={{fontSize:11,color:"#8b949e",marginBottom:5}}>{label}</div>
+              <input type="number" value={val} onChange={e=>set(e.target.value)}
+                style={{width:"100%",background:"#161b22",border:"1px solid #21262d",borderRadius:10,padding:"9px 11px",color:"#e6edf3",fontSize:14,outline:"none",boxSizing:"border-box"}}
+                placeholder="0.00"/>
+            </div>
+          ))}
+        </div>
+        {res && (
+          <div style={{background:"#161b22",borderRadius:14,padding:14,border:"1px solid #21262d"}}>
+            {[
+              ["מניות", res.shares, "#e6edf3"],
+              ["גודל פוזיציה", `$${(+res.position).toLocaleString()}`, "#e6edf3"],
+              res.rr && ["R:R", `${res.rr}:1`, +res.rr>=2?"#22d3a0":"#f0b429"],
+              res.potential && ["פוטנציאל", `+$${(+res.potential).toLocaleString()}`, "#22d3a0"],
+            ].filter(Boolean).map(([label,val,color])=>(
+              <div key={label} style={{display:"flex",justifyContent:"space-between",padding:"8px 0",borderBottom:"1px solid #21262d"}}>
+                <span style={{color:"#8b949e",fontSize:13}}>{label}</span>
+                <span style={{color,fontWeight:700,fontSize:15}}>{val}</span>
+              </div>
+            ))}
+          </div>
+        )}
+        <button onClick={onClose} style={{marginTop:14,width:"100%",background:"#21262d",border:"none",borderRadius:12,padding:13,color:"#8b949e",fontWeight:600,cursor:"pointer",fontSize:14}}>סגור</button>
+      </div>
+    </div>
+  );
+}
 
-# --- לשונית 1: חיפוש ידני ---
-with tabs[0]:
-    col_search, _ = st.columns([1.5, 2])
-    with col_search:
-        search_ticker = st.text_input("הזן סימול מניה (לדוגמה: AAPL, TSLA, NVDA):", value="").strip().upper()
-    
-    if search_ticker:
-        with st.spinner(f"מושך נתונים עבור {search_ticker}..."):
-            try:
-                stock_data = yf.Ticker(search_ticker).history(period="120d")
-                if len(stock_data) >= 20:
-                    stock_data = calculate_indicators(stock_data)
-                    
-                    # הצגת התוצאה באותה פריסה מקצועית
-                    st.markdown('<div class="stock-container">', unsafe_allow_html=True)
-                    col_left, col_right = st.columns([1, 3.8])
-                    
-                    with col_left:
-                        last_close = stock_data['Close'].iloc[-1]
-                        prev_close = stock_data['Close'].iloc[-2]
-                        pct_change = ((last_close - prev_close) / prev_close) * 100
-                        change_color = "#00B887" if pct_change >= 0 else "#FF3A5A"
-                        
-                        st.markdown(f"""
-                            <div class="info-panel">
-                                <span class="ticker-symbol">{search_ticker}</span>
-                                <span class="badge badge-search">Analysis Mode</span>
-                                <div style="font-size: 1.4rem; font-weight: 700; color: {change_color}; margin-top: 15px;">
-                                    ${last_close:.2f}
-                                </div>
-                                <div style="color: {change_color}; font-size: 0.85rem; font-weight: 600;">
-                                    {'+' if pct_change >= 0 else ''}{pct_change:.2f}%
-                                </div>
-                                <div style="color: #7E7497; font-size: 0.8rem; margin-top: 5px; font-weight: 500;">
-                                    Vol: {(stock_data['Volume'].iloc[-1]/1e6):.1f}M
-                                </div>
-                            </div>
-                        """, unsafe_allow_html=True)
-                    
-                    with col_right:
-                        st.plotly_chart(
-                            draw_fixed_pro_chart(stock_data, search_ticker), 
-                            use_container_width=True, 
-                            config={'displayModeBar': False}
-                        )
-                    st.markdown('</div>', unsafe_allow_html=True)
-                else:
-                    st.error("לא נמצאו מספיק נתונים היסטוריים עבור הטיקר שהוזן.")
-            except Exception as e:
-                st.error(f"שגיאה במשיכת הנתונים. ודא שהסימול נכון. ({str(e)})")
+// ── Screener Tab ──────────────────────────────────────────────────────────────
+function ScreenerTab({ stocks, loading, error, onRefresh, onTrade }) {
+  const [filter, setFilter] = useState("all");
+  const [sortBy, setSortBy] = useState("rs");
 
-# --- שאר הלשוניות: סורק הקבוצות הקבוע ---
-sections_keys = ["NASDAQ_A", "NASDAQ_B", "NASDAQ_C", "NASDAQ_D", "SP500_A", "SP500_B", "DOW_FULL", "MIDCAP"]
+  const list = stocks
+    .filter(s => filter==="all" || s.setup===filter)
+    .sort((a,b) => b[sortBy] - a[sortBy]);
 
-for i, group_id in enumerate(sections_keys):
-    with tabs[i + 1]: # +1 כי הלשונית הראשונה היא חיפוש
-        col_ctrl, _ = st.columns([1, 2])
-        with col_ctrl:
-            mode = st.radio("אסטרטגיה:", ["REVERSAL", "BREAKOUT"], key=f"radio_{i}", horizontal=True)
-            scan_clicked = st.button("הפעל סריקה", key=f"btn_{i}")
-        
-        st.markdown("<br>", unsafe_allow_html=True)
-        
-        if scan_clicked or st.session_state.get(f"results_ready_{group_id}", False):
-            if scan_clicked:
-                with st.spinner("סורק נתוני שוק..."):
-                    tickers = MARKET_DATA.get(group_id, [])
-                    with ThreadPoolExecutor(max_workers=10) as ex:
-                        results = list(ex.map(lambda t: run_scanner(t, mode), tickers))
-                    st.session_state[f"data_{group_id}"] = {r[0]: r[1] for r in results if r is not None}
-                    st.session_state[f"results_ready_{group_id}"] = True
-                    st.session_state[f"current_mode_{group_id}"] = mode
-            
-            found_data = st.session_state.get(f"data_{group_id}", {})
-            active_mode = st.session_state.get(f"current_mode_{group_id}", mode)
-            
-            if found_data:
-                grid_cols = st.columns(2)
-                for idx, (ticker, df_ticker) in enumerate(found_data.items()):
-                    with grid_cols[idx % 2]:
-                        badge_class = "badge-reversal" if active_mode == "REVERSAL" else "badge-breakout"
-                        badge_text = "Reversal" if active_mode == "REVERSAL" else "Breakout"
-                        price_color = "#00B887" if active_mode == "REVERSAL" else "#FF9F1C"
-                        
-                        st.markdown('<div class="stock-container">', unsafe_allow_html=True)
-                        col_left, col_right = st.columns([1, 3.8])
-                        
-                        with col_left:
-                            st.markdown(f"""
-                                <div class="info-panel">
-                                    <span class="ticker-symbol">{ticker}</span>
-                                    <span class="badge {badge_class}">{badge_text}</span>
-                                    <div style="font-size: 1.4rem; font-weight: 700; color: {price_color}; margin-top: 15px;">
-                                        ${df_ticker['Close'].iloc[-1]:.2f}
-                                    </div>
-                                    <div style="color: #7E7497; font-size: 0.8rem; margin-top: 5px; font-weight: 500;">
-                                        Vol: {(df_ticker['Volume'].iloc[-1]/1e6):.1f}M
-                                    </div>
-                                </div>
-                            """, unsafe_allow_html=True)
-                        
-                        with col_right:
-                            st.plotly_chart(
-                                draw_fixed_pro_chart(df_ticker, ticker), 
-                                use_container_width=True, 
-                                config={'displayModeBar': False}
-                            )
-                        st.markdown('</div>', unsafe_allow_html=True)
-            else:
-                st.info("לא אותרו איתותים בקבוצה זו תחת התנאים שנבחרו.")
+  if (error) return (
+    <div style={{textAlign:"center",padding:40}}>
+      <div style={{fontSize:32,marginBottom:12}}>⚠️</div>
+      <div style={{color:"#f87171",marginBottom:8,fontWeight:700}}>שגיאה בטעינת נתונים</div>
+      <div style={{color:"#484f58",fontSize:12,marginBottom:20,lineHeight:1.6}}>{error}</div>
+      <button onClick={onRefresh} style={{background:"#f0b429",border:"none",borderRadius:12,padding:"10px 24px",color:"#0d1117",fontWeight:700,cursor:"pointer",fontFamily:"'Syne',sans-serif"}}>נסה שוב</button>
+    </div>
+  );
+
+  if (loading) return (
+    <div style={{textAlign:"center",padding:60}}>
+      <div style={{fontSize:40,marginBottom:16,display:"inline-block",animation:"spin 1s linear infinite"}}>⟳</div>
+      <div style={{color:"#8b949e",fontSize:14,marginBottom:8}}>מושך נתונים אמיתיים...</div>
+      <div style={{color:"#484f58",fontSize:12}}>Yahoo Finance דרך Claude AI</div>
+      <style>{`@keyframes spin{from{transform:rotate(0deg)}to{transform:rotate(360deg)}}`}</style>
+    </div>
+  );
+
+  return (
+    <div>
+      <div style={{display:"flex",gap:8,marginBottom:14}}>
+        {[["all","הכל"],["breakout","פריצות"],["momentum","מומנטום"]].map(([v,l])=>(
+          <button key={v} onClick={()=>setFilter(v)} style={{flex:1,padding:"8px 0",borderRadius:12,border:"none",cursor:"pointer",fontWeight:700,fontSize:12,fontFamily:"'Syne',sans-serif",
+            background:filter===v?"#f0b429":"#161b22",color:filter===v?"#0d1117":"#8b949e",transition:"all 0.15s"}}>
+            {l}
+          </button>
+        ))}
+      </div>
+
+      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:10}}>
+        <div style={{display:"flex",gap:14}}>
+          {[["rs","RS"],["rvol","RVOL"],["change","שינוי"]].map(([v,l])=>(
+            <button key={v} onClick={()=>setSortBy(v)} style={{background:"none",border:"none",cursor:"pointer",fontSize:11,fontWeight:700,
+              color:sortBy===v?"#f0b429":"#484f58",fontFamily:"'Syne',sans-serif"}}>
+              {l}{sortBy===v?" ↓":""}
+            </button>
+          ))}
+        </div>
+        <button onClick={onRefresh} style={{background:"none",border:"none",cursor:"pointer",fontSize:12,color:"#484f58"}}>↻ רענן</button>
+      </div>
+
+      <div style={{display:"flex",flexDirection:"column",gap:10}}>
+        {list.map(s => (
+          <div key={s.ticker} onClick={()=>onTrade(s)}
+            style={{background:"#161b22",borderRadius:16,padding:14,border:`1px solid ${s.nearKey?"rgba(240,180,41,0.5)":"#21262d"}`,cursor:"pointer"}}>
+            <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:10}}>
+              <div>
+                <div style={{display:"flex",alignItems:"center",gap:7,marginBottom:3}}>
+                  <span style={{fontFamily:"'Syne',sans-serif",fontWeight:800,fontSize:16,color:"#e6edf3"}}>{s.ticker}</span>
+                  {s.nearKey && <span style={{fontSize:9,background:"rgba(240,180,41,0.15)",color:"#f0b429",padding:"2px 6px",borderRadius:99,fontWeight:700}}>52W HIGH</span>}
+                  <span style={{fontSize:9,padding:"2px 6px",borderRadius:99,fontWeight:700,
+                    background:s.setup==="breakout"?"rgba(139,92,246,0.15)":"rgba(56,189,248,0.15)",
+                    color:s.setup==="breakout"?"#a78bfa":"#38bdf8"}}>
+                    {s.setup==="breakout"?"BREAKOUT":"MOMENTUM"}
+                  </span>
+                </div>
+                <div style={{fontSize:11,color:"#484f58"}}>{s.sector}</div>
+              </div>
+              <div style={{textAlign:"right"}}>
+                <div style={{fontFamily:"'Syne',sans-serif",fontWeight:800,fontSize:16,color:"#e6edf3"}}>${s.price?.toFixed(2)}</div>
+                <div style={{fontWeight:700,fontSize:13,color:s.change>=0?"#22d3a0":"#f87171"}}>{s.change>=0?"+":""}{s.change?.toFixed(2)}%</div>
+              </div>
+            </div>
+            <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",paddingTop:10,borderTop:"1px solid #21262d"}}>
+              <div style={{display:"flex",gap:16}}>
+                {[
+                  ["RS",   s.rs,                    s.rs>=85?"#22d3a0":s.rs>=70?"#f0b429":"#8b949e"],
+                  ["RVOL", `${s.rvol?.toFixed(1)}x`,s.rvol>=1.5?"#22d3a0":"#8b949e"],
+                  ["VOL",  `${s.volume?.toFixed(1)}M`,"#8b949e"],
+                  ["ATR%", `${s.atrPct}%`,           "#8b949e"],
+                ].map(([l,v,c])=>(
+                  <div key={l}>
+                    <div style={{fontSize:10,color:"#484f58",marginBottom:2}}>{l}</div>
+                    <div style={{fontSize:12,fontWeight:700,color:c}}>{v}</div>
+                  </div>
+                ))}
+              </div>
+              <Spark positive={s.change>=0}/>
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+// ── Portfolio Tab ─────────────────────────────────────────────────────────────
+const MOCK_POSITIONS = [
+  { ticker:"NVDA", entry:897.0, shares:50,  stop:878.0, target:970.0 },
+  { ticker:"AXON", entry:298.5, shares:80,  stop:288.0, target:335.0 },
+  { ticker:"GEV",  entry:181.2, shares:120, stop:175.0, target:202.0 },
+];
+
+function PortfolioTab({ stocks, onCalc }) {
+  const enriched = MOCK_POSITIONS.map(p => {
+    const live = stocks.find(s=>s.ticker===p.ticker);
+    const current = live?.price || p.entry;
+    const pnl = (current - p.entry) * p.shares;
+    const progress = Math.min(Math.max(((current-p.entry)/(p.target-p.entry))*100,0),100);
+    return {...p, current, pnl, progress};
+  });
+  const totalPnL = enriched.reduce((s,p)=>s+p.pnl,0);
+
+  return (
+    <div>
+      <div style={{background:"linear-gradient(135deg,#161b22,#0d1117)",border:"1px solid #21262d",borderRadius:20,padding:20,marginBottom:14}}>
+        <div style={{fontSize:10,color:"#484f58",letterSpacing:2,textTransform:"uppercase",marginBottom:4}}>Open P&L · מחירים חיים</div>
+        <div style={{fontFamily:"'Syne',sans-serif",fontWeight:900,fontSize:36,color:totalPnL>=0?"#22d3a0":"#f87171",letterSpacing:-1}}>
+          {totalPnL>=0?"+":"-"}${Math.abs(totalPnL).toFixed(0).replace(/\B(?=(\d{3})+(?!\d))/g,",")}
+        </div>
+        <div style={{fontSize:12,color:"#484f58",marginTop:4}}>{enriched.length} פוזיציות פתוחות</div>
+      </div>
+
+      <button onClick={()=>onCalc(null)} style={{width:"100%",background:"#f0b429",border:"none",borderRadius:14,padding:14,color:"#0d1117",fontWeight:800,fontSize:14,cursor:"pointer",marginBottom:14,fontFamily:"'Syne',sans-serif",display:"flex",alignItems:"center",justifyContent:"center",gap:8}}>
+        🧮 מחשבון סיכון
+      </button>
+
+      <div style={{display:"flex",flexDirection:"column",gap:10}}>
+        {enriched.map(p=>(
+          <div key={p.ticker} style={{background:"#161b22",borderRadius:16,padding:14,border:`1px solid ${p.pnl>=0?"rgba(34,211,160,0.2)":"rgba(248,113,113,0.2)"}`}}>
+            <div style={{display:"flex",justifyContent:"space-between",marginBottom:12}}>
+              <div>
+                <div style={{fontFamily:"'Syne',sans-serif",fontWeight:800,fontSize:16,color:"#e6edf3"}}>{p.ticker}</div>
+                <div style={{fontSize:11,color:"#484f58"}}>{p.shares} מניות · כניסה ${p.entry}</div>
+              </div>
+              <div style={{textAlign:"right"}}>
+                <div style={{fontWeight:800,fontSize:16,color:p.pnl>=0?"#22d3a0":"#f87171"}}>{p.pnl>=0?"+":""}{p.pnl.toFixed(0).replace(/\B(?=(\d{3})+(?!\d))/g,",")}$</div>
+                <div style={{fontSize:12,color:"#8b949e"}}>${p.current.toFixed(2)}</div>
+              </div>
+            </div>
+            <div style={{position:"relative",height:6,background:"#21262d",borderRadius:99,marginBottom:8}}>
+              <div style={{position:"absolute",height:"100%",width:`${p.progress}%`,background:"linear-gradient(90deg,#22d3a0,#06d6a0)",borderRadius:99,transition:"width 0.5s"}}/>
+            </div>
+            <div style={{display:"flex",justifyContent:"space-between",fontSize:10}}>
+              <span style={{color:"#f87171"}}>סטופ ${p.stop}</span>
+              <span style={{color:"#484f58"}}>{p.progress.toFixed(0)}% ליעד</span>
+              <span style={{color:"#22d3a0"}}>יעד ${p.target}</span>
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+// ── Journal Tab ───────────────────────────────────────────────────────────────
+const HISTORY = [
+  { ticker:"META",  pnl:2178,  rr:2.1,  date:"05/01", result:"win"  },
+  { ticker:"PANW",  pnl:-994,  rr:-0.8, date:"04/01", result:"loss" },
+  { ticker:"SMCI",  pnl:1940,  rr:1.9,  date:"03/01", result:"win"  },
+  { ticker:"TSLA",  pnl:1340,  rr:1.3,  date:"02/01", result:"win"  },
+  { ticker:"AMZN",  pnl:-675,  rr:-0.7, date:"29/12", result:"loss" },
+  { ticker:"MSTR",  pnl:1740,  rr:2.3,  date:"28/12", result:"win"  },
+];
+
+function JournalTab() {
+  const wins = HISTORY.filter(t=>t.result==="win");
+  const losses = HISTORY.filter(t=>t.result==="loss");
+  const totalPnL = HISTORY.reduce((s,t)=>s+t.pnl,0);
+  const winRate = ((wins.length/HISTORY.length)*100).toFixed(0);
+  const avgWin = wins.reduce((s,t)=>s+t.pnl,0)/wins.length;
+  const avgLoss = Math.abs(losses.reduce((s,t)=>s+t.pnl,0)/losses.length);
+  const pf = (avgWin/avgLoss).toFixed(2);
+
+  return (
+    <div>
+      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:14}}>
+        {[["Win Rate",`${winRate}%`,+winRate>=60?"#22d3a0":"#f0b429"],
+          ["Profit Factor",pf,+pf>=2?"#22d3a0":"#f0b429"],
+          ["Net P&L",`$${totalPnL.toLocaleString()}`,totalPnL>=0?"#22d3a0":"#f87171"],
+          ["עסקאות",HISTORY.length,"#e6edf3"]].map(([label,val,color])=>(
+          <div key={label} style={{background:"#161b22",borderRadius:16,padding:14,border:"1px solid #21262d"}}>
+            <div style={{fontSize:11,color:"#484f58",marginBottom:6}}>{label}</div>
+            <div style={{fontFamily:"'Syne',sans-serif",fontWeight:900,fontSize:26,color}}>{val}</div>
+          </div>
+        ))}
+      </div>
+      <div style={{display:"flex",flexDirection:"column",gap:8}}>
+        {HISTORY.map((t,i)=>(
+          <div key={i} style={{background:"#161b22",borderRadius:14,padding:12,border:`1px solid ${t.result==="win"?"rgba(34,211,160,0.15)":"rgba(248,113,113,0.15)"}`,display:"flex",alignItems:"center",gap:12}}>
+            <div style={{width:3,height:36,borderRadius:99,background:t.result==="win"?"#22d3a0":"#f87171",flexShrink:0}}/>
+            <div style={{flex:1}}>
+              <div style={{display:"flex",justifyContent:"space-between"}}>
+                <span style={{fontFamily:"'Syne',sans-serif",fontWeight:800,color:"#e6edf3"}}>{t.ticker}</span>
+                <span style={{fontWeight:700,color:t.pnl>=0?"#22d3a0":"#f87171"}}>{t.pnl>=0?"+":""}{t.pnl.toLocaleString()}$</span>
+              </div>
+              <div style={{display:"flex",justifyContent:"space-between",marginTop:3}}>
+                <span style={{fontSize:11,color:"#484f58"}}>{t.date}</span>
+                <span style={{fontSize:11,fontWeight:700,color:t.rr>=1?"#22d3a0":"#f87171"}}>{t.rr}R</span>
+              </div>
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+// ── Main App ──────────────────────────────────────────────────────────────────
+export default function App() {
+  const [stocks,     setStocks]     = useState([]);
+  const [loading,    setLoading]    = useState(true);
+  const [error,      setError]      = useState(null);
+  const [tab,        setTab]        = useState("screener");
+  const [calc,       setCalc]       = useState(null);
+  const [lastUpdate, setLastUpdate] = useState(null);
+
+  const loadData = useCallback(async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      const raw = await fetchRealData(TICKERS);
+
+      // Find SPY-equivalent change for RS (use median change as market proxy)
+      const changes = raw.map(s=>s.change).sort((a,b)=>a-b);
+      const medianChange = changes[Math.floor(changes.length/2)] || 0;
+
+      const enriched = raw.map(s => {
+        const rvol = s.avgVolume > 0 ? +(s.volume / s.avgVolume).toFixed(2) : 1;
+        const dayRange = (s.dayHigh||s.price) - (s.dayLow||s.price);
+        const atrPct = +((dayRange / s.price) * 100).toFixed(1);
+        const nearKey = s.high52 ? ((s.high52 - s.price) / s.high52) * 100 < 2.5 : false;
+        return {
+          ...s,
+          rvol,
+          atrPct,
+          nearKey,
+          rs: calcRS(s.change, medianChange),
+          setup: classify({...s, rvol}),
+        };
+      });
+
+      setStocks(enriched);
+      setLastUpdate(new Date().toLocaleTimeString("he-IL"));
+    } catch(e) {
+      console.error(e);
+      setError("לא הצלחתי לטעון את הנתונים. לחץ 'נסה שוב'.");
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    loadData();
+    const iv = setInterval(loadData, 5 * 60 * 1000); // every 5 min
+    return () => clearInterval(iv);
+  }, [loadData]);
+
+  const tabs = [
+    {id:"screener",  icon:"⚡", label:"סקרינר"},
+    {id:"portfolio", icon:"📊", label:"פוזיציות"},
+    {id:"journal",   icon:"📈", label:"יומן"},
+  ];
+
+  return (
+    <div style={{minHeight:"100vh",background:"#0d1117",color:"#e6edf3",fontFamily:"'Syne',sans-serif",maxWidth:480,margin:"0 auto",position:"relative"}}>
+      <style>{`
+        @import url('https://fonts.googleapis.com/css2?family=Syne:wght@400;600;700;800;900&display=swap');
+        * { box-sizing:border-box; -webkit-font-smoothing:antialiased; }
+        input::-webkit-outer-spin-button,input::-webkit-inner-spin-button{-webkit-appearance:none;}
+        ::-webkit-scrollbar{width:0;}
+      `}</style>
+
+      {/* Header */}
+      <div style={{position:"sticky",top:0,zIndex:40,background:"rgba(13,17,23,0.97)",backdropFilter:"blur(12px)",borderBottom:"1px solid #21262d",padding:"48px 16px 12px"}}>
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:12}}>
+          <div>
+            <div style={{fontSize:10,color:"#f0b429",letterSpacing:3,textTransform:"uppercase",marginBottom:2}}>TradeEdge Pro</div>
+            <div style={{fontWeight:900,fontSize:22,letterSpacing:-0.5}}>Dashboard</div>
+          </div>
+          <div style={{textAlign:"right"}}>
+            <div style={{fontSize:10,color:"#484f58",marginBottom:3}}>{lastUpdate ? `עודכן ${lastUpdate}` : "טוען..."}</div>
+            <div style={{display:"flex",alignItems:"center",gap:5,justifyContent:"flex-end"}}>
+              <div style={{width:7,height:7,borderRadius:"50%",background:loading?"#f0b429":"#22d3a0",animation:"pulse 2s infinite"}}/>
+              <span style={{fontSize:11,color:loading?"#f0b429":"#22d3a0",fontWeight:700}}>{loading?"טוען...":"חי"}</span>
+            </div>
+          </div>
+        </div>
+        <div style={{display:"flex",background:"#161b22",borderRadius:14,padding:4,gap:4}}>
+          {tabs.map(t=>(
+            <button key={t.id} onClick={()=>setTab(t.id)} style={{flex:1,padding:"8px 0",borderRadius:10,border:"none",cursor:"pointer",fontWeight:700,fontSize:12,fontFamily:"'Syne',sans-serif",transition:"all 0.15s",
+              background:tab===t.id?"#f0b429":"transparent",color:tab===t.id?"#0d1117":"#484f58"}}>
+              {t.icon} {t.label}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {/* Content */}
+      <div style={{padding:"16px 14px 100px"}}>
+        {tab==="screener"  && <ScreenerTab stocks={stocks} loading={loading} error={error} onRefresh={loadData} onTrade={s=>setCalc(s)}/>}
+        {tab==="portfolio" && <PortfolioTab stocks={stocks} onCalc={s=>setCalc(s||{})}/>}
+        {tab==="journal"   && <JournalTab/>}
+      </div>
+
+      {/* FAB */}
+      <button onClick={()=>setCalc({})} style={{position:"fixed",bottom:28,right:16,width:56,height:56,borderRadius:"50%",background:"#f0b429",border:"none",fontSize:22,cursor:"pointer",boxShadow:"0 4px 20px rgba(240,180,41,0.4)",zIndex:39,display:"flex",alignItems:"center",justifyContent:"center"}}>
+        🧮
+      </button>
+
+      {calc!==null && <RiskCalc prefill={calc} onClose={()=>setCalc(null)}/>}
+      <style>{`@keyframes pulse{0%,100%{opacity:1}50%{opacity:0.4}}`}</style>
+    </div>
+  );
+}
