@@ -6,99 +6,65 @@ import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 from concurrent.futures import ThreadPoolExecutor
 
-st.set_page_config(layout="wide", page_title="Quantum Terminal v2", initial_sidebar_state="collapsed")
+st.set_page_config(layout="wide", page_title="Quantum Terminal")
 
-# --- CSS עיצוב פינטק פרימיום מודרני ---
+# --- CSS עיצוב ---
 st.markdown("""
     <style>
-    .stApp { background-color: #0A0712; color: #E6E1F3; font-family: -apple-system, sans-serif; }
-    .main-title { font-size: 2.2rem; font-weight: 800; background: linear-gradient(90deg, #00B887, #E2B4BD); -webkit-background-clip: text; -webkit-text-fill-color: transparent; }
-    .sub-title { color: #7E7497; font-size: 0.95rem; margin-bottom: 35px; }
-    
-    /* טאבים */
-    .stTabs [data-baseweb="tab-list"] { gap: 12px; background-color: transparent; border-bottom: 1px solid #1E1833; }
-    .stTabs [data-baseweb="tab"] { background-color: #151026; border-radius: 20px; color: #938AA9; padding: 8px 20px; border: 1px solid #231B3D; font-size: 0.85rem; }
-    .stTabs [aria-selected="true"] { background-color: #2D2447 !important; color: #00B887 !important; border-color: #00B887 !important; font-weight: 600; }
-    
-    /* כרטיסיית מניה משולבת */
+    .stApp { background-color: #0A0712; color: #E6E1F3; }
     .stock-container { background: #0B0E14; border: 1px solid #1F2433; border-radius: 16px; padding: 16px; margin-bottom: 20px; }
-    .info-panel { background: #111522; border: 1px solid #1F2538; border-radius: 12px; padding: 14px; height: 100%; display: flex; flex-direction: column; justify-content: flex-start; }
-    .ticker-symbol { font-size: 1.8rem; font-weight: 700; color: #FFFFFF; display: block; }
-    .badge { padding: 4px 10px; border-radius: 20px; font-size: 0.75rem; font-weight: 600; display: inline-block; margin-top: 6px; text-align: center; }
-    .badge-reversal { background-color: rgba(0, 184, 135, 0.15); color: #00B887; }
-    .badge-breakout { background-color: rgba(255, 159, 28, 0.15); color: #FF9F1C; }
-    .badge-search { background-color: rgba(58, 134, 255, 0.15); color: #3A86FF; }
-    
-    /* פאנל סיבת איתות מקצועי */
-    .trigger-reason-box { background: rgba(255, 255, 255, 0.03); border: 1px dashed #2D3748; border-radius: 8px; padding: 8px 10px; margin-top: 12px; font-size: 0.75rem; line-height: 1.3; }
-    .trigger-title { color: #E2B4BD; font-weight: 600; display: block; margin-bottom: 3px; font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.5px; }
-    
-    /* אלמנטים של אינדיקטורים במקרא */
-    .indicator-box { margin-top: 12px; padding-top: 8px; border-top: 1px solid #1F2538; }
-    .indicator-row { display: flex; justify-content: space-between; font-size: 0.78rem; margin-bottom: 4px; }
-    .indicator-name { color: #938AA9; font-weight: 500; }
-    .indicator-desc { color: #5C5374; font-size: 0.7rem; display: block; margin-bottom: 6px; line-height: 1.1; }
-    
-    /* כפתור הפעלה ותיבות קלט */
-    .stButton>button { background: linear-gradient(180deg, #1A202C, #0B0E14); color: #E6E1F3; border: 1px solid #2D3748; border-radius: 12px; padding: 10px 24px; font-weight: 600; width: 100%; transition: all 0.3s; }
-    .stButton>button:hover { border-color: #00B887; color: #00B887; }
-    div[data-testid="stTextInput"] input { background-color: #111522 !important; color: #FFFFFF !important; border: 1px solid #1F2538 !important; border-radius: 10px !important; }
-    div[data-testid="stTextInput"] input:focus { border-color: #00B887 !important; }
+    .info-panel { background: #111522; border: 1px solid #1F2538; border-radius: 12px; padding: 14px; }
+    .ticker-symbol { font-size: 1.8rem; font-weight: 700; color: #FFFFFF; }
     </style>
 """, unsafe_allow_html=True)
 
 MARKET_DATA = {
-    "NASDAQ_A": ["AAPL", "MSFT", "NVDA", "AMZN", "META", "GOOGL", "GOOG", "TSLA", "AVGO", "PEP", "COST", "CSCO", "TMUS", "ADBE", "AMD", "NFLX", "TXN", "AMGN", "INTU", "HON", "AMAT", "QCOM", "BKNG", "ISRG", "VRTX"],
-    "NASDAQ_B": ["MDLZ", "REGN", "LRCX", "PANW", "SNPS", "KLAC", "ASML", "MELI", "MAR", "CTAS", "ORLY", "CRWD", "NXPI", "WDAY", "FTNT", "PCAR", "MNST", "ADSK", "PAYX", "ROST", "AEP", "CPRT", "KDP", "CHTR", "MCHP"],
-    "NASDAQ_C": ["AZN", "DDOG", "ODFL", "GILD", "PDD", "TEAM", "IDXX", "ADI", "GEHC", "BKR", "ON", "EXC", "MRVL", "CTSH", "EA", "CDNS", "ABNB", "CEG", "MDB", "VRSK", "FAST", "CSX", "DXCM", "ANSS", "FFIV"],
-    "NASDAQ_D": ["SBAC", "ALGN", "EBAY", "SIRI", "ZBRA", "ILMN", "WBA", "JD", "BIDU", "LCID", "ZM", "MRNA", "PYPL", "INTC", "MU", "DLTR", "EXPE", "LULU"],
-    "SP500_A": ["AAPL", "MSFT", "AMZN", "NVDA", "META", "GOOGL", "GOOG", "BRK.B", "TSLA", "UNH", "JPM", "XOM", "JNJ", "V", "PG", "MA", "AVGO", "HD", "CVX", "MRK", "ABBV", "LLY", "COST", "PEP", "ADBE", "WMT", "MCD", "CSCO", "CRM", "BAC"],
-    "SP500_B": ["ACN", "TMO", "LIN", "ORCL", "AMD", "CMCSA", "ABT", "TXN", "NKE", "PM", "UPS", "COP", "MS", "PFE", "NEE", "GE", "AXP", "T", "DHR", "PLD", "SBUX", "CAT", "BA", "DE", "ISRG", "HON", "LOW", "SPGI", "BLK", "NOW"],
-    "DOW_FULL": ["AAPL", "AMGN", "AXP", "BA", "CAT", "CRM", "CSCO", "CVX", "DIS", "DOW", "GS", "HD", "HON", "IBM", "INTC", "JNJ", "JPM", "KO", "MCD", "MMM", "MRK", "MSFT", "NKE", "PG", "TRV", "UNH", "V", "VZ", "WBA", "WMT"],
-    "MIDCAP": ["FDS", "PNR", "RS", "TKO", "POOL", "WSO", "ELF", "JBL", "MTH", "CBOE", "XYL", "HAE", "AAL", "TEX", "MTD", "WFR", "LANC", "OLLIE", "CHDN", "SAIA", "TREX", "YETI", "CROX", "DECK", "SKX", "LOPE"]
+    "NASDAQ_A": ["AAPL", "MSFT", "NVDA", "AMZN", "META"],
+    "SP500_A": ["AAPL", "MSFT", "AMZN", "NVDA", "META"]
 }
 
 def calculate_indicators(df):
     df['MA20'] = df['Close'].rolling(20).mean()
     df['High20'] = df['High'].rolling(20).max().shift(1)
     df['Vol20'] = df['Volume'].rolling(20).mean()
-    
-    std20 = df['Close'].rolling(20).std()
-    df['BB_Upper'] = df['MA20'] + (std20 * 2)
-    df['BB_Lower'] = df['MA20'] - (std20 * 2)
-    
-    delta = df['Close'].diff()
-    gain = (delta.where(delta > 0, 0)).rolling(14).mean()
-    loss = (-delta.where(delta < 0, 0)).rolling(14).mean()
-    rs = gain / loss
-    df['RSI'] = 100 - (100 / (1 + rs))
-    
-    exp12 = df['Close'].ewm(span=12, adjust=False).mean()
-    exp26 = df['Close'].ewm(span=26, adjust=False).mean()
-    df['MACD'] = exp12 - exp26
-    df['MACD_Signal'] = df['MACD'].ewm(span=9, adjust=False).mean()
-    df['MACD_Hist'] = df['MACD'] - df['MACD_Signal']
-    
-    tp = (df['High'] + df['Low'] + df['Close']) / 3
-    rmf = tp * df['Volume']
-    pos_flow = rmf.where(tp > tp.shift(1), 0).rolling(14).sum()
-    neg_flow = rmf.where(tp < tp.shift(1), 0).rolling(14).sum()
-    df['MFI'] = 100 - (100 / (1 + (pos_flow / neg_flow)))
-    
-    df['Buy_Signal'] = ((df['Close'] > df['MA20']) & (df['Close'].shift(1) <= df['MA20'].shift(1))) | \
-                       ((df['Close'] > df['High20']) & (df['Volume'] > df['Vol20']))
-                       
-    df['Sell_Signal'] = (df['Close'] < df['MA20']) & (df['Close'].shift(1) >= df['MA20'].shift(1))
     return df
 
-def get_trigger_reason(df, active_mode):
-    """מייצרת ניתוח טכני מקצועי ומתמטי של סיבת האיתות הנוכחית"""
-    last_row = df.iloc[-1]
-    prev_row = df.iloc[-2]
-    
-    if active_mode == "REVERSAL":
-        return f"פירסינג שורי של ממוצע נע 20 יום. מחיר סגירה הנוכחי (${last_row['Close']:.2f}) חצה מלמטה למעלה את ה-MA20 שעמד על ${last_row['MA20']:.2f}, מה שמעיד על שינוי מומנטום קצר טווח ומעבר משליטה דובת לשליטה שורית."
-    e    elif active_mode == "BREAKOUT":
-        vol_ratio = (last_row['Volume'] / last_row['Vol20']) if last_row['Vol20'] > 0 else 1.0
-        return f"פריצת מחיר מלווה במחזור חריג. מחיר המניה פרץ את שיא 20 הימים האחרונים (${last_row['High20']:.2f}) כאשר נפח המסחר הנוכחי גבוה פי {vol_ratio:.1f} מממוצע הווליום התקופתי, מה שמקנה רמת אמינות גבוהה להמשכיות המגמה."
-    else:
+def run_scanner(ticker, scan_type):
+    try:
+        df = yf.Ticker(ticker).history(period="100d")
+        if len(df) < 50: return None
+        df = calculate_indicators(df)
+        if scan_type == "REVERSAL":
+            is_valid = (df['Close'].iloc[-1] > df['MA20'].iloc[-1]) & (df['Close'].iloc[-2] < df['MA20'].iloc[-2])
+        else:
+            is_valid = (df['Close'].iloc[-1] > df['High20'].iloc[-1]) & (df['Volume'].iloc[-1] > df['Vol20'].iloc[-1])
+        return ticker, df if is_valid else None
+    except: return None
+
+def draw_chart(df, ticker):
+    fig = go.Figure(data=[go.Candlestick(x=df.index, open=df['Open'], high=df['High'], low=df['Low'], close=df['Close'])])
+    fig.update_layout(template="plotly_dark", height=400, margin=dict(l=0, r=0, t=0, b=0))
+    return fig
+
+# --- ממשק ---
+tabs = st.tabs(["🔍 חיפוש", "🚀 סורק"])
+
+with tabs[0]:
+    ticker = st.text_input("הזן סימול:", value="NVDA").upper()
+    if ticker:
+        df = calculate_indicators(yf.Ticker(ticker).history(period="100d"))
+        c1, c2 = st.columns([1, 3])
+        with c1:
+            st.markdown(f'<div class="info-panel"><div class="ticker-symbol">{ticker}</div><p>מחיר: ${df["Close"].iloc[-1]:.2f}</p></div>', unsafe_allow_html=True)
+        with c2:
+            st.plotly_chart(draw_chart(df, ticker), use_container_width=True)
+
+with tabs[1]:
+    mode = st.radio("אסטרטגיה:", ["REVERSAL", "BREAKOUT"], horizontal=True)
+    if st.button("סרוק NASDAQ_A"):
+        with st.spinner("סורק..."):
+            with ThreadPoolExecutor(max_workers=5) as ex:
+                results = list(ex.map(lambda t: run_scanner(t, mode), MARKET_DATA["NASDAQ_A"]))
+            for res in results:
+                if res:
+                    st.success(f"נמצא איתות ב-{res[0]}")
