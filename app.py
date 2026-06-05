@@ -98,4 +98,7 @@ def get_trigger_reason(df, active_mode):
     
     if active_mode == "REVERSAL":
         return f"פירסינג שורי של ממוצע נע 20 יום. מחיר סגירה הנוכחי (${last_row['Close']:.2f}) חצה מלמטה למעלה את ה-MA20 שעמד על ${last_row['MA20']:.2f}, מה שמעיד על שינוי מומנטום קצר טווח ומעבר משליטה דובת לשליטה שורית."
-    elif active_
+    e    elif active_mode == "BREAKOUT":
+        vol_ratio = (last_row['Volume'] / last_row['Vol20']) if last_row['Vol20'] > 0 else 1.0
+        return f"פריצת מחיר מלווה במחזור חריג. מחיר המניה פרץ את שיא 20 הימים האחרונים (${last_row['High20']:.2f}) כאשר נפח המסחר הנוכחי גבוה פי {vol_ratio:.1f} מממוצע הווליום התקופתי, מה שמקנה רמת אמינות גבוהה להמשכיות המגמה."
+    else:
