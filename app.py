@@ -43,6 +43,7 @@ st.markdown("""
     </style>
 """, unsafe_allow_html=True)
 
+# --- מאגר נתוני השוק ---
 MARKET_DATA = {
     "NASDAQ_A": ["AAPL", "MSFT", "NVDA", "AMZN", "META", "GOOGL", "GOOG", "TSLA", "AVGO", "PEP", "COST", "CSCO", "TMUS", "ADBE", "AMD", "NFLX", "TXN", "AMGN", "INTU", "HON", "AMAT", "QCOM", "BKNG", "ISRG", "VRTX"],
     "NASDAQ_B": ["MDLZ", "REGN", "LRCX", "PANW", "SNPS", "KLAC", "ASML", "MELI", "MAR", "CTAS", "ORLY", "CRWD", "NXPI", "WDAY", "FTNT", "PCAR", "MNST", "ADSK", "PAYX", "ROST", "AEP", "CPRT", "KDP", "CHTR", "MCHP"],
@@ -54,6 +55,7 @@ MARKET_DATA = {
     "MIDCAP": ["FDS", "PNR", "RS", "TKO", "POOL", "WSO", "ELF", "JBL", "MTH", "CBOE", "XYL", "HAE", "AAL", "TEX", "MTD", "WFR", "LANC", "OLLIE", "CHDN", "SAIA", "TREX", "YETI", "CROX", "DECK", "SKX", "LOPE"]
 }
 
+# --- פונקציות חישוב וסריקה ---
 def calculate_indicators(df):
     df['MA20'] = df['Close'].rolling(20).mean()
     df['High20'] = df['High'].rolling(20).max().shift(1)
@@ -66,7 +68,7 @@ def calculate_indicators(df):
     delta = df['Close'].diff()
     gain = (delta.where(delta > 0, 0)).rolling(14).mean()
     loss = (-delta.where(delta < 0, 0)).rolling(14).mean()
-    rs = gain / loss.replace(0, 1e-10) # הגנה מפני חלוקה באפס
+    rs = gain / loss.replace(0, 1e-10)
     df['RSI'] = 100 - (100 / (1 + rs))
     
     exp12 = df['Close'].ewm(span=12, adjust=False).mean()
@@ -79,7 +81,7 @@ def calculate_indicators(df):
     rmf = tp * df['Volume']
     pos_flow = rmf.where(tp > tp.shift(1), 0).rolling(14).sum()
     neg_flow = rmf.where(tp < tp.shift(1), 0).rolling(14).sum()
-    df['MFI'] = 100 - (100 / (1 + (pos_flow / neg_flow.replace(0, 1e-10)))) # הגנה
+    df['MFI'] = 100 - (100 / (1 + (pos_flow / neg_flow.replace(0, 1e-10))))
     
     df['Buy_Signal'] = ((df['Close'] > df['MA20']) & (df['Close'].shift(1) <= df['MA20'].shift(1))) | \
                        ((df['Close'] > df['High20']) & (df['Volume'] > df['Vol20']))
@@ -103,6 +105,7 @@ def run_scanner(ticker, scan_type):
     except: return None
     return None
 
+# --- בניית גרף טכני מקצועי ---
 def draw_fixed_pro_chart(df, ticker):
     df_clean = df.copy()
     if df_clean.index.tz is not None:
@@ -167,6 +170,7 @@ def draw_fixed_pro_chart(df, ticker):
     
     return fig
 
+# --- רינדור חלונית המידע והאינדיקטורים הצידית ---
 def render_info_panel(ticker, df, badge_text, badge_class, price_color):
     last_row = df.iloc[-1]
     rsi_val = last_row['RSI']
@@ -177,51 +181,9 @@ def render_info_panel(ticker, df, badge_text, badge_class, price_color):
     mfi_color = "#FF3A5A" if mfi_val > 80 else ("#00B887" if mfi_val < 20 else "#E6E1F3")
     macd_color = "#00B887" if macd_hist >= 0 else "#FF3A5A"
     
-    st.markdown(f"""
-        <div class="info-panel">
-            <span class="ticker-symbol">{ticker}</span>
-            <span class="badge {badge_class}">{badge_text}</span>
-            
-            <div style="font-size: 1.4rem; font-weight: 700; color: {price_color}; margin-top: 10px;">
-                ${last_row['Close']:.2f}
-            </div>
-            <div style="color: #7E7497; font-size: 0.75rem; margin-bottom: 10px; font-weight: 500;">
-                Vol: {(last_row['Volume']/1e6):.1f}M
-            </div>
-            
-            <div class="indicator-box">
-                <div class="indicator-row">
-                    <span class="indicator-name">BB (בולינג'ר)</span>
-                    <span style="color: #3A86FF; font-weight:700;">מחיר/רצועה</span>
-                </div>
-                <span class="indicator-desc">רצועות תנודתיות על הגרף. פריצה מחוץ לרצועה מעידה על מצב קיצון.</span>
-            </div>
-            
-            <div class="indicator-box">
-                <div class="indicator-row">
-                    <span class="indicator-name">MACD</span>
-                    <span style="color: {macd_color}; font-weight:700;">{macd_hist:.2f}</span>
-                </div>
-                <span class="indicator-desc">מומנטום מגמה. עמודות ירוקות מעידות על מומנטום שורי, אדומות על דובי.</span>
-            </div>
-            
-            <div class="indicator-box">
-                <div class="indicator-row">
-                    <span class="indicator-name">RSI</span>
-                    <span style="color: {rsi_color}; font-weight:700;">{rsi_val:.1f}</span>
-                </div>
-                <span class="indicator-desc">חוזק יחסי. מעל 70 קניית יתר (סיכון גבוה), מתחת ל-30 מכירת יתר (היפוך פוטנציאלי).</span>
-            </div>
-            
-            <div class="indicator-box">
-                <div class="indicator-row">
-                    <span class="indicator-name">MFI</span>
-                    <span style="color: {mfi_color}; font-weight:700;">{mfi_val:.1f}</span>
-                </div>
-                <span class="indicator-desc">זרימת כסף (RSI משולב נפח מסחר). מראה אם כסף חכם נכנס (מתחת ל-20) או יוצא (מעל 80).</span>
-            </div>
-        </div>
-    """, unsafe_allow_html=True)
+    # מחרוזת נקייה לחלוטין ללא שורות ריקות פנימיות למניעת באג רינדור ב-Markdown
+    html_content = f"""<div class="info-panel"><span class="ticker-symbol">{ticker}</span><span class="badge {badge_class}">{badge_text}</span><div style="font-size: 1.4rem; font-weight: 700; color: {price_color}; margin-top: 10px;">${last_row['Close']:.2f}</div><div style="color: #7E7497; font-size: 0.75rem; margin-bottom: 10px; font-weight: 500;">Vol: {(last_row['Volume']/1e6):.1f}M</div><div class="indicator-box"><div class="indicator-row"><span class="indicator-name">BB (בולינג'ר)</span><span style="color: #3A86FF; font-weight:700;">מחיר/רצועה</span></div><span class="indicator-desc">רצועות תנודתיות על הגרף. פריצה מחוץ לרצועה מעידה על מצב קיצון.</span></div><div class="indicator-box"><div class="indicator-row"><span class="indicator-name">MACD</span><span style="color: {macd_color}; font-weight:700;">{macd_hist:.2f}</span></div><span class="indicator-desc">מומנטום מגמה. עמודות ירוקות מעידות על מומנטום שורי, אדומות על דובי.</span></div><div class="indicator-box"><div class="indicator-row"><span class="indicator-name">RSI</span><span style="color: {rsi_color}; font-weight:700;">{rsi_val:.1f}</span></div><span class="indicator-desc">חוזק יחסי. מעל 70 קניית יתר (סיכון גבוה), מתחת ל-30 מכירת יתר (היפוך פוטנציאלי).</span></div><div class="indicator-box"><div class="indicator-row"><span class="indicator-name">MFI</span><span style="color: {mfi_color}; font-weight:700;">{mfi_val:.1f}</span></div><span class="indicator-desc">זרימת כסף (RSI משולב נפח מסחר). מראה אם כסף חכם נכנס (מתחת ל-20) או יוצא (מעל 80).</span></div></div>"""
+    st.markdown(html_content, unsafe_allow_html=True)
 
 # --- ממשק משתמש ראשי ---
 st.markdown('<h1 class="main-title">Quantum Terminal</h1>', unsafe_allow_html=True)
@@ -287,14 +249,12 @@ for i, group_id in enumerate(sections_keys):
             active_mode = st.session_state.get(f"current_mode_{group_id}", mode)
             
             if found_data:
-                # התיקון הקריטי: הורדת הפתיחה הכפולה של st.columns
                 for ticker, df_ticker in found_data.items():
                     badge_class = "badge-reversal" if active_mode == "REVERSAL" else "badge-breakout"
                     badge_text = "Reversal" if active_mode == "REVERSAL" else "Breakout"
                     price_color = "#00B887" if active_mode == "REVERSAL" else "#FF9F1C"
                     
                     st.markdown('<div class="stock-container">', unsafe_allow_html=True)
-                    # פתיחת חלוקה לעמודות אך ורק פעם אחת לשורה
                     col_left, col_right = st.columns([1.5, 3.5])
                     
                     with col_left:
