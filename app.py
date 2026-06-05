@@ -6,7 +6,7 @@ import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 from concurrent.futures import ThreadPoolExecutor
 
-st.set_page_config(layout="wide", page_title="Quantum Terminal ULTRA", initial_sidebar_state="collapsed")
+st.set_page_config(layout="wide", page_title="Quantum Terminal TITAN", initial_sidebar_state="collapsed")
 
 # --- CSS עיצוב פינטק פרימיום ---
 st.markdown("""
@@ -15,8 +15,8 @@ st.markdown("""
     .main-title { font-size: 2.4rem; font-weight: 800; background: linear-gradient(90deg, #FCA311, #00B887); -webkit-background-clip: text; -webkit-text-fill-color: transparent; }
     .sub-title { color: #7E7497; font-size: 0.95rem; margin-bottom: 25px; }
     
-    .stTabs [data-baseweb="tab-list"] { gap: 10px; background-color: transparent; border-bottom: 1px solid #1E1833; }
-    .stTabs [data-baseweb="tab"] { background-color: #120E22; border-radius: 12px 12px 0 0; color: #938AA9; padding: 10px 24px; border: 1px solid #1E1833; border-bottom: none; font-size: 0.9rem; }
+    .stTabs [data-baseweb="tab-list"] { gap: 6px; background-color: transparent; border-bottom: 1px solid #1E1833; flex-wrap: wrap; }
+    .stTabs [data-baseweb="tab"] { background-color: #120E22; border-radius: 8px 8px 0 0; color: #938AA9; padding: 6px 12px; border: 1px solid #1E1833; border-bottom: none; font-size: 0.8rem; }
     .stTabs [aria-selected="true"] { background-color: #1A1530 !important; color: #FCA311 !important; border-color: #FCA311 !important; font-weight: 600; }
     
     .metric-card { background: #111522; border: 1px solid #1F2538; border-radius: 10px; padding: 12px; text-align: center; }
@@ -38,45 +38,82 @@ st.markdown("""
     .edu-title { color: #FCA311; font-size: 1.1rem; font-weight: 700; margin-bottom: 12px; }
     .edu-text { font-size: 0.88rem; color: #B5AEC4; line-height: 1.5; margin-bottom: 10px; }
     
-    .stButton>button { background: linear-gradient(180deg, #251F3D, #131124); color: #E6E1F3; border: 1px solid #362E54; border-radius: 12px; padding: 12px 24px; font-weight: 600; width: 100%; }
+    .stButton>button { background: linear-gradient(180deg, #251F3D, #131124); color: #E6E1F3; border: 1px solid #362E54; border-radius: 12px; padding: 8px 16px; font-weight: 600; width: 100%; }
     .stButton>button:hover { border-color: #FCA311; color: #FCA311; background: #1A1530; }
     </style>
 """, unsafe_allow_html=True)
 
-# --- מאגר נתוני השוק המורחב (242 מניות) ---
+# --- מאגר נתוני השוק המורחב, המבוזר והסופי (500 מניות בדיוק) ---
 MARKET_DATA = {
-    "NASDAQ_1_50": [
+    "NASDAQ_A": [
         "AAPL", "MSFT", "NVDA", "AMZN", "META", "GOOGL", "GOOG", "TSLA", "AVGO", "COST", 
         "PEP", "NFLX", "AMD", "ADBE", "AZN", "CSCO", "QCOM", "TMUS", "INTU", "AMAT", 
         "TXN", "AMGN", "ISRG", "HON", "BKNG", "VRTX", "GEHC", "MDLZ", "REGN", "LRCX", 
         "PANW", "SNPS", "KLAC", "CRWD", "MU", "MELI", "CDNS", "ORLY", "ASML", "CTAS", 
         "AEP", "MAR", "EQIX", "WDAY", "NXPI", "FTNT", "PCAR", "PDD", "MNST", "ADSK"
     ],
-    "NASDAQ_51_100": [
+    "NASDAQ_B": [
         "PAYX", "CPRT", "ROST", "KDP", "CHTR", "ANSS", "TEAM", "DDOG", "FAST", "MCHP", 
         "GILD", "EA", "CTSH", "IDXX", "ADI", "BKR", "ON", "EXC", "MRVL", "ABNB", 
         "CEG", "MDB", "VRSK", "CSX", "DXCM", "FFIV", "ILMN", "WBA", "ZBRA", "ALGN", 
-        "VRSN", "EBAY", "SIRI", "NTES", "JD", "BIDU", "PDD", "LCID", "DDOG", "BILI",
-        "KLAC", "SNPS", "ASML", "LRCX", "WDAY", "TEAM", "CTSH", "OKTA", "SPLK", "FITB"
+        "VRSN", "EBAY", "SIRI", "NTES", "JD", "BIDU", "LCID", "BILI", "OKTA", "SPLK",
+        "FITB", "FANG", "MGM", "SBUX", "WBD", "MKTX", "DLTR", "URI", "EXPE", "KVUE"
     ],
-    "SP500_LARGE": [
+    "SP500_A": [
         "BRK.B", "UNH", "JPM", "XOM", "JNJ", "V", "PG", "MA", "HD", "CVX", "MRK", 
         "ABBV", "LLY", "WMT", "MCD", "CRM", "BAC", "ACN", "TMO", "LIN", "ORCL", 
         "CMCSA", "ABT", "NKE", "PM", "UPS", "COP", "MS", "PFE", "NEE", "LOW", 
-        "SCHW", "SPGI", "UNP", "T", "DIS", "INTC", "BMY", "TXN", "RTX", "GE", 
-        "AXP", "HON", "BA", "CAT", "PGR", "C", "GS", "WFC", "AMV", "ETN",
-        "BLK", "NOW", "PLTR", "UBER", "IBM", "DE", "MMM", "LMT", "SYK", "MDT",
-        "CI", "ISRG", "TJX", "MO", "NOC", "COF"
+        "SCHW", "SPGI", "UNP", "T", "DIS", "INTC", "BMY", "TXN", "RTX", "GE", "AXP", 
+        "CAT", "PGR", "C", "GS", "WFC", "BLK", "NOW", "PLTR", "UBER"
     ],
-    "MIDCAP_GROWTH": [
+    "SP500_B": [
+        "IBM", "DE", "MMM", "LMT", "SYK", "MDT", "CI", "TJX", "MO", "NOC", "COF",
+        "AMD", "AMAT", "ADI", "LRCX", "KLAC", "MU", "SNPS", "CDNS", "PANW", "FTNT",
+        "EQIX", "PSA", "PLD", "AMT", "CCI", "WY", "SPG", "DLR", "O", "WELL", "AVB",
+        "EQR", "VTR", "BXP", "REG", "MAA", "UDR", "ESS", "PEAK", "DOC", "ARE", "FRT",
+        "ETR", "FE", "AEE", "CMS", "ED", "D", "SO"
+    ],
+    "SP500_C": [
+        "DUK", "AEP", "EXC", "XEL", "PEG", "WEC", "ES", "DTE", "PPL", "EIX", "ETN",
+        "PH", "EMR", "ROP", "WM", "GEV", "ITW", "NSC", "CSX", "UNP", "FDX", "UPS",
+        "ODFL", "LUV", "DAL", "UAL", "AAL", "MAR", "HLT", "HATT", "EXPE", "BKNG",
+        "NCLH", "RCL", "CCL", "MCD", "YUM", "CMG", "DRI", "DPZ", "SBUX", "TJX",
+        "ROST", "NKE", "TGT", "WMT", "COST", "HD", "LOW", "ORLY"
+    ],
+    "SP500_D": [
+        "AZO", "GPC", "LKQ", "TSLA", "F", "GM", "HOG", "BWA", "ALV", "MHK", "NVR",
+        "LEN", "DHI", "PHM", "TOL", "MTH", "CCS", "KBH", "GRMN", "HAS", "MAT",
+        "TTWO", "EA", "ATVI", "NFLX", "DIS", "PARA", "WBD", "FOXA", "NWSA", "VZ",
+        "T", "TMUS", "CHTR", "CMCSA", "LUMN", "FYBR", "SBAC", "GOOGL", "META",
+        "PINS", "SNAP", "TTD", "ZG", "MTCH", "IAC", "YELP", "ANGI", "TRIP", "DESP"
+    ],
+    "MIDCAP_A": [
         "POOL", "FDS", "PNR", "RS", "TKO", "WSO", "ELF", "JBL", "MTH", "CBOE", 
         "XYL", "HAE", "AAL", "TEX", "MTD", "WFR", "LANC", "OLLIE", "CHDN", "SAIA", 
         "TREX", "YETI", "CROX", "DECK", "SKX", "LOPE", "XPO", "AFRM", "HOOD", "SOFI",
         "DKNG", "RBLX", "TOST", "UPST", "AI", "PATH", "IOT", "U", "SNOW", "NET",
-        "FSLR", "ENPH", "SEDG", "RUN", "PLUG", "CHPT", "BLINK", "RIVN", "LCID", "QS",
-        "RKLB", "SPCE", "BABA", "LI", "NIO", "XPEV", "FUTU", "SE", "MELI", "SHOP",
-        "SQ", "PYPL", "COIN", "MARA", "RIOT", "CLSK", "WULF", "IREN", "HUT", "CORZ",
-        "MSTR", "GME", "AMC", "DJT", "RDDT"
+        "FSLR", "ENPH", "SEDG", "RUN", "PLUG", "CHPT", "BLINK", "RIVN", "LCID", "QS"
+    ],
+    "MIDCAP_B": [
+        "RKLB", "SPCE", "BABA", "LI", "NIO", "XPEV", "FUTU", "SE", "SHOP", "SQ", 
+        "PYPL", "COIN", "MARA", "RIOT", "CLSK", "WULF", "IREN", "HUT", "CORZ", "MSTR", 
+        "GME", "AMC", "DJT", "RDDT", "CELH", "WING", "FRSH", "APP", "PSTG", "NTNX",
+        "NVAX", "MRNA", "BNTX", "CRSP", "EDIT", "BEAM", "NTLA", "PACB", "ILMN", "EXAS",
+        "GH", "GUARD", "FGEN", "BYND", "OTLY", "HIMS", "SOUN", "BBAI", "CXAI", "PLTR"
+    ],
+    "RUSSELL_2000_A": [
+        "VNDA", "PETQ", "GPRO", "WKHS", "NKLA", "ASTR", "MNMD", "CYBN", "CMPS", "ATAI",
+        "BMEA", "KPTI", "GERN", "BCAB", "XFOR", "CLSD", "EYEN", "OCUP", "OBLG", "SENS",
+        "AMAM", "VERV", "BEAM", "CRBU", "CLLS", "DTIL", "EDIT", "FDMT", "NTLA", "SANA",
+        "SGMO", "VIGL", "ZENTAL", "DRRX", "SCYX", "VYGR", "LRE", "AOUT", "SWBI", "RGR",
+        "POWW", "VSTO", "DKS", "BGFV", "HIBB", "BOOT", "CAL", "DECK", "SKX", "WOLV"
+    ],
+    "RUSSELL_2000_B": [
+        "IEP", "AMR", "ARCH", "HCC", "CEIX", "BTU", "YAVY", "AAL", "ALGT", "HA",
+        "SAVE", "BLNK", "EVGO", "CHPT", "BE", "FCEL", "PLUG", "AMRC", "CWEN", "AY",
+        "NOVA", "RUN", "SUNW", "MAXN", "SHLS", "ARRY", "FTCI", "NXT", "ENPH", "SEDG",
+        "DDD", "SSYS", "DM", "MKFG", "VLD", "XONE", "PRLB", "NNDM", "SGLY", "MIND",
+        "KTOS", "AVAV", "RADA", "ASTR", "BKSY", "PL", "SATL", "LLAP", "SIDU", "QUBT"
     ]
 }
 
@@ -150,12 +187,12 @@ def draw_fixed_pro_chart(df, ticker):
     vol_colors = ['#00B887' if row['Close'] >= row['Open'] else '#FF3A5A' for _, row in df_slice.iterrows()]
     fig.add_trace(go.Bar(x=df_slice.index, y=df_slice['Volume'], marker_color=vol_colors, name='Volume'), row=2, col=1)
     
-    fig.add_trace(go.Scatter(x=df_slice.index, y=df_slice['MFI'], line=dict(color='#FCA311', width=1.5), name='MFI (זרימת כסף מוסדי)'), row=3, col=1)
+    fig.add_trace(go.Scatter(x=df_slice.index, y=df_slice['MFI'], line=dict(color='#FCA311', width=1.5), name='MFI (זרימת כסף)'), row=3, col=1)
     fig.add_trace(go.Scatter(x=df_slice.index, y=df_slice['RSI'], line=dict(color='#FF9F1C', width=1.2), name='RSI (מכירות יתר)'), row=4, col=1)
     
     macd_colors = ['#00B887' if val >= 0 else '#FF3A5A' for val in df_slice['MACD_Hist']]
     fig.add_trace(go.Bar(x=df_slice.index, y=df_slice['MACD_Hist'], marker_color=macd_colors, name='MACD Hist'), row=5, col=1)
-    fig.add_trace(go.Scatter(x=df_slice.index, y=df_slice['MACD'], line=dict(color='#00F5D4', width=1.2), name='MACD (מפגש מגמות)'), row=5, col=1)
+    fig.add_trace(go.Scatter(x=df_slice.index, y=df_slice['MACD'], line=dict(color='#00F5D4', width=1.2), name='MACD (מגמה)'), row=5, col=1)
 
     fig.update_layout(template="plotly_dark", paper_bgcolor="#0B0E14", plot_bgcolor="#0B0E14", height=640, margin=dict(l=5, r=40, t=5, b=5), showlegend=True, xaxis_rangeslider_visible=False, hovermode=False, dragmode=False)
     fig.update_xaxes(showgrid=False, zeroline=False, tickfont=dict(color='#5C5374', size=9), fixedrange=True)
@@ -211,10 +248,10 @@ def render_educational_card_and_calculator(df, unique_id=""):
         st.markdown(f"""
             <div class="edu-card">
                 <div class="edu-title">🔍 זיהוי שלב ההצטברות (Accumulation Phase)</div>
-                <div class="edu-text"><strong>1. מיצוי לחץ המוכרים:</strong> המניה הושמדה ב-<strong>{drop_val:.1f}%</strong> מהשיא השנתי שלה. כל הידיים החלשות והפאניקה כבר בחוץ.</div>
-                <div class="edu-text"><strong>2. כיווץ אנרגיה:</strong> מדד התנודתיות (BBW) עומד על <strong>{bbw_val:.1f}%</strong>. המניה "ישנה" וזזה הצידה בתוך תעלה צרה מאוד.</div>
-                <div class="edu-text"><strong>3. כניסת מוסדיים שקטה:</strong> מדד זרימת הכסף (MFI) מטפס לרמה של <strong>{mfi_val:.1f}</strong>. לווייתנים אוספים סחורה מתחת לרדאר.</div>
-                <div class="edu-text"><strong>4. אישור מגמה מתפתח (MACD):</strong> עמודת ההיסטוגרמה הנוכחית עומדת על <strong>{macd_hist:.2f}</strong>. מעבר של ההיסטוגרמה לירוק יסמן תחילת זינוק.</div>
+                <div class="edu-text"><strong>1. מיצוי לחץ המוכרים:</strong> המניה הושמדה ב-<strong>{drop_val:.1f}%</strong> מהשיא השנתי שלה.</div>
+                <div class="edu-text"><strong>2. כיווץ אנרגיה:</strong> מדד התנודתיות (BBW) עומד על <strong>{bbw_val:.1f}%</strong>. המניה דורכת במקום בתעלה צרה.</div>
+                <div class="edu-text"><strong>3. כניסת מוסדיים שקטה:</strong> מדד זרימת הכסף (MFI) מטפס לרמה של <strong>{mfi_val:.1f}</strong>.</div>
+                <div class="edu-text"><strong>4. אישור מגמה מתפתח (MACD):</strong> עמודת ההיסטוגרמה הנוכחית עומדת על <strong>{macd_hist:.2f}</strong>. היפוך לצבע ירוק יסמן אישור פריצה.</div>
             </div>
         """, unsafe_allow_html=True)
         
@@ -240,22 +277,28 @@ def render_educational_card_and_calculator(df, unique_id=""):
                     • יעד רווח משוער: <strong>${take_profit:.2f}</strong> ({reward_pct:.1f}%)<br>
                     • פקודת רכש מומלצת: לקנות בדיוק <strong style="color:#FCA311; font-size:1rem;">{shares_to_buy} מניות</strong>.<br>
                     • שווי הפוזיציה הכולל: <strong>${total_cost:,.2f}</strong>.<br>
-                    <span style="color:#00B887; font-size:0.8rem; display:block; margin-top:4px;">* הגנה מובטחת: אם הסטופ יופעל, תפסיד רק ${allowed_loss:.2f} (בדיוק הסיכון שהגדרת בסליידר).</span>
+                    <span style="color:#00B887; font-size:0.8rem; display:block; margin-top:4px;">* הגנה מובטחת: אם הסטופ יופעל, תפסיד רק ${allowed_loss:.2f}.</span>
                 </span>
             </div>
         """, unsafe_allow_html=True)
 
 # --- ממשק משתמש ראשי ---
-st.markdown('<h1 class="main-title">Quantum Terminal ULTRA</h1>', unsafe_allow_html=True)
-st.markdown('<p class="sub-title">סורק מוסדי מורחב (242 מניות) המיועד לציד מניות בשלבי הצטברות ואיסוף שקט</p>', unsafe_allow_html=True)
+st.markdown('<h1 class="main-title">Quantum Terminal TITAN</h1>', unsafe_allow_html=True)
+st.markdown('<p class="sub-title">מערכת מבוזרת מתקדמת הסורקת 500 מניות במקביל על פני 4 מדדי מפתח מובילים</p>', unsafe_allow_html=True)
 
-tabs_names = ["🔍 בדיקה ידנית", "NASDAQ (1-50)", "NASDAQ (51-100)", "S&P 500", "Mid-Cap & Growth"]
+tabs_names = [
+    "🔍 בדיקה ידנית", 
+    "NASDAQ (חלק א')", "NASDAQ (חלק ב')", 
+    "S&P 500 (חלק א')", "S&P 500 (חלק ב')", "S&P 500 (חלק ג')", "S&P 500 (חלק ד')",
+    "Mid-Cap (חלק א')", "Mid-Cap (חלק ב')",
+    "Russell 2000 (חלק א')", "Russell 2000 (חלק ב')"
+]
 tabs = st.tabs(tabs_names)
 
 with tabs[0]:
     col_search, _ = st.columns([1.5, 2])
     with col_search:
-        search_ticker = st.text_input("הזן סימול לבדיקת איסוף (לדוגמה: POOL, INTC וכד'):", value="").strip().upper()
+        search_ticker = st.text_input("הזן סימול לבדיקה ידנית (לדוגמה: POOL, INTC, WNDA):", value="").strip().upper()
     
     if search_ticker:
         with st.spinner(f"מנתח נתונים עבור {search_ticker}..."):
@@ -279,7 +322,7 @@ with tabs[0]:
             except Exception as e:
                 st.error(f"שגיאה במשיכת הנתונים: {str(e)}")
 
-sections_keys = ["NASDAQ_1_50", "NASDAQ_51_100", "SP500_LARGE", "MIDCAP_GROWTH"]
+sections_keys = ["NASDAQ_A", "NASDAQ_B", "SP500_A", "SP500_B", "SP500_C", "SP500_D", "MIDCAP_A", "MIDCAP_B", "RUSSELL_2000_A", "RUSSELL_2000_B"]
 for i, group_id in enumerate(sections_keys):
     with tabs[i + 1]:
         num_stocks = len(MARKET_DATA[group_id])
@@ -287,9 +330,9 @@ for i, group_id in enumerate(sections_keys):
         
         if scan_clicked or st.session_state.get(f"accum_ready_{group_id}", False):
             if scan_clicked:
-                with st.spinner("מריץ סורק אלגוריתמי במקביל..."):
+                with st.spinner("מריץ סורק אלגוריתמי מפוצל למניעת עומס..."):
                     tickers = MARKET_DATA.get(group_id, [])
-                    with ThreadPoolExecutor(max_workers=12) as ex:
+                    with ThreadPoolExecutor(max_workers=10) as ex:
                         results = list(ex.map(run_scanner, tickers))
                     st.session_state[f"accum_data_{group_id}"] = {r[0]: r[1] for r in results if r is not None}
                     st.session_state[f"accum_ready_{group_id}"] = True
