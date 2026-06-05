@@ -52,10 +52,12 @@ st.markdown("""
     .portfolio-title { font-size: 1.4rem; font-weight: 800; color: #FFFFFF; }
     .p-positive { color: #00B887; font-weight: 700; }
     .p-negative { color: #FF3A5A; font-weight: 700; }
+    
+    .manage-box { background: #16122C; border: 1px solid #2B2353; border-radius: 12px; padding: 16px; margin-bottom: 20px; }
     </style>
 """, unsafe_allow_html=True)
 
-# --- מנגנון נעילה קליל (סיסמה לבדיקות) ---
+# --- מנגנון נעילה קליל ---
 CORRECT_PASSWORD = "titan2026"
 
 if "authenticated" not in st.session_state:
@@ -74,11 +76,12 @@ if not st.session_state["authenticated"]:
     st.markdown('</div>', unsafe_allow_html=True)
     st.stop()
 
-# --- הגדרת נתוני התיק האישי שלך ---
-# מילון פשוט ומאובטח לעדכון פוזיציות: "סימול": [כמות מניות, מחיר קנייה ממוצע]
-MY_PORTFOLIO = {
-    "SIRI": [50, 24.50]
-}
+# --- מנגנון ניהול תיק השקעות דינמי ב-Session ---
+if "my_portfolio" not in st.session_state:
+    # הגדרת פוזיציית ברירת מחדל ראשונית קבועה
+    st.session_state["my_portfolio"] = {
+        "SIRI": [50, 24.50]
+    }
 
 # --- מאגר נתוני השוק המורחב (500 מניות) ---
 MARKET_DATA = {
@@ -226,77 +229,107 @@ tabs = st.tabs(tabs_names)
 # --- לשונית 1: תיק השקעות דינמי ומאובטח ---
 with tabs[0]:
     st.markdown("<h2 style='color:#FFFFFF; font-weight:800; margin-bottom:5px;'>📊 ניטור פוזיציות בזמן אמת</h2>", unsafe_allow_html=True)
-    st.markdown("<p style='color:#7E7497; font-size:0.9rem; margin-bottom:25px;'>מעקב אקטיבי אחר רווחים והגנות אלגוריתמיות למניות התיק</p>", unsafe_allow_html=True)
     
+    # --- ממשק ניהול והזנת מניות דינמי ---
+    with st.expander("➕ ניהול פוזיציות (הוספה / הסרת מניות)"):
+        st.markdown('<div class="manage-box">', unsafe_allow_html=True)
+        add_col1, add_col2, add_col3 = st.columns([1.5, 1.5, 1.5])
+        with add_col1:
+            new_ticker = st.text_input("סימול מניה:", value="").strip().upper()
+        with add_col2:
+            new_shares = st.number_input("כמות יחידות:", min_value=1, value=10, step=1)
+        with add_col3:
+            new_cost = st.number_input("מחיר קנייה ($):", min_value=0.01, value=10.0, step=0.1)
+            
+        if st.button("➕ הוסף לפוזיציות אקטיביות"):
+            if new_ticker:
+                st.session_state["my_portfolio"][new_ticker] = [new_shares, new_cost]
+                st.success(f"הפוזיציה על {new_ticker} התווספה בהצלחה לתיק!")
+                st.rerun()
+            else:
+                st.error("אנא הזן סימול מניה תקין.")
+        st.markdown('</div>', unsafe_allow_html=True)
+        
+        # אפשרות מחיקה מהירה
+        if st.session_state["my_portfolio"]:
+            st.markdown("<p style='color:#7E7497; font-size:0.85rem; margin-top:10px;'>הסרת פוזיציה קיימת:</p>", unsafe_allow_html=True)
+            del_tickers = list(st.session_state["my_portfolio"].keys())
+            ticker_to_del = st.selectbox("בחר מניה להסרה:", del_tickers)
+            if st.button("🗑️ מחק פוזיציה נבחרת"):
+                del st.session_state["my_portfolio"][ticker_to_del]
+                st.warning(f"הפוזיציה על {ticker_to_del} הוסרה מהתיק.")
+                st.rerun()
+
     total_value = 0.0
     total_cost_basis = 0.0
     portfolio_cards_data = []
     
-    with st.spinner("טוען נתוני שוק עדכניים לתיק..."):
-        for ticker, data in MY_PORTFOLIO.items():
-            try:
-                stock = yf.Ticker(ticker)
-                hist = stock.history(period="50d")
-                if not hist.empty:
-                    hist = calculate_indicators(hist)
-                    last_row = hist.iloc[-1]
-                    current_price = last_row['Close']
-                    shares = data[0]
-                    avg_cost = data[1]
-                    
-                    position_cost = shares * avg_cost
-                    position_value = shares * current_price
-                    position_pnl = position_value - position_cost
-                    position_pnl_pct = (position_pnl / position_cost) * 100
-                    
-                    total_value += position_value
-                    total_cost_basis += position_cost
-                    
-                    tech_stop = last_row['BB_Lower'] * 0.985
-                    dist_to_stop = ((current_price - tech_stop) / current_price) * 100
-                    
-                    portfolio_cards_data.append({
-                        "ticker": ticker, "shares": shares, "avg_cost": avg_cost,
-                        "current_price": current_price, "pnl": position_pnl, "pnl_pct": position_pnl_pct,
-                        "tech_stop": tech_stop, "dist_to_stop": dist_to_stop
-                    })
-            except:
-                pass
+    if st.session_state["my_portfolio"]:
+        with st.spinner("טוען נתוני שוק עדכניים לתיק..."):
+            for ticker, data in st.session_state["my_portfolio"].items():
+                try:
+                    stock = yf.Ticker(ticker)
+                    hist = stock.history(period="50d")
+                    if not hist.empty:
+                        hist = calculate_indicators(hist)
+                        last_row = hist.iloc[-1]
+                        current_price = last_row['Close']
+                        shares = data[0]
+                        avg_cost = data[1]
+                        
+                        position_cost = shares * avg_cost
+                        position_value = shares * current_price
+                        position_pnl = position_value - position_cost
+                        position_pnl_pct = (position_pnl / position_cost) * 100
+                        
+                        total_value += position_value
+                        total_cost_basis += position_cost
+                        
+                        tech_stop = last_row['BB_Lower'] * 0.985
+                        dist_to_stop = ((current_price - tech_stop) / current_price) * 100
+                        
+                        portfolio_cards_data.append({
+                            "ticker": ticker, "shares": shares, "avg_cost": avg_cost,
+                            "current_price": current_price, "pnl": position_pnl, "pnl_pct": position_pnl_pct,
+                            "tech_stop": tech_stop, "dist_to_stop": dist_to_stop
+                        })
+                except:
+                    pass
 
-    if total_cost_basis > 0:
-        total_pnl = total_value - total_cost_basis
-        total_pnl_pct = (total_pnl / total_cost_basis) * 100
-        pnl_class = "p-positive" if total_pnl >= 0 else "p-negative"
-        pnl_sign = "+" if total_pnl >= 0 else ""
-        
-        kpi1, kpi2, kpi3 = st.columns(3)
-        with kpi1: st.markdown(f'<div class="metric-card"><span class="metric-label">💰 שווי תיק כולל</span><span class="metric-value">${total_value:,.2f}</span></div>', unsafe_allow_html=True)
-        with kpi2: st.markdown(f'<div class="metric-card"><span class="metric-label">📈 רווח / הפסד כולל</span><span class="metric-value {pnl_class}">{pnl_sign}${total_pnl:,.2f}</span></div>', unsafe_allow_html=True)
-        with kpi3: st.markdown(f'<div class="metric-card"><span class="metric-label">📊 תשואה באחוזים</span><span class="metric-value {pnl_class}">{pnl_sign}{total_pnl_pct:.2f}%</span></div>', unsafe_allow_html=True)
-        
-        st.markdown("<div style='margin-top:25px; margin-bottom:15px; font-weight:700; color:#938AA9;'>חלוקת פוזיציות:</div>", unsafe_allow_html=True)
-        
-        for item in portfolio_cards_data:
-            c_class = "p-positive" if item['pnl'] >= 0 else "p-negative"
-            c_sign = "+" if item['pnl'] >= 0 else ""
-            alert_style = "color:#FF3A5A; font-weight:bold;" if item['dist_to_stop'] <= 3.0 else "color:#E6E1F3;"
+        if total_cost_basis > 0:
+            total_pnl = total_value - total_cost_basis
+            total_pnl_pct = (total_pnl / total_cost_basis) * 100
+            pnl_class = "p-positive" if total_pnl >= 0 else "p-negative"
+            pnl_sign = "+" if total_pnl >= 0 else ""
             
-            st.markdown(f"""
-                <div class="portfolio-card">
-                    <div class="portfolio-header">
-                        <span class="portfolio-title">{item['ticker']} <span style='font-size:0.85rem; color:#7E7497; font-weight:400;'>({item['shares']} יחידות)</span></span>
-                        <span class="portfolio-title {c_class}">{c_sign}{item['pnl_pct']:.2f}%</span>
+            kpi1, kpi2, kpi3 = st.columns(3)
+            with kpi1: st.markdown(f'<div class="metric-card"><span class="metric-label">💰 שווי תיק כולל</span><span class="metric-value">${total_value:,.2f}</span></div>', unsafe_allow_html=True)
+            with kpi2: st.markdown(f'<div class="metric-card"><span class="metric-label">📈 רווח / הפסד כולל</span><span class="metric-value {pnl_class}">{pnl_sign}${total_pnl:,.2f}</span></div>', unsafe_allow_html=True)
+            with kpi3: st.markdown(f'<div class="metric-card"><span class="metric-label">📊 תשואה באחוזים</span><span class="metric-value {pnl_class}">{pnl_sign}{total_pnl_pct:.2f}%</span></div>', unsafe_allow_html=True)
+            
+            st.markdown("<div style='margin-top:25px; margin-bottom:15px; font-weight:700; color:#938AA9;'>חלוקת פוזיציות אקטיביות:</div>", unsafe_allow_html=True)
+            
+            for item in portfolio_cards_data:
+                c_class = "p-positive" if item['pnl'] >= 0 else "p-negative"
+                c_sign = "+" if item['pnl'] >= 0 else ""
+                alert_style = "color:#FF3A5A; font-weight:bold;" if item['dist_to_stop'] <= 3.0 else "color:#E6E1F3;"
+                
+                st.markdown(f"""
+                    <div class="portfolio-card">
+                        <div class="portfolio-header">
+                            <span class="portfolio-title">{item['ticker']} <span style='font-size:0.85rem; color:#7E7497; font-weight:400;'>({item['shares']} יחידות)</span></span>
+                            <span class="portfolio-title {c_class}">{c_sign}{item['pnl_pct']:.2f}%</span>
+                        </div>
+                        <div style="display:grid; grid-template-columns: 1fr 1fr; gap:10px; font-size:0.85rem; border-top:1px solid #232B44; padding-top:10px;">
+                            <div><span style="color:#7E7497;">שער קנייה:</span> <strong style="color:#FFFFFF;">${item['avg_cost']:.2f}</strong></div>
+                            <div><span style="color:#7E7497;">שער שוק:</span> <strong style="color:#FFFFFF;">${item['current_price']:.2f}</strong></div>
+                            <div><span style="color:#7E7497;">רווח/הפסד דולרי:</span> <strong class="{c_class}">{c_sign}${item['pnl']:,.2f}</strong></div>
+                            <div><span style="color:#7E7497;">סטופ טכני (BB):</span> <strong style="{alert_style}">${item['tech_stop']:.2f} (-{item['dist_to_stop']:.1f}%)</strong></div>
+                        </div>
                     </div>
-                    <div style="display:grid; grid-template-columns: 1fr 1fr; gap:10px; font-size:0.85rem; border-top:1px solid #232B44; padding-top:10px;">
-                        <div><span style="color:#7E7497;">שער קנייה:</span> <strong style="color:#FFFFFF;">${item['avg_cost']:.2f}</strong></div>
-                        <div><span style="color:#7E7497;">שער שוק:</span> <strong style="color:#FFFFFF;">${item['current_price']:.2f}</strong></div>
-                        <div><span style="color:#7E7497;">רווח/הפסד דולרי:</span> <strong class="{c_class}">{c_sign}${item['pnl']:,.2f}</strong></div>
-                        <div><span style="color:#7E7497;">סטופ טכני (BB):</span> <strong style="{alert_style}">${item['tech_stop']:.2f} (-{item['dist_to_stop']:.1f}%)</strong></div>
-                    </div>
-                </div>
-            """, unsafe_allow_html=True)
+                """, unsafe_allow_html=True)
     else:
-        st.info("תיק ההשקעות ריק כעת. כדי להזין מניות, עדכן את המילון MY_PORTFOLIO בשורה 43 של הקוד.")
+        st.info("תיק ההשקעות ריק כעת. פתח את אזור הניהול למעלה כדי להוסיף פוזיציה חדשה.")
 
 # --- לשונית 2: בדיקה ידנית ---
 with tabs[1]:
