@@ -190,55 +190,62 @@ def render_info_panel(ticker, df, badge_text, badge_class, price_color):
     html_content = f"""<div class="info-panel"><span class="ticker-symbol">{ticker}</span><span class="badge {badge_class}">{badge_text}</span><div style="font-size: 1.4rem; font-weight: 700; color: {price_color}; margin-top: 10px;">${last_row['Close']:.2f}</div><div style="color: #7E7497; font-size: 0.75rem; margin-bottom: 10px; font-weight: 500;">Vol: {(last_row['Volume']/1e6):.1f}M</div><div class="indicator-box"><div class="indicator-row"><span class="indicator-name">BB (בולינג'ר)</span><span style="color: #3A86FF; font-weight:700;">מחיר/רצועה</span></div><span class="indicator-desc">רצועות תנודתיות על הגרף. פריצה מחוץ לרצועה מעידה על מצב קיצון.</span></div><div class="indicator-box"><div class="indicator-row"><span class="indicator-name">MACD</span><span style="color: {macd_color}; font-weight:700;">{macd_hist:.2f}</span></div><span class="indicator-desc">מומנטום מגמה. עמודות ירוקות מעידות על מומנטום שורי, אדומות על דובי.</span></div><div class="indicator-box"><div class="indicator-row"><span class="indicator-name">RSI</span><span style="color: {rsi_color}; font-weight:700;">{rsi_val:.1f}</span></div><span class="indicator-desc">חוזק יחסי. מעל 70 קניית יתר (סיכון גבוה), מתחת ל-30 מכירת יתר (היפוך פוטנציאלי).</span></div><div class="indicator-box"><div class="indicator-row"><span class="indicator-name">MFI</span><span style="color: {mfi_color}; font-weight:700;">{mfi_val:.1f}</span></div><span class="indicator-desc">זרימת כסף (RSI משולב נפח מסחר). מראה אם כסף חכם נכנס (מתחת ל-20) או יוצא (מעל 80).</span></div></div>"""
     st.markdown(html_content, unsafe_allow_html=True)
 
-# --- מנוע הניתוח וההסבר הלימודי הדינמי ---
+# --- מנוע הניתוח וההסבר הלימודי הדינמי המבוסס AI ---
 def render_educational_card(df, is_reversal, is_breakout, is_manual_search=False):
     last_row = df.iloc[-1]
+    prev_row = df.iloc[-2]
     rsi = last_row['RSI']
     mfi = last_row['MFI']
     macd_h = last_row['MACD_Hist']
     vol = last_row['Volume']
     vol_avg = last_row['Vol20']
+    close_val = last_row['Close']
+    ma20_val = last_row['MA20']
+    high20_val = last_row['High20']
     
     # 1. חישוב הסתברות הצלחה סטטיסטית משוקללת
-    score = 55 # בסיס הסתברות ראשוני ליתרון בשוק
-    
+    score = 55 
     if vol > vol_avg: score += 10
     if macd_h > 0 and (is_reversal or is_breakout): score += 5
     if rsi < 40 and is_reversal: score += 10
     if mfi < 35: score += 5
-    if score > 85: score = 85 # מקסימום הגיוני ריאליסטי בשוק ההון
+    if score > 85: score = 85 
     
-    # 2. בניית הניסוח הלימודי הדינמי (סיבה ומניעה)
-    if is_breakout or (is_manual_search and last_row['Buy_Signal'] and vol > vol_avg):
-        reason = f"המניה ביצעה פריצה מעל רמות ההתנגדות הטווח הקצר. מה שמחזק את האיתות הוא נפח המסחר שגבוה ב-{((vol/vol_avg)-1)*100:.1f}% מהממוצע, מה שמצביע על דרייב ודחיפה חזקה של כסף מוסדי מסיבי (קונים חזקים)."
-        prevention = "כאשר רוכשים פריצה, הסיכון המרכזי הוא 'פריצת שווא' (Fakeout). "
+    # 2. פענוח סיבת כניסה מתמטית מדויקת לסורק (AI Reason)
+    if is_breakout or (is_manual_search and close_val > high20_val and vol > vol_avg):
+        trigger_reason = f"המניה זוהתה על ידי ה-AI מכיוון שמחיר הסגירה הנוכחי (${close_val:.2f}) פרץ באופן מובהק את שיא 20 הימים האחרונים שעמד על ${high20_val:.2f}. הפריצה מלווה בנפח מסחר חריג של {vol/1e6:.1f}M מניות, הגבוה ב-{((vol/vol_avg)-1)*100:.1f}% מהממוצע התקופתי ({vol_avg/1e6:.1f}M)."
+        reason_desc = "השילוב של פריצת מחיר יחד עם מחזור מסחר גבוה מעיד על עניין מוסדי רב. כסף גדול נכנס לנכס ודוחף אותו קדימה, מה שמקטין את הסיכוי שמדובר בתנועה מקרית של סוחרים קטנים."
+        prevention = "בפריצות מחיר, הסכנה הגדולה היא 'פריצת שווא' (Fakeout) שבה השוק מושך קונים ואז קורס. "
         if rsi > 68:
-            prevention += f"מדד ה-RSI נמצא ברמה מתוחה מאוד של {rsi:.1f} (קרוב לקניית יתר), מה שמעלה משמעותית את הסיכון לתיקון אלים חזרה למטה. מומלץ לא לרדוף אחרי המחיר."
+            prevention += f"שים לב שמדד ה-RSI מתוח ועומד על {rsi:.1f}. מבחינה לימודית, המניה קרובה לאזור קניית יתר (70), ולכן יש סיכון מוגבר לתיקון טכני מהיר למטה לפני המשך עליות. מומלץ לא לרדוף אחרי פערים (Gaps) גדולים מדי בפתיחה."
         else:
-            prevention += f"מדד ה-RSI כרגע ניטרלי ({rsi:.1f}), מה שמראה שיש למניה עוד 'אוויר' לעלות לפני שתתעייף טכנית."
+            prevention += f"מדד ה-RSI נמצא ברמה בריאה של {rsi:.1f}, מה שאומר שהמניה לא מתוחה מדי ויש לה מרחב תנועה חופשי להמשך המומנטום."
             
-    elif is_reversal or (is_manual_search and last_row['Buy_Signal']):
-        reason = f"המניה חצתה את קו ממוצע 20 כלפי מעלה, איתות קלאסי של היפוך מגמה מדובי לשורי. מדד זרימת הכסף (MFI) עומד על {mfi:.1f}, מה שמראה על תחילת איסוף סחורה שקט."
-        prevention = "באסטרטגיות היפוך, הסכנה היא שהמגמה הדובית הקודמת עדיין לא מתה לגמרי. "
+    elif is_reversal or (is_manual_search and close_val > ma20_val and prev_row['Close'] <= prev_row['MA20']):
+        trigger_reason = f"המניה נכנסה לסורק בעקבות חציית מחיר שורית: מחיר המניה (${close_val:.2f}) חצה כלפי מעלה את קו הממוצע הנע ל-20 ימים (${ma20_val:.2f}), לאחר שבימים הקודמים נסחרה מתחתיו."
+        reason_desc = "חציית ממוצע 20 מסמלת פסיכולוגית מעבר משליטת מוכרים (דובי) לשליטת קונים (שורי). מדד זרימת הכסף (MFI) עומד על {mfi:.1f}, מה שמוכיח כי נכנס כסף חכם בשלב מוקדם של ההיפוך."
+        prevention = "בהיפוכי מגמה, הסיכון המרכזי הוא שהמגמה הדובית הישנה עדיין לא הסתיימה לחלוטין וזהו רק תיקון זמני. "
         if macd_h < 0:
-            prevention += "ה-MACD עדיין מתחת לאפס, מה שאומר שהמומנטום ארוך הטווח חלש, ויש להמתין לאישור סופי או לעבוד עם סטופ צמוד ביותר."
+            prevention += f"מדד ה-MACD עדיין שלילי ({macd_h:.2f}), מה שמראה שהמומנטום ארוך הטווח טרם הסתובב לגמרי. זוהי נקודת זהירות – מומלץ לעבוד עם סטופ-לוס הדוק מתחת לשפל האחרון."
         else:
-            prevention += "המומנטום של ה-MACD תומך ומתחיל לעלות, מה שמקטין את הסיכון למלכודת שורים."
+            prevention += "ה-MACD חיובי ותומך בתנועה, מה שמגדיל את האמינות הסטטיסטית של היפוך המגמה הנוכחי."
             
-    else: # איתות דובי / מכירה או חיפוש כללי ללא הגדרה
-        reason = "המערכת מזהה היחלשות בקווי המגמה או חצייה מתחת לממוצע 20 ימי מסחר, דבר המעיד על יציאת קונים מסיבית ואובדן מומנטום קצר טווח."
-        prevention = "במצב כזה, פתיחת פוזיציות לונג (קנייה) מהווה סיכון מוגבר כנגד כיוון השוק הנוכחי, שכן המניה עלולה לחפש תמיכות נמוכות יותר."
+    else:
+        trigger_reason = "המניה נסרקת במצב ניתוח כללי. לא זוהה טריגר פריצה או היפוך מובהק ביום המסחר האחרון."
+        reason_desc = "המניה נסחרת בתוך הטווח הרגיל שלה ללא חריגת נפח מסחר או פריצת רמות מפתח טכניות."
+        prevention = "במסחר בתוך דשדוש, מומלץ להימנע מניחוש כיוונים ולהמתין לפריצה ברורה של אחת מרצועות הבולינג'ר או קווי התמיכה/התנגדות המרכזיים."
 
     # הדפסת הבלוק המעוצב בעברית
     st.markdown(f"""
         <div class="edu-card">
-            <div class="edu-title">🧠 מרכז פענוח לימודי והסתברויות</div>
+            <div class="edu-title">🧠 מרכז פענוח וניתוח AI לימודי</div>
             <div class="edu-metric">🎯 סיכויי הצלחה משוערים: 
                 <span style="color: {'#00B887' if score >= 70 else '#FF9F1C'}; font-weight: 800;">{score}%</span>
-                <span style="font-size:0.75rem; color:#7E7497; font-weight:normal;"> (מבוסס שילוב קורלטיבי)</span>
+                <span style="font-size:0.75rem; color:#7E7497; font-weight:normal;"> (על בסיס שילוב אינדיקטורים מותאמים)</span>
             </div>
-            <div class="edu-text"><strong>📊 הסיבה הטכנית (למה האיתות נוצר):</strong> {reason}</div>
-            <div class="edu-text"><strong>⚠️ גורמי מניעה וסיכון (ממה צריך להיזהר):</strong> {prevention}</div>
+            <div style="margin-top: 10px;" class="edu-text"><strong>🔍 למה המניה נכנסה לסורק?</strong><br>{trigger_reason}</div>
+            <div class="edu-text"><strong>📊 הסבר הניתוח הטכני:</strong> {reason_desc}</div>
+            <div class="edu-text"><strong>⚠️ גורמי מניעה וסיכוני שוק:</strong> {prevention}</div>
         </div>
     """, unsafe_allow_html=True)
 
@@ -274,7 +281,6 @@ with tabs[0]:
                     
                     with col_right:
                         st.plotly_chart(draw_fixed_pro_chart(stock_data, search_ticker), use_container_width=True, config={'displayModeBar': False})
-                        # הצגת כרטיס הלימוד מתחת לגרף בחיפוש חופשי
                         render_educational_card(stock_data, is_reversal=False, is_breakout=False, is_manual_search=True)
                         
                     st.markdown('</div>', unsafe_allow_html=True)
@@ -322,7 +328,6 @@ for i, group_id in enumerate(sections_keys):
                     
                     with col_right:
                         st.plotly_chart(draw_fixed_pro_chart(df_ticker, ticker), use_container_width=True, config={'displayModeBar': False})
-                        # הצגת כרטיס הלימוד הדינמי המותאם ישירות לאסטרטגיה שנבחרה
                         render_educational_card(
                             df_ticker, 
                             is_reversal=(active_mode == "REVERSAL"), 
