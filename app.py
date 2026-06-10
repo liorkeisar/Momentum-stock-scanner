@@ -1,88 +1,72 @@
 import streamlit as st
 import yfinance as yf
-import pandas as pd
 import plotly.graph_objects as go
-import json
-import os
+import pandas as pd
 
+# הגדרות עמוד
 st.set_page_config(page_title="Institutional Scanner Pro", layout="wide")
 
-# --- פונקציות ---
-def calculate_indicators(df, market_data):
+# --- 1. מנוע חישובים (לוגיקה) ---
+def calculate_all(df, market_df):
     # VWAP
     q = df['Volume'] * ((df['High'] + df['Low'] + df['Close']) / 3)
     df['VWAP'] = q.cumsum() / df['Volume'].cumsum()
-    
-    # אינדיקטורים
-    df['Vol_Avg_20'] = df['Volume'].rolling(20).mean()
-    df['Is_Spike'] = df['Volume'] > (df['Vol_Avg_20'] * 2)
+    # RSI
     delta = df['Close'].diff()
-    gain = (delta.where(delta > 0, 0)).rolling(14).mean()
+    gain = delta.where(delta > 0, 0).rolling(14).mean()
     loss = (-delta.where(delta < 0, 0)).rolling(14).mean()
     df['RSI'] = 100 - (100 / (1 + (gain / loss)))
-    
-    # MACD
+    # MACD + Divergence
     exp1 = df['Close'].ewm(span=12, adjust=False).mean()
     exp2 = df['Close'].ewm(span=26, adjust=False).mean()
     df['MACD'] = exp1 - exp2
-    price_low = df['Close'].rolling(20).min()
-    macd_low = df['MACD'].rolling(20).min()
-    df['Divergence'] = (df['Close'] <= price_low) & (df['MACD'] > macd_low)
-    
-    df['RS'] = (df['Close'] / df['Close'].iloc[0]) / (market_data / market_data.iloc[0])
+    df['Divergence'] = (df['Close'] <= df['Close'].rolling(20).min()) & (df['MACD'] > df['MACD'].rolling(20).min())
+    # Volume Spike
+    df['Is_Spike'] = df['Volume'] > (df['Volume'].rolling(20).mean() * 2)
+    # Relative Strength
+    df['RS'] = (df['Close'] / df['Close'].iloc[0]) / (market_df['Close'] / market_df['Close'].iloc[0])
     return df
 
-# --- ממשק ---
+# --- 2. ממשק משתמש ---
 st.title("🛡️ Institutional Accumulation Dashboard")
-col_left, col_right = st.columns([1, 3])
+col1, col2 = st.columns([1, 4])
 
-with col_left:
-    st.subheader("⚙️ סריקה")
-    manual_ticker = st.text_input("מניה:")
-    if st.button('🚀 הרץ סריקה'):
-        if 'results_cache' not in st.session_state: st.session_state['results_cache'] = {}
-        
-        # לוגיקת סריקה
+with col1:
+    ticker = st.text_input("הכנס סימול (למשל: AAPL):").upper()
+    if st.button("🚀 סרוק מניה"):
         try:
-            df = yf.Ticker(manual_ticker.upper()).history(period="1y")
-            df = calculate_indicators(df, yf.Ticker("SPY").history(period="1y")['Close'].iloc[-len(df):])
-            last = df.iloc[-1]
-            
-            # בדיקת תנאים
-            conditions = {
-                "Divergence": last['Divergence'],
-                "Price > VWAP": last['Close'] > last['VWAP'],
-                "RS > 1.0": last['RS'] > 1.0,
-                "RSI < 65": last['RSI'] < 65,
-                "Volume Spike": last['Is_Spike']
-            }
-            
-            st.session_state['results_cache'][manual_ticker.upper()] = {'df': df, 'cond': conditions}
-            st.session_state['selected'] = manual_ticker.upper()
-        except Exception as e: st.error("שגיאה בסריקה")
+            df = yf.Ticker(ticker).history(period="1y")
+            market_df = yf.Ticker("SPY").history(period="1y")
+            df = calculate_all(df, market_df)
+            st.session_state['data'] = df
+            st.session_state['ticker'] = ticker
+        except: st.error("שגיאה בטעינת הנתונים")
 
-    # צד אינדיקטורים צבעוני
-    if 'selected' in st.session_state:
-        st.markdown("---")
-        st.subheader("📋 סטטוס אינדיקטורים")
-        conds = st.session_state['results_cache'][st.session_state['selected']]['cond']
-        for name, val in conds.items():
-            color = "green" if val else "red"
-            st.markdown(f":{color}[● {name}]")
+    if 'data' in st.session_state:
+        st.subheader("📋 אינדיקטורים")
+        last = st.session_state['data'].iloc[-1]
+        indicators = {
+            "Divergence": last['Divergence'],
+            "Price > VWAP": last['Close'] > last['VWAP'],
+            "RS > 1.0": last['RS'] > 1.0,
+            "RSI < 65": last['RSI'] < 65,
+            "Volume Spike": last['Is_Spike']
+        }
+        for name, status in indicators.items():
+            color = "green" if status else "red"
+            st.markdown(f"<span style='color:{color}'>● {name}</span>", unsafe_allow_html=True)
 
-with col_right:
-    if 'selected' in st.session_state:
-        data = st.session_state['results_cache'][st.session_state['selected']]
-        df = data['df']
-        
-        # גרף עם חץ קניה
+with col2:
+    if 'data' in st.session_state:
+        df = st.session_state['data']
         fig = go.Figure(data=[go.Candlestick(x=df.index, open=df['Open'], high=df['High'], low=df['Low'], close=df['Close'])])
-        fig.add_trace(go.Scatter(x=df.index, y=df['VWAP'], line=dict(color='yellow', width=2), name='VWAP'))
+        fig.add_trace(go.Scatter(x=df.index, y=df['VWAP'], name='VWAP', line=dict(color='yellow')))
         
-        # חץ קניה במידה ותנאים התקיימו
-        if all(data['cond'].values()):
-            fig.add_trace(go.Scatter(x=[df.index[-1]], y=[df['Low'].iloc[-1] * 0.98], mode='markers', 
+        # חץ קניה
+        last = df.iloc[-1]
+        if last['Divergence'] and last['Close'] > last['VWAP']:
+            fig.add_trace(go.Scatter(x=[df.index[-1]], y=[last['Low']*0.98], mode='markers', 
                                     marker=dict(symbol='triangle-up', size=20, color='lime'), name='אות קניה'))
         
-        fig.update_layout(template="plotly_dark", height=500, xaxis_rangeslider_visible=False)
+        fig.update_layout(template="plotly_dark", height=600)
         st.plotly_chart(fig, use_container_width=True)
