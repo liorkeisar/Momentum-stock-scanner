@@ -7,78 +7,83 @@ import time
 import os
 
 st.set_page_config(page_title="סורק פריצות מוסדי", layout="wide")
-st.title("📈 סורק פריצות מוסדי")
+st.title("📈 סורק איסוף מוסדי")
 
 @st.cache_data
 def load_tickers(filename):
     try:
-        # התיקון החשוב: header=None קורא את הקבצים שלך נכון
         df = pd.read_csv(filename, header=None)
         return df[0].dropna().tolist()
     except Exception as e:
         st.error(f"שגיאה בטעינת {filename}: {e}")
         return []
 
-# מציאת קבצי ה-CSV באופן אוטומטי
+# מציאת קבצי ה-CSV
 available_files = [f for f in os.listdir('.') if f.endswith('.csv') and f != 'requirements.txt']
-index_option = st.sidebar.selectbox("בחר קובץ מניות לסריקה:", available_files)
+index_option = st.sidebar.selectbox("בחר רשימת מניות:", available_files)
 
-if index_option:
-    ticker_list = load_tickers(index_option)
-    st.sidebar.write(f"נסרקים כעת {len(ticker_list)} טיקרים מתוך {index_option}")
-
+# חישוב אינדיקטורים כולל VWAP, MFI, RSI
 def calculate_indicators(df):
+    # VWAP
+    q = df['Volume'] * ((df['High'] + df['Low'] + df['Close']) / 3)
+    df['VWAP'] = q.cumsum() / df['Volume'].cumsum()
+    
+    # RSI
+    delta = df['Close'].diff()
+    gain = (delta.where(delta > 0, 0)).rolling(14).mean()
+    loss = (-delta.where(delta < 0, 0)).rolling(14).mean()
+    df['RSI'] = 100 - (100 / (1 + (gain / loss)))
+    
+    # MFI
+    typical_price = (df['High'] + df['Low'] + df['Close']) / 3
+    mf = typical_price * df['Volume']
+    pos_flow = mf.where(typical_price > typical_price.shift(1), 0).rolling(14).sum()
+    neg_flow = mf.where(typical_price < typical_price.shift(1), 0).rolling(14).sum()
+    df['MFI'] = 100 - (100 / (1 + (pos_flow / neg_flow)))
+    
+    # בולינגר
     df['MA20'] = df['Close'].rolling(20).mean()
     std20 = df['Close'].rolling(20).std()
-    df['BB_Upper'] = df['MA20'] + (std20 * 2)
-    df['BB_Lower'] = df['MA20'] - (std20 * 2)
-    df['BB_Width'] = ((df['BB_Upper'] - df['BB_Lower']) / df['MA20']) * 100
-    df['Vol_MA20'] = df['Volume'].rolling(20).mean()
-    exp12 = df['Close'].ewm(span=12, adjust=False).mean()
-    exp26 = df['Close'].ewm(span=26, adjust=False).mean()
-    df['MACD_Hist'] = (exp12 - exp26) - (exp12 - exp26).ewm(span=9, adjust=False).mean()
+    df['BB_Width'] = ((df['MA20'] + (std20 * 2) - (df['MA20'] - (std20 * 2))) / df['MA20']) * 100
+    
     return df
 
-def plot_interactive_chart(df, ticker):
-    fig = go.Figure()
-    fig.add_trace(go.Candlestick(x=df.index, open=df['Open'], high=df['High'], low=df['Low'], close=df['Close'], name='מחיר'))
-    fig.add_trace(go.Scatter(x=df.index, y=df['BB_Upper'], line=dict(color='rgba(173, 216, 230, 0.5)', width=1), name='BB Upper'))
-    fig.add_trace(go.Scatter(x=df.index, y=df['BB_Lower'], line=dict(color='rgba(173, 216, 230, 0.5)', width=1), name='BB Lower', fill='tonexty'))
-    fig.update_layout(title=f"גרף: {ticker}", template="plotly_dark", xaxis_rangeslider_visible=False)
-    st.plotly_chart(fig, use_container_width=True)
-
-if 'results_cache' not in st.session_state: st.session_state['results_cache'] = {}
-if 'all_data' not in st.session_state: st.session_state['all_data'] = pd.DataFrame()
-
-if st.button(f'🚀 התחל סריקה ל-{index_option}'):
+# הרצת הסריקה
+if st.button('🚀 סרוק איסוף מוסדי'):
     found = []
-    all_results = []
     progress_bar = st.progress(0)
+    ticker_list = load_tickers(index_option)
     
     for i, ticker in enumerate(ticker_list):
         try:
             time.sleep(0.1)
-            df = yf.Ticker(ticker).history(period="60d")
-            if len(df) < 20: continue
-            df = calculate_indicators(df)
-            last, prev = df.iloc[-1], df.iloc[-2]
-            all_results.append({'Ticker': ticker, 'BB_Width': round(last['BB_Width'], 2), 'MACD_Hist': round(last['MACD_Hist'], 4)})
+            df = yf.Ticker(ticker).history(period="1y") # נתונים לשנה עבור שפל שנתי
+            if len(df) < 50: continue
             
-            if (last['BB_Width'] <= 12 and last['MACD_Hist'] > prev['MACD_Hist'] and last['Volume'] > (last['Vol_MA20'] * 1.2)):
+            df = calculate_indicators(df)
+            last = df.iloc[-1]
+            min_low = df['Low'].tail(252).min()
+            
+            # תנאי איסוף מוסדי מדויק
+            if (last['Close'] < (min_low * 1.1) and  # קרוב לשפל שנתי (בטווח 10%)
+                last['Close'] > last['VWAP'] and    # מחיר מעל VWAP (כניסת כסף)
+                last['BB_Width'] < 10 and           # דשדוש צר
+                30 < last['RSI'] < 60 and           # לא במצב קיצון
+                last['MFI'] > 40):                  # זרימת כסף בריאה
                 found.append(ticker)
                 st.session_state['results_cache'][ticker] = df
         except: continue
         progress_bar.progress((i + 1) / len(ticker_list))
     
     st.session_state['found_stocks'] = found
-    st.session_state['all_data'] = pd.DataFrame(all_results)
-    st.success("הסריקה הסתיימה!")
+    st.success(f"נמצאו {len(found)} מניות בתהליך איסוף!")
 
-tab1, tab2 = st.tabs(["🎯 מניות לפריצה", "📊 כל נתוני המדד"])
-with tab1:
-    if 'found_stocks' in st.session_state and st.session_state['found_stocks']:
-        selected = st.selectbox("בחר מניה:", st.session_state['found_stocks'])
-        plot_interactive_chart(st.session_state['results_cache'].get(selected), selected)
-with tab2:
-    if not st.session_state['all_data'].empty:
-        st.dataframe(st.session_state['all_data'].sort_values('BB_Width'), use_container_width=True)
+# תצוגה
+if 'found_stocks' in st.session_state:
+    selected = st.selectbox("בחר מניה:", st.session_state['found_stocks'])
+    if selected:
+        df = st.session_state['results_cache'].get(selected)
+        fig = go.Figure(data=[go.Candlestick(x=df.index, open=df['Open'], high=df['High'], low=df['Low'], close=df['Close'])])
+        fig.add_trace(go.Scatter(x=df.index, y=df['VWAP'], line=dict(color='yellow', width=2), name='VWAP'))
+        fig.update_layout(template="plotly_dark")
+        st.plotly_chart(fig, use_container_width=True)
