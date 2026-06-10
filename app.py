@@ -1,6 +1,42 @@
 import streamlit as st
 import yfinance as yf
 import pandas as pd
+import plotly.graph_objects as go
+
+# --- פונקציית MACD עם זיהוי סטייה ---
+def calculate_macd_divergence(df):
+    # חישוב MACD
+    exp1 = df['Close'].ewm(span=12, adjust=False).mean()
+    exp2 = df['Close'].ewm(span=26, adjust=False).mean()
+    df['MACD'] = exp1 - exp2
+    df['Signal'] = df['MACD'].ewm(span=9, adjust=False).mean()
+    
+    # זיהוי סטייה חיובית (Bullish Divergence)
+    # מחיר יורד לשפל חדש, MACD עולה לשפל גבוה יותר
+    price_low = df['Close'].rolling(20).min()
+    macd_low = df['MACD'].rolling(20).min()
+    
+    # בודקים אם יש סטייה בטווח של שנתיים (לפי בקשתך)
+    is_divergence = (df['Close'] <= price_low) & (df['MACD'] > macd_low)
+    df['Divergence'] = is_divergence
+    return df
+
+# --- בתוך לולאת הסריקה שלך, הוסף את התנאי הזה: ---
+# (הנחה שאתה מריץ את זה על מניה ספציפית שחשדת בה)
+
+df = calculate_macd_divergence(df)
+last = df.iloc[-1]
+
+# תנאי הסינון החדש:
+if (last['Divergence'] and 
+    last['MFI'] > 50 and 
+    last['RSI'] < 60 and 
+    last['Close'] < (df['Low'].tail(500).min() * 1.1)): # שפל שנתי/דו-שנתי
+    
+    st.success(f"נמצאה מניה עם סטייה חיובית ב-MACD: {ticker}")
+import streamlit as st
+import yfinance as yf
+import pandas as pd
 import numpy as np
 import plotly.graph_objects as go
 import time
