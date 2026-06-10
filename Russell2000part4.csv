@@ -1,3 +1,17 @@
+@st.cache_data
+def load_tickers(filename):
+    try:
+        # קריאת הקובץ ללא הנחת כותרת ספציפית
+        df = pd.read_csv(filename)
+        
+        # ניסיון למצוא את העמודה הנכונה (הראשונה שבהן)
+        # במקום לחפש 'Ticker', ניקח פשוט את העמודה הראשונה של הקובץ
+        ticker_column = df.columns[0]
+        return df[ticker_column].dropna().tolist()
+    except Exception as e:
+        st.error(f"שגיאה בקובץ {filename}: {e}")
+        return []
+
 BZUN
 C
 CAAP
