@@ -8,7 +8,14 @@ import os
 import json
 from datetime import datetime
 
+# הגדרות עמוד ומראה נקי
 st.set_page_config(page_title="סורק איסוף מוסדי Pro", layout="wide")
+st.markdown("""
+            <style>
+            #MainMenu {visibility: hidden;} footer {visibility: hidden;}
+            </style>
+            """, unsafe_allow_html=True)
+
 st.title("🛡️ סורק איסוף מוסדי - Pro")
 
 # --- פונקציות חישוב ---
@@ -48,35 +55,37 @@ if 'found_stocks' not in st.session_state: st.session_state['found_stocks'] = []
 
 # --- תפריט צדדי ---
 st.sidebar.header("בקרת סריקה")
-manual_ticker = st.sidebar.text_input("הכנס מניה לבדיקה ידנית:")
+manual_ticker = st.sidebar.text_input("הכנס מניה לבדיקה ידנית (למשל: AAPL):")
 available_files = [f for f in os.listdir('.') if f.endswith('.csv')]
 index_option = st.sidebar.selectbox("בחר רשימת מניות:", available_files)
 
+# --- לוגיקת סריקה עם ממשק מודרני ---
 if st.sidebar.button('🚀 הרץ סריקה'):
-    found = []
-    market_data = get_market_data()
-    ticker_list = [manual_ticker.upper()] if manual_ticker else pd.read_csv(index_option, header=None)[0].dropna().tolist()
-    
-    progress_bar = st.progress(0)
-    for i, ticker in enumerate(ticker_list):
-        try:
-            df = yf.Ticker(ticker).history(period="1y")
-            if len(df) < 60: continue
-            df = calculate_indicators(df)
-            last = df.iloc[-1]
-            rs_score = (last['Close'] / df['Close'].iloc[-20]) / (market_data.iloc[-1] / market_data.iloc[-20])
-            
-            if (last['Divergence'] and last['MFI'] > 50 and last['RSI'] < 65 and rs_score > 1.0):
-                found.append(ticker)
-                st.session_state['results_cache'][ticker] = df
-        except: continue
-        progress_bar.progress((i + 1) / len(ticker_list))
-    
-    st.session_state['found_stocks'] = found
-    if not manual_ticker:
-        with open('latest_results.json', 'w') as f:
-            json.dump({"date": datetime.now().strftime("%Y-%m-%d"), "stocks": found}, f)
-    st.success("סריקה הושלמה!")
+    with st.status("מנתח שוק...", expanded=True) as status:
+        found = []
+        market_data = get_market_data()
+        ticker_list = [manual_ticker.upper()] if manual_ticker else pd.read_csv(index_option, header=None)[0].dropna().tolist()
+        
+        st.session_state['results_cache'] = {}
+        for i, ticker in enumerate(ticker_list):
+            try:
+                status.write(f"בודק: {ticker}")
+                df = yf.Ticker(ticker).history(period="1y")
+                if len(df) < 60: continue
+                df = calculate_indicators(df)
+                last = df.iloc[-1]
+                rs_score = (last['Close'] / df['Close'].iloc[-20]) / (market_data.iloc[-1] / market_data.iloc[-20])
+                
+                if (last['Divergence'] and last['MFI'] > 50 and last['RSI'] < 65 and rs_score > 1.0):
+                    found.append(ticker)
+                    st.session_state['results_cache'][ticker] = df
+            except: continue
+        
+        st.session_state['found_stocks'] = found
+        if not manual_ticker:
+            with open('latest_results.json', 'w') as f:
+                json.dump({"date": datetime.now().strftime("%Y-%m-%d"), "stocks": found}, f)
+        status.update(label="הסריקה הושלמה!", state="complete", expanded=False)
 
 # --- לשוניות ---
 tab1, tab2, tab3 = st.tabs(["🎯 סריקה חיה", "📊 כל נתוני המדד", "📅 סריקה שמורה"])
@@ -89,10 +98,15 @@ with tab1:
             fig = go.Figure(data=[go.Candlestick(x=df.index, open=df['Open'], high=df['High'], low=df['Low'], close=df['Close'])])
             fig.add_trace(go.Scatter(x=df.index, y=df['VWAP'], line=dict(color='yellow'), name='VWAP'))
             fig.add_trace(go.Scatter(x=[df.index[-1]], y=[df['Low'].iloc[-1] * 0.98], mode='markers', marker=dict(symbol='triangle-up', size=20, color='lime'), name='אות קניה'))
+            fig.update_layout(template="plotly_dark", title=f"גרף: {selected} - אישור מוסדי", xaxis_rangeslider_visible=False)
             st.plotly_chart(fig, use_container_width=True)
+    else:
+        st.info("בצע סריקה כדי לראות תוצאות.")
 
 with tab3:
     if os.path.exists('latest_results.json'):
         with open('latest_results.json', 'r') as f:
             saved = json.load(f)
             st.write(f"תאריך: {saved['date']} | מניות: {', '.join(saved['stocks'])}")
+    else:
+        st.info("אין סריקה שמורה.")
