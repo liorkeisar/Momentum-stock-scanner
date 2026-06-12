@@ -1,79 +1,72 @@
 import streamlit as st
 import yfinance as yf
 import pandas as pd
+import os
 from concurrent.futures import ThreadPoolExecutor
 
-st.set_page_config(layout="wide", page_title="TITAN: Pro Multi-Strategy Scanner")
+st.set_page_config(layout="wide", page_title="TITAN: Persistant Scanner")
 
-# --- טעינת רשימת מניות ---
-@st.cache_data(ttl=86400)
+# --- ניהול קבצים ---
+def save_results(results, mode):
+    df_res = pd.DataFrame.from_dict(results, orient='index', columns=['Data', 'Score', 'Sector'])
+    df_res[['Score', 'Sector']].to_csv(f"last_scan_{mode}.csv")
+
+def load_results(mode):
+    if os.path.exists(f"last_scan_{mode}.csv"):
+        return pd.read_csv(f"last_scan_{mode}.csv", index_col=0)
+    return None
+
+# --- לוגיקה ---
 def get_universe():
+    url = "https://raw.githubusercontent.com/liorkeisar/Momentum-stock-scanner/main/nasdaq_screener.csv"
     try:
-        url = "https://raw.githubusercontent.com/liorkeisar/Momentum-stock-scanner/main/nasdaq_screener.csv"
         df = pd.read_csv(url)
-        tickers = df['Symbol'].dropna().unique().tolist()
-        return [str(t) for t in tickers if len(str(t)) < 6 and str(t).isalpha()]
-    except:
-        return ["AAPL", "NVDA", "MSFT", "AMD", "TSLA"]
+        return df['Symbol'].dropna().unique().tolist()[:100] # קיצרתי ל-100 לבדיקה מהירה, תסיר את ה-[:100] כדי לסרוק הכל
+    except: return ["AAPL", "NVDA", "MSFT"]
 
-# --- לוגיקת הסריקה ---
-def run_scanner(ticker, mode):
+def run_scanner_ticker(ticker, mode):
     try:
         stock = yf.Ticker(ticker)
-        df = stock.history(period="300d")
-        if len(df) < 252 or df['Volume'].rolling(20).mean().iloc[-1] < 500000: return None
+        hist = stock.history(period="100d")
+        if len(hist) < 50: return None
         
-        # שליפת סקטור
-        info = stock.info
-        sector = info.get('sector', 'Unknown')
+        # חישובים בסיסיים
+        ma20 = hist['Close'].rolling(20).mean().iloc[-1]
+        bb_width = (hist['Close'].rolling(20).std() * 4 / ma20) * 100
+        rvol = hist['Volume'].iloc[-1] / hist['Volume'].rolling(20).mean().iloc[-1]
         
-        df['MA20'] = df['Close'].rolling(20).mean()
-        df['RVOL'] = df['Volume'] / df['Volume'].rolling(20).mean()
-        df['BB_Width'] = (df['Close'].rolling(20).std() * 4 / df['MA20']) * 100
-        df['is_dropped'] = ((df['High'].rolling(252).max() - df['Close']) / df['High'].rolling(252).max()) > 0.25
+        sector = stock.info.get('sector', 'Unknown')
         
-        # אסטרטגיה 1: מניות במחיר מציאה
-        if mode == "מציאה":
-            if df['is_dropped'].iloc[-1] and df['BB_Width'].iloc[-1] < 10:
-                return ticker, df, 100, sector
-        
-        # אסטרטגיה 2: פריצות
-        elif mode == "פריצה":
-            if df['BB_Width'].iloc[-1] < 15 and df['RVOL'].iloc[-1] > 1.2:
-                score = min(100, int((15 - df['BB_Width'].iloc[-1]) * 3 + (df['RVOL'].iloc[-1] * 20)))
-                return ticker, df, score, sector
+        if mode == "מציאה" and bb_width < 10:
+            return ticker, 100, sector
+        elif mode == "פריצה" and bb_width < 15 and rvol > 1.2:
+            score = min(100, int((15 - bb_width) * 3 + (rvol * 20)))
+            return ticker, score, sector
     except: return None
     return None
 
-# --- ממשק משתמש ---
-st.title("🛡️ TITAN: Multi-Strategy Scanner")
-tab1, tab2 = st.tabs(["📉 מניות במחיר מציאה", "🚀 מניות לפני פריצה"])
+# --- ממשק ---
+st.title("🛡️ TITAN: Persistent Scanner")
+tab1, tab2 = st.tabs(["📉 מציאות", "🚀 פריצות"])
 
-def process_scan(mode):
-    tickers = get_universe()
-    progress_bar = st.progress(0)
+def process_and_save(mode):
     results = {}
-    with ThreadPoolExecutor(max_workers=50) as ex:
-        futures = {ex.submit(run_scanner, t, mode): t for t in tickers}
-        for i, future in enumerate(futures):
-            res = future.result()
-            if res: results[res[0]] = (res[1], res[2], res[3])
-            progress_bar.progress((i + 1) / len(tickers))
-    return dict(sorted(results.items(), key=lambda item: item[1][1], reverse=True))
+    with ThreadPoolExecutor(max_workers=20) as ex:
+        futures = {ex.submit(run_scanner_ticker, t, mode): t for t in get_universe()}
+        for f in futures:
+            res = f.result()
+            if res: results[res[0]] = {'Score': res[1], 'Sector': res[2]}
+    save_results(results, mode)
+    return results
 
-# תצוגת לשוניות
 with tab1:
-    if st.button("סרוק מציאות"):
-        st.session_state['res_val'] = process_scan("מציאה")
-    if 'res_val' in st.session_state:
-        for t, (df, s, sec) in st.session_state['res_val'].items():
-            st.write(f"---")
-            st.write(f"**מניה:** {t} | **סקטור:** {sec}")
+    if st.button("סרוק מציאות"): st.session_state['res_val'] = process_and_save("מציאה")
+    res = st.session_state.get('res_val', load_results("מציאה"))
+    if res is not None:
+        st.dataframe(res)
 
 with tab2:
-    if st.button("סרוק פריצות"):
-        st.session_state['res_brk'] = process_scan("פריצה")
-    if 'res_brk' in st.session_state:
-        for t, (df, s, sec) in st.session_state['res_brk'].items():
-            st.write(f"---")
-            st.write(f"**מניה:** {t} | **סקטור:** {sec} | **ציון פריצה:** {s}/100")
+    if st.button("סרוק פריצות"): st.session_state['res_brk'] = process_and_save("פריצה")
+    res = st.session_state.get('res_brk', load_results("פריצה"))
+    if res is not None:
+        st.dataframe(res)
