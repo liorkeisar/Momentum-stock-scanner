@@ -5,7 +5,7 @@ import numpy as np
 import os
 from concurrent.futures import ThreadPoolExecutor
 
-st.set_page_config(layout="wide", page_title="TITAN: Full Scanner with Value")
+st.set_page_config(layout="wide", page_title="TITAN: Scanner with Save")
 
 @st.cache_data(ttl=86400)
 def get_universe():
@@ -18,28 +18,16 @@ def get_universe():
 def run_scanner(ticker, mode):
     try:
         stock = yf.Ticker(ticker)
-        
-        # לוגיקת שווי הוגן (גרהאם)
         if mode == "ערך עמוק":
-            # שליפת נתונים פונדמנטליים בצורה בטוחה
             info = stock.info
+            curr_price = info.get('currentPrice', 0)
             eps = info.get('trailingEps', 0)
             bvps = info.get('bookValue', 0)
-            # נוסחת גרהאם: sqrt(22.5 * EPS * BVPS)
             graham_num = np.sqrt(22.5 * eps * bvps) if (eps > 0 and bvps > 0) else 0
-            
-            # בדיקה אם המחיר הנוכחי נמוך מהערך ההוגן
-            curr_price = info.get('currentPrice', 0)
-            if graham_num > curr_price * 1.2: # מרווח ביטחון של 20%
-                return {
-                    'Ticker': ticker, 
-                    'Price': round(curr_price, 2), 
-                    'FairValue': round(graham_num, 2), 
-                    'Upside%': round(((graham_num/curr_price)-1)*100, 2)
-                }
+            if graham_num > curr_price * 1.2:
+                return {'Ticker': ticker, 'Price': round(curr_price, 2), 'FairValue': round(graham_num, 2), 'Upside%': round(((graham_num/curr_price)-1)*100, 2)}
             return None
 
-        # לוגיקה טכנית (עבור מציאה ופריצה)
         df = stock.history(period="300d")
         if len(df) < 200 or df['Volume'].rolling(20).mean().iloc[-1] < 500000: return None
         curr_price = df['Close'].iloc[-1]
@@ -53,15 +41,14 @@ def run_scanner(ticker, mode):
             return {'Ticker': ticker, 'Price': round(curr_price, 2), 'Score': 100}
         elif mode == "פריצה" and bb_width.iloc[-1] < 15:
             return {'Ticker': ticker, 'Price': round(curr_price, 2), 'Score': 80}
-            
     except: return None
     return None
 
-# ממשק משתמש
-st.title("🛡️ TITAN: Nasdaq Pro Scanner")
+st.title("🛡️ TITAN: Nasdaq Scanner")
 mode = st.radio("בחר אסטרטגיה:", ["מציאה", "פריצה", "ערך עמוק"], horizontal=True)
+filename = f"results_{mode}.csv"
 
-if st.button("התחל סריקה מלאה"):
+if st.button("התחל סריקה"):
     universe = get_universe()
     progress_bar = st.progress(0)
     results = []
@@ -72,9 +59,19 @@ if st.button("התחל סריקה מלאה"):
             res = future.result()
             if res: results.append(res)
             progress_bar.progress((i + 1) / len(universe))
-            
+    
     if results:
-        st.success(f"נמצאו {len(results)} מניות.")
-        st.dataframe(pd.DataFrame(results), use_container_width=True)
+        df = pd.DataFrame(results)
+        df.to_csv(filename, index=False) # שמירה לקובץ
+        st.session_state[mode] = df
+        st.success(f"הסריקה נשמרה לקובץ: {filename}")
     else:
-        st.warning("לא נמצאו מניות בתנאים אלו. נסה מצב אחר.")
+        st.warning("לא נמצאו מניות.")
+
+# טעינה מהזיכרון או מהקובץ אם קיים
+if mode not in st.session_state and os.path.exists(filename):
+    st.session_state[mode] = pd.read_csv(filename)
+
+if mode in st.session_state:
+    st.dataframe(st.session_state[mode], use_container_width=True)
+    st.download_button(f"📥 הורד את תוצאות {mode}", data=st.session_state[mode].to_csv(index=False), file_name=filename)
