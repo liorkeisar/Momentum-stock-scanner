@@ -2,9 +2,10 @@ import streamlit as st
 import yfinance as yf
 import pandas as pd
 import os
+import numpy as np
 from concurrent.futures import ThreadPoolExecutor
 
-st.set_page_config(layout="wide", page_title="TITAN: Pro Trading System")
+st.set_page_config(layout="wide", page_title="TITAN: ATR Professional")
 
 @st.cache_data(ttl=86400)
 def get_universe():
@@ -14,6 +15,14 @@ def get_universe():
         return [str(t) for t in df['Symbol'].dropna().unique().tolist() if len(str(t)) < 6 and str(t).isalpha()]
     except: return ["AAPL", "NVDA", "MSFT"]
 
+def calculate_atr(df, period=14):
+    high_low = df['High'] - df['Low']
+    high_close = np.abs(df['High'] - df['Close'].shift())
+    low_close = np.abs(df['Low'] - df['Close'].shift())
+    ranges = pd.concat([high_low, high_close, low_close], axis=1)
+    true_range = ranges.max(axis=1)
+    return true_range.rolling(period).mean().iloc[-1]
+
 def run_scanner(ticker, mode):
     try:
         stock = yf.Ticker(ticker)
@@ -21,9 +30,11 @@ def run_scanner(ticker, mode):
         if len(df) < 252 or df['Volume'].rolling(20).mean().iloc[-1] < 500000: return None
         
         curr_price = df['Close'].iloc[-1]
-        # ניהול סיכונים: 3% הפסד, 9% יעד (יחס 1:3)
-        stop_loss = round(curr_price * 0.97, 2)
-        take_profit = round(curr_price * 1.09, 2)
+        atr = calculate_atr(df)
+        
+        # ניהול סיכונים מבוסס ATR
+        stop_loss = round(curr_price - (2 * atr), 2)
+        take_profit = round(curr_price + (6 * atr), 2) # יחס 1:3 (2 ATR סיכון מול 6 ATR רווח)
         
         df['MA20'] = df['Close'].rolling(20).mean()
         df['RVOL'] = df['Volume'] / df['Volume'].rolling(20).mean()
@@ -41,12 +52,12 @@ def run_scanner(ticker, mode):
     except: return None
     return None
 
-st.title("🛡️ TITAN: Pro Trading System")
+st.title("🛡️ TITAN: ATR-Based Professional Scanner")
 tab1, tab2 = st.tabs(["📉 מציאות", "🚀 פריצות"])
 
 def render_tab(mode, filename):
     if st.button(f"סרוק {mode}"):
-        with st.spinner("סורק ומדרג מניות..."):
+        with st.spinner("סורק מניות ומחשב רמות ATR..."):
             results = []
             with ThreadPoolExecutor(max_workers=50) as ex:
                 futures = [ex.submit(run_scanner, t, mode) for t in get_universe()]
@@ -58,7 +69,7 @@ def render_tab(mode, filename):
                 df = pd.DataFrame(results).sort_values(by='Score', ascending=False)
                 df.to_csv(filename, index=False)
                 st.session_state[mode] = df
-            else: st.warning("לא נמצאו מניות כרגע.")
+            else: st.warning("לא נמצאו מניות.")
 
     if mode not in st.session_state and os.path.exists(filename):
         if os.path.getsize(filename) > 0:
