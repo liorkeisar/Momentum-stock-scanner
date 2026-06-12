@@ -5,58 +5,58 @@ import numpy as np
 import plotly.graph_objects as go
 from concurrent.futures import ThreadPoolExecutor
 
-st.set_page_config(layout="wide", page_title="TITAN: Total Market Scanner")
+st.set_page_config(layout="wide", page_title="TITAN: Breakout Hunter")
 
-# --- טעינה ישירה מ-GitHub ---
+# --- טעינה יציבה מ-GitHub ---
 @st.cache_data(ttl=86400)
 def get_universe():
     try:
-        # קישור Raw ישיר מה-GitHub שלך
         url = "https://raw.githubusercontent.com/liorkeisar/Momentum-stock-scanner/main/nasdaq_screener.csv"
         df = pd.read_csv(url)
         tickers = df['Symbol'].dropna().unique().tolist()
-        # ניקוי: השארת סימולים תקינים בלבד
         return [str(t) for t in tickers if len(str(t)) < 6 and str(t).isalpha()]
-    except Exception as e:
-        st.error(f"שגיאה בטעינת הקובץ מה-GitHub: {e}")
+    except:
         return ["AAPL", "NVDA", "MSFT", "AMD", "TSLA"]
 
-# --- לוגיקה ---
+# --- מנוע ניקוד פריצה (Breakout Logic) ---
+def calculate_breakout_score(df):
+    score = 0
+    # כיווץ רצועות בולינגר = דחיסה לקראת פריצה
+    if df['BB_Width'].iloc[-1] < 5: score += 50
+    elif df['BB_Width'].iloc[-1] < 10: score += 30
+    
+    # עלייה חדה בווליום = כניסת כסף מוסדי
+    if df['RVOL'].iloc[-1] > 2.5: score += 30
+    elif df['RVOL'].iloc[-1] > 1.5: score += 15
+    
+    # מומנטום מעל ממוצע
+    if df['Close'].iloc[-1] > df['MA20'].iloc[-1]: score += 20
+    
+    return score
+
+# --- סורק ---
 def run_scanner(ticker):
     try:
         df = yf.Ticker(ticker).history(period="300d")
-        # סינון נזילות: ווליום ממוצע מעל 500k
         if len(df) < 252 or df['Volume'].rolling(20).mean().iloc[-1] < 500000: return None
         
-        # חישוב אינדיקטורים
         df['MA20'] = df['Close'].rolling(20).mean()
         df['RVOL'] = df['Volume'] / df['Volume'].rolling(20).mean()
         df['BB_Width'] = (df['Close'].rolling(20).std() * 4 / df['MA20']) * 100
-        df['MFI'] = 100 - (100 / (1 + (df['Volume'] * ((df['High']+df['Low']+df['Close'])/3)).rolling(14).mean()))
-        df['is_dropped'] = ((df['High'].rolling(252).max() - df['Close']) / df['High'].rolling(252).max()) > 0.25
         
-        # MACD
-        exp1 = df['Close'].ewm(span=12, adjust=False).mean()
-        exp2 = df['Close'].ewm(span=26, adjust=False).mean()
-        df['MACD'] = exp1 - exp2
-        df['Signal'] = df['MACD'].ewm(span=9, adjust=False).mean()
-        
-        # תנאי מוסדי
-        if (df['is_dropped'].iloc[-1] and df['BB_Width'].iloc[-1] < 10 and 
-            df['MFI'].iloc[-1] > 45 and df['RVOL'].iloc[-1] > 1.5 and 
-            df['MACD'].iloc[-1] > df['Signal'].iloc[-1]):
-            return ticker, df
+        # תנאי סף לפריצה: רצועות צרות + ווליום מתחיל לעלות
+        if df['BB_Width'].iloc[-1] < 15 and df['RVOL'].iloc[-1] > 1.2:
+            score = calculate_breakout_score(df)
+            return ticker, df, score
     except: return None
     return None
 
 # --- ממשק ---
-st.title("🛡️ TITAN: Total Market Scanner")
-st.write("סריקת מניות מבוססת קובץ ה-Nasdaq שלך ב-GitHub")
+st.title("🏹 TITAN: Breakout Hunter")
+st.write("סורק מניות שנמצאות בדחיסה (Squeeze) לפני פריצה מוסדית")
 
-if st.button("🚀 התחל סריקת שוק מלאה"):
+if st.button("🚀 התחל סריקת פריצות"):
     tickers = get_universe()
-    st.write(f"סורק {len(tickers)} מניות...")
-    
     progress_bar = st.progress(0)
     results = {}
     
@@ -64,16 +64,17 @@ if st.button("🚀 התחל סריקת שוק מלאה"):
         futures = {ex.submit(run_scanner, t): t for t in tickers}
         for i, future in enumerate(futures):
             res = future.result()
-            if res: results[res[0]] = res[1]
+            if res: results[res[0]] = (res[1], res[2])
             progress_bar.progress((i + 1) / len(tickers))
             
-    st.session_state['results'] = results
+    # מיון לפי הציון הכי גבוה
+    sorted_results = dict(sorted(results.items(), key=lambda item: item[1][1], reverse=True))
+    st.session_state['results'] = sorted_results
 
 if 'results' in st.session_state:
-    res = st.session_state['results']
-    st.success(f"נמצאו {len(res)} מניות פוטנציאליות!")
-    for ticker, df in res.items():
-        with st.expander(f"מניה: {ticker}"):
+    for ticker, (df, score) in st.session_state['results'].items():
+        with st.expander(f"מניה: {ticker} | ציון פריצה: {score}/100"):
+            st.write(f"דחיסת רצועות (BB_Width): {df['BB_Width'].iloc[-1]:.1f} | עוצמת ווליום (RVOL): {df['RVOL'].iloc[-1]:.1f}x")
             fig = go.Figure(data=[go.Candlestick(x=df.index[-90:], open=df['Open'][-90:], 
                             high=df['High'][-90:], low=df['Low'][-90:], close=df['Close'][-90:])])
             fig.update_layout(template="plotly_dark", height=300)
