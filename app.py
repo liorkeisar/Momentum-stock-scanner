@@ -20,6 +20,9 @@ def run_scanner(ticker, mode):
         df = stock.history(period="300d")
         if len(df) < 252 or df['Volume'].rolling(20).mean().iloc[-1] < 500000: return None
         
+        # מחיר אחרון
+        current_price = df['Close'].iloc[-1]
+        
         df['MA20'] = df['Close'].rolling(20).mean()
         df['RVOL'] = df['Volume'] / df['Volume'].rolling(20).mean()
         df['BB_Width'] = (df['Close'].rolling(20).std() * 4 / df['MA20']) * 100
@@ -29,14 +32,14 @@ def run_scanner(ticker, mode):
         except: sector = 'Unknown'
         
         if mode == "מציאה" and df['is_dropped'].iloc[-1] and df['BB_Width'].iloc[-1] < 10:
-            return {'Ticker': ticker, 'Score': 100, 'Sector': sector}
+            return {'Ticker': ticker, 'Price': round(current_price, 2), 'Score': 100, 'Sector': sector}
         elif mode == "פריצה" and df['BB_Width'].iloc[-1] < 15 and df['RVOL'].iloc[-1] > 1.2:
             score = min(100, int((15 - df['BB_Width'].iloc[-1]) * 3 + (df['RVOL'].iloc[-1] * 20)))
-            return {'Ticker': ticker, 'Score': score, 'Sector': sector}
+            return {'Ticker': ticker, 'Price': round(current_price, 2), 'Score': score, 'Sector': sector}
     except: return None
     return None
 
-st.title("🛡️ TITAN: Top Rated Scanner")
+st.title("🛡️ TITAN: Price-Aware Scanner")
 tab1, tab2 = st.tabs(["📉 מציאות", "🚀 פריצות"])
 
 def render_tab(mode, filename):
@@ -51,24 +54,19 @@ def render_tab(mode, filename):
             
             if results:
                 df = pd.DataFrame(results)
-                # מיון לפי ציון גבוה ביותר
                 df = df.sort_values(by='Score', ascending=False)
                 df.to_csv(filename, index=False)
                 st.session_state[mode] = df
-            else:
-                st.warning("לא נמצאו מניות.")
+            else: st.warning("לא נמצאו מניות.")
 
     if mode not in st.session_state and os.path.exists(filename):
         df_loaded = pd.read_csv(filename)
-        # מיון גם בטעינה מקובץ
         st.session_state[mode] = df_loaded.sort_values(by='Score', ascending=False)
     
     if mode in st.session_state:
         df = st.session_state[mode]
         st.dataframe(df, use_container_width=True)
-        
-        st.download_button(f"📥 הורד אקסל {mode}", data=df.to_csv(index=False), file_name=f"{mode}.csv")
-        
+        st.download_button(f"📥 הורד {mode} (Excel)", data=df.to_csv(index=False), file_name=f"{mode}.csv")
         if st.button(f"🗑️ נקה {mode}", key=f"clear_{mode}"):
             if os.path.exists(filename): os.remove(filename)
             if mode in st.session_state: del st.session_state[mode]
