@@ -36,12 +36,12 @@ def run_scanner(ticker, mode):
     except: return None
     return None
 
-st.title("🛡️ TITAN: Scanner")
+st.title("🛡️ TITAN: Top Rated Scanner")
 tab1, tab2 = st.tabs(["📉 מציאות", "🚀 פריצות"])
 
 def render_tab(mode, filename):
     if st.button(f"סרוק {mode}"):
-        with st.spinner("סורק..."):
+        with st.spinner("סורק ומדרג..."):
             results = []
             with ThreadPoolExecutor(max_workers=50) as ex:
                 futures = [ex.submit(run_scanner, t, mode) for t in get_universe()]
@@ -51,25 +51,24 @@ def render_tab(mode, filename):
             
             if results:
                 df = pd.DataFrame(results)
+                # מיון לפי ציון גבוה ביותר
+                df = df.sort_values(by='Score', ascending=False)
                 df.to_csv(filename, index=False)
                 st.session_state[mode] = df
             else:
                 st.warning("לא נמצאו מניות.")
-                if os.path.exists(filename): os.remove(filename) # מחיקת קובץ ריק אם נוצר
 
-    # טעינה בטוחה
     if mode not in st.session_state and os.path.exists(filename):
-        try:
-            # בודקים אם הקובץ לא ריק לפני קריאה
-            if os.path.getsize(filename) > 0:
-                st.session_state[mode] = pd.read_csv(filename)
-            else:
-                os.remove(filename)
-        except:
-            if os.path.exists(filename): os.remove(filename)
+        df_loaded = pd.read_csv(filename)
+        # מיון גם בטעינה מקובץ
+        st.session_state[mode] = df_loaded.sort_values(by='Score', ascending=False)
     
     if mode in st.session_state:
-        st.dataframe(st.session_state[mode], use_container_width=True)
+        df = st.session_state[mode]
+        st.dataframe(df, use_container_width=True)
+        
+        st.download_button(f"📥 הורד אקסל {mode}", data=df.to_csv(index=False), file_name=f"{mode}.csv")
+        
         if st.button(f"🗑️ נקה {mode}", key=f"clear_{mode}"):
             if os.path.exists(filename): os.remove(filename)
             if mode in st.session_state: del st.session_state[mode]
