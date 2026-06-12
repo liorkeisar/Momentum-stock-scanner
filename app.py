@@ -2,74 +2,76 @@ import streamlit as st
 import yfinance as yf
 import pandas as pd
 import numpy as np
+import os
 from concurrent.futures import ThreadPoolExecutor
 
-st.set_page_config(layout="wide", page_title="TITAN: Pro Scanner")
+st.set_page_config(layout="wide", page_title="TITAN: Persistent Scanner")
 
 @st.cache_data(ttl=86400)
 def get_universe():
     filename = "nasdaq_screener.csv"
     if os.path.exists(filename):
         df = pd.read_csv(filename)
-        return [str(t) for t in df['Symbol'].dropna().unique().tolist() if len(str(t)) < 6 and str(t).isalpha()]
+        symbols = df['Symbol'].dropna().unique().tolist()
+        np.random.shuffle(symbols) # ערבוב כדי למנוע הטיות של אותיות
+        return [str(t) for t in symbols if len(str(t)) < 6 and str(t).isalpha()]
     return []
 
 def run_scanner(ticker, mode):
     try:
         stock = yf.Ticker(ticker)
-        # משיכה אחת של היסטוריה כדי לחסוך קריאות
-        df = stock.history(period="1y")
-        if len(df) < 250: return None
+        info = stock.info
         
-        curr_price = df['Close'].iloc[-1]
-        ma200 = df['Close'].rolling(200).mean().iloc[-1]
+        # סינון בסיסי לשווי שוק
+        if info.get('marketCap', 0) < 500_000_000: return None
         
-        # סינון איכות מקצועי (רק מניות מעל ממוצע 200 יום)
-        if curr_price < ma200: return None
-        
-        # 1. אסטרטגיית שווי הוגן (יציבה יותר)
         if mode == "ערך עמוק":
-            info = stock.info
-            # מחפשים מניות עם PE נמוך וערך ספרתי גבוה (Value)
-            pe = info.get('trailingPE', 999)
-            if 0 < pe < 15: # מכפיל רווח בין 0 ל-15 נחשב זול
-                return {'Ticker': ticker, 'Price': round(curr_price, 2), 'PE_Ratio': round(pe, 2)}
+            pe = info.get('trailingPE', 0)
+            if 0 < pe < 15:
+                return {'Ticker': ticker, 'Price': info.get('currentPrice', 0), 'PE': round(pe, 2)}
             return None
-
-        # 2. אסטרטגיה טכנית (סינון מחמיר ל-700 המניות)
-        atr = (df['High'] - df['Low']).rolling(14).mean().iloc[-1]
-        vol_avg = df['Volume'].rolling(20).mean().iloc[-1]
-        rvol = df['Volume'].iloc[-1] / vol_avg
+        
+        # לוגיקה טכנית
+        df = stock.history(period="1y")
+        if len(df) < 200: return None
+        ma200 = df['Close'].rolling(200).mean().iloc[-1]
+        if df['Close'].iloc[-1] < ma200: return None
+        
         bb_width = (df['Close'].rolling(20).std() * 4 / df['Close'].rolling(20).mean()) * 100
-        
-        # מציאה: ירידה חדה וסחיטה של הרצועות (פחות מ-5% רוחב)
-        if mode == "מציאה" and bb_width < 5:
-            return {'Ticker': ticker, 'Price': round(curr_price, 2), 'Score': 100}
-        
-        # פריצה: נפח מסחר פי 2.5 מהממוצע + תנודתיות נמוכה
-        if mode == "פריצה" and rvol > 2.5 and bb_width < 10:
-            return {'Ticker': ticker, 'Price': round(curr_price, 2), 'Score': 80}
+        if mode == "מציאה" and bb_width.iloc[-1] < 5:
+            return {'Ticker': ticker, 'Price': round(df['Close'].iloc[-1], 2), 'Type': 'Value'}
             
     except: return None
     return None
 
-# ממשק
-st.title("🛡️ TITAN: Elite Scanner")
-mode = st.radio("בחר אסטרטגיה:", ["מציאה", "פריצה", "ערך עמוק"], horizontal=True)
+st.title("🛡️ TITAN: Persistent Scanner")
+mode = st.radio("בחר אסטרטגיה:", ["מציאה", "ערך עמוק"], horizontal=True)
+save_file = f"results_{mode}.csv"
 
-if st.button("סרוק"):
+if st.button("סרוק ושמור אוטומטית"):
     universe = get_universe()
     progress_bar = st.progress(0)
-    results = []
     
+    # פתיחת קובץ לכתיבה
+    with open(save_file, "w") as f:
+        f.write("Ticker,Price,Metric\n")
+        
     with ThreadPoolExecutor(max_workers=20) as ex:
         futures = {ex.submit(run_scanner, t, mode): t for t in universe}
         for i, future in enumerate(futures):
             res = future.result()
-            if res: results.append(res)
+            if res:
+                # שמירה מיידית לקובץ
+                with open(save_file, "a") as f:
+                    line = f"{res.get('Ticker')},{res.get('Price')},{res.get('PE') or res.get('Type')}\n"
+                    f.write(line)
+            
             progress_bar.progress((i + 1) / len(universe))
             
-    if results:
-        st.dataframe(pd.DataFrame(results).head(50), use_container_width=True) # מציג רק 50 הכי חזקות
-    else:
-        st.warning("לא נמצאו מניות איכותיות בתנאים אלו.")
+    st.success(f"הסריקה הסתיימה! תוצאות נשמרו ב-{save_file}")
+
+# טעינה והצגה של הקובץ השמור
+if os.path.exists(save_file):
+    df_saved = pd.read_csv(save_file)
+    st.dataframe(df_saved, use_container_width=True)
+    st.download_button("📥 הורד תוצאות", data=df_saved.to_csv(index=False), file_name=save_file)
