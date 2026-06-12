@@ -1,3 +1,38 @@
+def render_tab(mode, filename):
+    if st.button(f"סרוק {mode}"):
+        with st.spinner("סורק ומדרג מניות..."):
+            # ... (שאר הלוגיקה נשארת אותו דבר) ...
+            results = []
+            with ThreadPoolExecutor(max_workers=50) as ex:
+                futures = [ex.submit(run_scanner, t, mode) for t in get_universe()]
+                for f in futures:
+                    res = f.result()
+                    if res: results.append(res)
+            
+            if results:
+                df = pd.DataFrame(results).sort_values(by='Score', ascending=False)
+                df.to_csv(filename, index=False)
+                st.session_state[mode] = df
+            else: st.warning("לא נמצאו מניות.")
+
+    if mode not in st.session_state and os.path.exists(filename):
+        st.session_state[mode] = pd.read_csv(filename).sort_values(by='Score', ascending=False)
+    
+    if mode in st.session_state:
+        df = st.session_state[mode]
+        
+        # התראה ויזואלית: צביעת הציון
+        def highlight_score(val):
+            color = 'green' if val >= 80 else 'orange' if val >= 50 else 'red'
+            return f'color: {color}; font-weight: bold'
+        
+        st.dataframe(df.style.applymap(highlight_score, subset=['Score']), use_container_width=True)
+        
+        st.download_button(f"📥 הורד אקסל {mode}", data=df.to_csv(index=False), file_name=f"{mode}.csv")
+        if st.button(f"🗑️ נקה {mode}", key=f"clear_{mode}"):
+            if os.path.exists(filename): os.remove(filename)
+            del st.session_state[mode]
+            st.rerun()
 import streamlit as st
 import yfinance as yf
 import pandas as pd
