@@ -1,3 +1,4 @@
+requests-cache
 streamlit
 yfinance
 pandas
