@@ -1,69 +1,87 @@
 import streamlit as st
 import yfinance as yf
 import pandas as pd
-import numpy as np
 import os
+import numpy as np
 from concurrent.futures import ThreadPoolExecutor
 
-st.set_page_config(layout="wide", page_title="TITAN: Core Strategies")
+st.set_page_config(layout="wide", page_title="TITAN: ATR Professional")
 
 @st.cache_data(ttl=86400)
 def get_universe():
-    filename = "nasdaq_screener.csv"
-    if os.path.exists(filename):
-        df = pd.read_csv(filename)
-        symbols = df['Symbol'].dropna().unique().tolist()
-        np.random.shuffle(symbols) 
-        return [str(t) for t in symbols if len(str(t)) < 6 and str(t).isalpha()]
-    return []
+    url = "https://raw.githubusercontent.com/liorkeisar/Momentum-stock-scanner/main/nasdaq_screener.csv"
+    try:
+        df = pd.read_csv(url)
+        return [str(t) for t in df['Symbol'].dropna().unique().tolist() if len(str(t)) < 6 and str(t).isalpha()]
+    except: return ["AAPL", "NVDA", "MSFT"]
+
+def calculate_atr(df, period=14):
+    high_low = df['High'] - df['Low']
+    high_close = np.abs(df['High'] - df['Close'].shift())
+    low_close = np.abs(df['Low'] - df['Close'].shift())
+    ranges = pd.concat([high_low, high_close, low_close], axis=1)
+    true_range = ranges.max(axis=1)
+    return true_range.rolling(period).mean().iloc[-1]
 
 def run_scanner(ticker, mode):
     try:
         stock = yf.Ticker(ticker)
-        info = stock.info
+        df = stock.history(period="300d")
+        if len(df) < 252 or df['Volume'].rolling(20).mean().iloc[-1] < 500000: return None
         
-        # סינון בסיסי: שווי שוק מעל 500M
-        if info.get('marketCap', 0) < 500_000_000: return None
+        curr_price = df['Close'].iloc[-1]
+        atr = calculate_atr(df)
         
-        if mode == "ערך עמוק":
-            pe = info.get('trailingPE', 0)
-            if 0 < pe < 15:
-                return {'Ticker': ticker, 'Price': info.get('currentPrice', 0), 'Metric': f"PE: {round(pe, 2)}"}
-            return None
+        # ניהול סיכונים מבוסס ATR
+        stop_loss = round(curr_price - (2 * atr), 2)
+        take_profit = round(curr_price + (6 * atr), 2) # יחס 1:3 (2 ATR סיכון מול 6 ATR רווח)
         
-        # אסטרטגיית מציאה (טכנית)
-        df = stock.history(period="1y")
-        if len(df) < 200: return None
+        df['MA20'] = df['Close'].rolling(20).mean()
+        df['RVOL'] = df['Volume'] / df['Volume'].rolling(20).mean()
+        df['BB_Width'] = (df['Close'].rolling(20).std() * 4 / df['MA20']) * 100
+        df['is_dropped'] = ((df['High'].rolling(252).max() - df['Close']) / df['High'].rolling(252).max()) > 0.25
         
-        # סינון: רק מניות מעל ממוצע 200
-        if df['Close'].iloc[-1] < df['Close'].rolling(200).mean().iloc[-1]: return None
+        try: sector = stock.info.get('sector', 'Unknown')
+        except: sector = 'Unknown'
         
-        bb_width = (df['Close'].rolling(20).std() * 4 / df['Close'].rolling(20).mean()) * 100
-        if bb_width.iloc[-1] < 5:
-            return {'Ticker': ticker, 'Price': round(df['Close'].iloc[-1], 2), 'Metric': 'Volatility Squeeze'}
-            
+        if mode == "מציאה" and df['is_dropped'].iloc[-1] and df['BB_Width'].iloc[-1] < 10:
+            return {'Ticker': ticker, 'Price': round(curr_price, 2), 'StopLoss': stop_loss, 'TakeProfit': take_profit, 'Score': 100, 'Sector': sector}
+        elif mode == "פריצה" and df['BB_Width'].iloc[-1] < 15 and df['RVOL'].iloc[-1] > 1.2:
+            score = min(100, int((15 - df['BB_Width'].iloc[-1]) * 3 + (df['RVOL'].iloc[-1] * 20)))
+            return {'Ticker': ticker, 'Price': round(curr_price, 2), 'StopLoss': stop_loss, 'TakeProfit': take_profit, 'Score': score, 'Sector': sector}
     except: return None
     return None
 
-st.title("🛡️ TITAN: Core Strategies Scanner")
-mode = st.radio("בחר אסטרטגיה:", ["מציאה", "ערך עמוק"], horizontal=True)
-save_file = f"results_{mode}.csv"
+st.title("🛡️ TITAN: ATR-Based Professional Scanner")
+tab1, tab2 = st.tabs(["📉 מציאות", "🚀 פריצות"])
 
-if st.button("התחל סריקה"):
-    universe = get_universe()
-    progress_bar = st.progress(0)
-    with open(save_file, "w") as f: f.write("Ticker,Price,Metric\n")
-        
-    with ThreadPoolExecutor(max_workers=20) as ex:
-        futures = [ex.submit(run_scanner, t, mode) for t in universe]
-        for i, f in enumerate(futures):
-            res = f.result()
-            if res:
-                with open(save_file, "a") as f:
-                    f.write(f"{res['Ticker']},{res['Price']},{res['Metric']}\n")
-            progress_bar.progress((i + 1) / len(universe))
+def render_tab(mode, filename):
+    if st.button(f"סרוק {mode}"):
+        with st.spinner("סורק מניות ומחשב רמות ATR..."):
+            results = []
+            with ThreadPoolExecutor(max_workers=50) as ex:
+                futures = [ex.submit(run_scanner, t, mode) for t in get_universe()]
+                for f in futures:
+                    res = f.result()
+                    if res: results.append(res)
             
-    st.success("הסריקה הסתיימה בהצלחה!")
+            if results:
+                df = pd.DataFrame(results).sort_values(by='Score', ascending=False)
+                df.to_csv(filename, index=False)
+                st.session_state[mode] = df
+            else: st.warning("לא נמצאו מניות.")
 
-if os.path.exists(save_file):
-    st.dataframe(pd.read_csv(save_file), use_container_width=True)
+    if mode not in st.session_state and os.path.exists(filename):
+        if os.path.getsize(filename) > 0:
+            st.session_state[mode] = pd.read_csv(filename).sort_values(by='Score', ascending=False)
+    
+    if mode in st.session_state:
+        st.dataframe(st.session_state[mode], use_container_width=True)
+        st.download_button(f"📥 הורד אקסל {mode}", data=st.session_state[mode].to_csv(index=False), file_name=f"{mode}.csv")
+        if st.button(f"🗑️ נקה {mode}", key=f"clear_{mode}"):
+            if os.path.exists(filename): os.remove(filename)
+            del st.session_state[mode]
+            st.rerun()
+
+with tab1: render_tab("מציאה", "res_val.csv")
+with tab2: render_tab("פריצה", "res_brk.csv")
