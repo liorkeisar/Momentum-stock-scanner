@@ -1,17 +1,45 @@
-def run_scanner(ticker):
+import streamlit as st
+import yfinance as yf
+import pandas as pd
+import time
+
+st.set_page_config(layout="wide", page_title="TITAN: Bulletproof Scanner")
+
+st.title("🛡️ TITAN: Scanner")
+
+# פונקציית בדיקה בטוחה
+def fetch_data(ticker):
     try:
-        # ניקוי הסימול (לפעמים יש רווחים או תווים נסתרים)
-        clean_ticker = str(ticker).strip().replace('.', '-')
+        # עבודה ללא Cache מורכב כדי למנוע נעילות
+        stock = yf.Ticker(ticker)
+        df = stock.history(period="50d") # תקופה קצרה למניעת עומס
+        if df.empty: return None
         
-        # הוספת headers כדי להתחפש לדפדפן אמיתי (מונע Empty DF)
-        stock = yf.Ticker(clean_ticker)
-        df = stock.history(period="150d", proxy=None) 
+        # חישוב בסיסי
+        last_price = df['Close'].iloc[-1]
+        vol = df['Volume'].mean()
+        if vol < 100000: return None # סינון נזילות בסיסי
         
-        if df.empty:
-            return {'Ticker': ticker, 'Status': 'No Data'}
+        return {'Ticker': ticker, 'Price': round(last_price, 2), 'Volume': int(vol)}
+    except:
+        return None
+
+# רשימת מניות לדוגמה כדי לוודא שזה עובד
+if st.button("התחל סריקה בטוחה"):
+    tickers = ["AAPL", "NVDA", "MSFT", "AMD", "TSLA", "META", "GOOGL", "AMZN", "NFLX", "INTC"]
+    
+    results = []
+    progress_bar = st.progress(0)
+    
+    # הצגת טבלה מתעדכנת
+    table_placeholder = st.empty()
+    
+    for i, ticker in enumerate(tickers):
+        res = fetch_data(ticker)
+        if res:
+            results.append(res)
+            # עדכון טבלה בזמן אמת
+            table_placeholder.table(pd.DataFrame(results))
         
-        # אם הגענו לכאן - יש נתונים!
-        return {'Ticker': ticker, 'Status': 'OK', 'LastPrice': round(df['Close'].iloc[-1], 2)}
-        
-    except Exception as e:
-        return {'Ticker': ticker, 'Status': f'Err: {str(e)[:10]}'}
+        progress_bar.progress((i + 1) / len(tickers))
+        time.sleep(0.5) # השהייה ארוכה למניעת חסימה מוחלטת
