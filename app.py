@@ -1,45 +1,50 @@
 import streamlit as st
 import yfinance as yf
 import pandas as pd
-import time
 
-st.set_page_config(layout="wide", page_title="TITAN: Bulletproof Scanner")
+st.set_page_config(layout="wide", page_title="TITAN: Market Cap Scanner")
 
-st.title("🛡️ TITAN: Scanner")
-
-# פונקציית בדיקה בטוחה
-def fetch_data(ticker):
+def get_scan_data(ticker):
     try:
-        # עבודה ללא Cache מורכב כדי למנוע נעילות
         stock = yf.Ticker(ticker)
-        df = stock.history(period="50d") # תקופה קצרה למניעת עומס
-        if df.empty: return None
+        df = stock.history(period="300d")
+        if len(df) < 252: return None
         
-        # חישוב בסיסי
-        last_price = df['Close'].iloc[-1]
-        vol = df['Volume'].mean()
-        if vol < 100000: return None # סינון נזילות בסיסי
+        # 1. סינון טכני מהיר (קודם כל נבדוק אם יש בכלל פוטנציאל טכני)
+        curr_price = df['Close'].iloc[-1]
+        low_52w = df['Low'].rolling(252).min().iloc[-1]
         
-        return {'Ticker': ticker, 'Price': round(last_price, 2), 'Volume': int(vol)}
+        df['MA20'] = df['Close'].rolling(20).mean()
+        df['STD20'] = df['Close'].rolling(20).std()
+        bb_width = (df['STD20'].iloc[-1] * 4 / df['MA20'].iloc[-1]) * 100
+        
+        if not (curr_price <= (low_52w * 1.10) and bb_width < 10):
+            return None
+            
+        # 2. סינון שווי שוק (רק אם עבר את הסינון הטכני!)
+        # info הוא החלק הכבד, לכן הוא בסוף
+        market_cap = stock.info.get('marketCap', 0)
+        if market_cap < 300_000_000:
+            return None
+            
+        return {'Ticker': ticker, 'Price': round(curr_price, 2), 'MarketCap_M': round(market_cap/1e6, 1)}
     except:
         return None
 
-# רשימת מניות לדוגמה כדי לוודא שזה עובד
-if st.button("התחל סריקה בטוחה"):
-    tickers = ["AAPL", "NVDA", "MSFT", "AMD", "TSLA", "META", "GOOGL", "AMZN", "NFLX", "INTC"]
+st.title("🛡️ TITAN: Precision Market Cap Scanner")
+st.write("סורק מניות בשפל שנתי, התכווצות (Squeeze) ושווי שוק > 300M$")
+
+if st.button("התחל סריקה"):
+    # רשימה לדוגמה (ניתן להחליף ב-get_universe())
+    universe = ["AAPL", "NVDA", "MSFT", "AMD", "TSLA", "META", "GOOGL", "AMZN", "NFLX", "INTC"]
     
     results = []
-    progress_bar = st.progress(0)
+    with st.spinner("סורק מניות (זה לוקח זמן כי אנחנו בודקים שווי שוק)..."):
+        for t in universe:
+            res = get_scan_data(t)
+            if res: results.append(res)
     
-    # הצגת טבלה מתעדכנת
-    table_placeholder = st.empty()
-    
-    for i, ticker in enumerate(tickers):
-        res = fetch_data(ticker)
-        if res:
-            results.append(res)
-            # עדכון טבלה בזמן אמת
-            table_placeholder.table(pd.DataFrame(results))
-        
-        progress_bar.progress((i + 1) / len(tickers))
-        time.sleep(0.5) # השהייה ארוכה למניעת חסימה מוחלטת
+    if results:
+        st.table(pd.DataFrame(results))
+    else:
+        st.info("לא נמצאו מניות שעומדות בתנאים (כולל שווי שוק מעל 300M).")
