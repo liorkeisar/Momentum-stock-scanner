@@ -1,51 +1,52 @@
 import streamlit as st
 import yfinance as yf
 import pandas as pd
-import numpy as np
 import time
+import requests_cache
 from concurrent.futures import ThreadPoolExecutor
 
-st.set_page_config(layout="wide", page_title="TITAN: Stable Scanner")
+# הגדרת מטמון עם User-Agent כדי להיראות כמו דפדפן כרום אמיתי
+session = requests_cache.CachedSession('yfinance.cache')
+session.headers['User-Agent'] = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
 
-@st.cache_data(ttl=3600)
-def get_tickers():
-    # רשימה מצומצמת ואיכותית של 200 המניות הכי נזילות כדי למנוע שגיאות
-    url = "https://raw.githubusercontent.com/liorkeisar/Momentum-stock-scanner/main/nasdaq_screener.csv"
-    try:
-        df = pd.read_csv(url)
-        return df['Symbol'].dropna().unique().tolist()[:200]
-    except: return ["AAPL", "NVDA", "MSFT", "AMD", "TSLA"]
+st.set_page_config(layout="wide", page_title="TITAN: Bulletproof Scanner")
 
-def run_scanner(ticker):
+def fetch_data(ticker):
     try:
-        time.sleep(0.5) # השהייה קריטית למניעת חסימת IP
-        stock = yf.Ticker(ticker)
+        # פנייה מבוקרת עם Session המוגדר כדפדפן
+        stock = yf.Ticker(ticker, session=session)
         df = stock.history(period="150d")
         
-        if len(df) < 100: return None
+        if df.empty or len(df) < 100: return None
         
-        curr_price = df['Close'].iloc[-1]
+        # חישוב התכווצות (Bollinger Squeeze)
         ma20 = df['Close'].rolling(20).mean().iloc[-1]
-        bb_width = (df['Close'].rolling(20).std().iloc[-1] * 4 / ma20) * 100
+        std20 = df['Close'].rolling(20).std().iloc[-1]
+        bb_width = (std20 * 4 / ma20) * 100
         
-        # אסטרטגיה: התכווצות (Squeeze)
-        if bb_width < 25: 
-            return {'Ticker': ticker, 'Price': round(curr_price, 2), 'BB_Width': round(bb_width, 2)}
-    except: return None
-    return None
+        # סינון: רק מניות בהתכווצות (BB_Width < 20)
+        if bb_width < 20:
+            return {'Ticker': ticker, 'Price': round(df['Close'].iloc[-1], 2), 'BB_Width': round(bb_width, 2)}
+        return None
+    except:
+        return None
 
-st.title("🛡️ TITAN: Stable Scanner")
-if st.button("סרוק עכשיו (בטוח)"):
-    tickers = get_tickers()
+st.title("🛡️ TITAN: Bulletproof Scanner")
+
+if st.button("סרוק עכשיו (עם מנגנון עקיפת חסימות)"):
+    # רשימה מצומצמת לבדיקה
+    tickers = ["AAPL", "NVDA", "MSFT", "AMD", "TSLA", "META", "GOOGL", "AMZN", "NFLX", "INTC"]
+    
     results = []
+    progress = st.progress(0)
     
-    # שימוש ב-Workers מעטים מאוד למניעת חסימות
-    with ThreadPoolExecutor(max_workers=3) as ex:
-        results = list(ex.map(run_scanner, tickers))
+    for i, t in enumerate(tickers):
+        res = fetch_data(t)
+        if res: results.append(res)
+        progress.progress((i + 1) / len(tickers))
+        time.sleep(0.5) # השהייה קריטית למניעת חסימה
     
-    final_data = [r for r in results if r]
-    
-    if final_data:
-        st.table(pd.DataFrame(final_data))
+    if results:
+        st.table(pd.DataFrame(results))
     else:
-        st.warning("לא נמצאו נתונים. השרת של יאהו חוסם זמנית את הענן. נסה שוב בעוד 10 דקות.")
+        st.error("השרת עדיין חסום. הדרך היחידה להמשיך היא להריץ את הקוד הזה על המחשב האישי שלך.")
