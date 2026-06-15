@@ -1,10 +1,4 @@
-requests-cache
 streamlit
 yfinance
 pandas
-numpy
 plotly
-scikit-learn
-pip   
-install
-pandas-ta
