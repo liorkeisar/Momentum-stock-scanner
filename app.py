@@ -2,19 +2,19 @@ import streamlit as st
 import yfinance as yf
 import pandas as pd
 import os
+from datetime import datetime
 
-# הגדרת דף
-st.set_page_config(page_title="סורק וייקוף Pro", layout="wide")
-st.title("◈ סורק מניות מוסדי - Wyckoff Accumulation")
+st.set_page_config(page_title="מערכת וייקוף Pro", layout="wide")
+st.title("◈ מערכת השקעות מבוססת וייקוף")
+
+PORTFOLIO_FILE = 'portfolio.csv'
 
 # --- פונקציות עזר ---
-def get_available_lists():
-    return [f for f in os.listdir('.') if f.endswith('.csv')]
+def get_available_lists(): return [f for f in os.listdir('.') if f.endswith('.csv')]
 
 @st.cache_data
 def load_selected_list(filename):
     df = pd.read_csv(filename)
-    # זיהוי עמודה חכם
     cols = ['Symbol', 'Ticker', 'Symbol ', 'TICKER', 'Symbol (NASDAQ)']
     target = next((c for c in cols if c in df.columns), df.columns[0])
     return df[target].dropna().astype(str).tolist()
@@ -24,51 +24,61 @@ def calculate_wyckoff_score(df):
     recent = df.tail(20)
     up = recent[recent['Close'] >= recent['Close'].shift(1)]
     down = recent[recent['Close'] < recent['Close'].shift(1)]
-    
     vr = (up['Volume'].mean() / down['Volume'].mean()) if down['Volume'].mean() > 0 else 1
     rw = (recent['High'].max() - recent['Low'].min()) / ((recent['High'].max() + recent['Low'].min()) / 2) * 100
-    
-    score = (40 if vr > 1.2 else 0) + (40 if rw < 7 else 0) + (20 if rw < 4 else 0)
-    return min(score, 100), vr, rw
+    return min((40 if vr > 1.2 else 0) + (40 if rw < 7 else 0) + (20 if rw < 4 else 0), 100), vr, rw
 
-# --- ממשק משתמש ---
-available_lists = get_available_lists()
-selected_file = st.sidebar.selectbox("בחר רשימת מניות:", available_lists)
-min_score = st.sidebar.slider("סנן מניות עם ציון מינימלי:", 0, 100, 40)
+# --- ניהול קובץ תיק השקעות ---
+if not os.path.exists(PORTFOLIO_FILE):
+    pd.DataFrame(columns=['Ticker', 'Date', 'EntryPrice']).to_csv(PORTFOLIO_FILE, index=False)
 
-if st.sidebar.button("הרץ סריקה"):
-    st.session_state['results_df'] = None
-    tickers = load_selected_list(selected_file)
-    
-    results = []
-    progress_bar = st.progress(0)
-    
-    # סריקה מוגבלת ל-50 מניות למניעת עומס
-    for i, ticker in enumerate(tickers[:50]):
-        try:
-            df = yf.Ticker(ticker).history(period="3mo")
-            if not df.empty:
-                score, vr, rw = calculate_wyckoff_score(df)
-                results.append({"Ticker": ticker, "Score": score, "VR": round(vr, 2), "RW": round(rw, 2)})
-        except: continue
-        progress_bar.progress((i + 1) / 50)
-    
-    st.session_state['results_df'] = pd.DataFrame(results)
-    st.rerun()
+# --- ממשק טאבים ---
+tab1, tab2 = st.tabs(["📊 סורק וייקוף", "💼 תיק השקעות"])
 
-# --- תצוגה ---
-if st.session_state.get('results_df') is not None:
-    df = st.session_state['results_df']
-    df = df[df['Score'] >= min_score]
-    st.dataframe(df.sort_values("Score", ascending=False), use_container_width=True)
-    
-    # אזור בחירת מניה וקישורים
-    st.divider()
-    selected_for_chart = st.selectbox("בחר מניה לצפייה בנתונים:", df['Ticker'].tolist())
-    
-    if selected_for_chart:
-        col1, col2 = st.columns(2)
-        with col1:
-            st.link_button(f"נתונים ב-Yahoo Finance", f"https://finance.yahoo.com/quote/{selected_for_chart}")
-        with col2:
-            st.link_button(f"ניתוח טכני ב-Finviz", f"https://finviz.com/quote.ashx?t={selected_for_chart}")
+with tab1:
+    available_lists = get_available_lists()
+    selected_file = st.sidebar.selectbox("בחר רשימה:", available_lists)
+    min_score = st.sidebar.slider("ציון מינימלי:", 0, 100, 40)
+
+    if st.sidebar.button("הרץ סריקה"):
+        tickers = load_selected_list(selected_file)
+        results = []
+        for ticker in tickers[:30]:
+            try:
+                df = yf.Ticker(ticker).history(period="3mo")
+                if not df.empty:
+                    score, vr, rw = calculate_wyckoff_score(df)
+                    results.append({"Ticker": ticker, "Score": score, "Price": round(df['Close'].iloc[-1], 2)})
+            except: continue
+        st.session_state['results_df'] = pd.DataFrame(results)
+        st.rerun()
+
+    if st.session_state.get('results_df') is not None:
+        df = st.session_state['results_df']
+        df = df[df['Score'] >= min_score]
+        st.dataframe(df.sort_values("Score", ascending=False), use_container_width=True)
+        
+        to_add = st.selectbox("בחר מניה להוספה לתיק:", df['Ticker'].tolist())
+        if st.button("הוסף לתיק ההשקעות 💼"):
+            price = df[df['Ticker'] == to_add]['Price'].values[0]
+            pd.DataFrame({'Ticker': [to_add], 'Date': [datetime.now().strftime('%Y-%m-%d')], 'EntryPrice': [price]}).to_csv(PORTFOLIO_FILE, mode='a', header=False, index=False)
+            st.success(f"{to_add} נוספה בהצלחה!")
+
+with tab2:
+    portfolio = pd.read_csv(PORTFOLIO_FILE)
+    if not portfolio.empty:
+        # חישוב נתונים חיים
+        for i, row in portfolio.iterrows():
+            curr = yf.Ticker(row['Ticker']).history(period="1d")['Close'].iloc[-1]
+            portfolio.loc[i, 'CurrentPrice'] = round(curr, 2)
+            portfolio.loc[i, 'Performance'] = f"{round(((curr - row['EntryPrice']) / row['EntryPrice']) * 100, 2)}%"
+        
+        st.dataframe(portfolio, use_container_width=True)
+        
+        # מחיקת מניה
+        to_delete = st.selectbox("בחר מניה למחיקה מהתיק:", portfolio['Ticker'].tolist())
+        if st.button("מחק מניה מהתיק 🗑️"):
+            portfolio = portfolio[portfolio['Ticker'] != to_delete]
+            portfolio.to_csv(PORTFOLIO_FILE, index=False)
+            st.rerun()
+    else: st.info("התיק ריק.")
