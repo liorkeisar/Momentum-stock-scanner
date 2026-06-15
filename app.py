@@ -4,6 +4,7 @@ import pandas as pd
 import time
 import os
 
+# הגדרות עמוד
 st.set_page_config(page_title="סורק וייקוף מוסדי", layout="wide")
 st.title("◈ סורק מניות מוסדי - Wyckoff Accumulation")
 
@@ -14,11 +15,9 @@ def get_available_lists():
 @st.cache_data
 def load_selected_list(filename):
     df = pd.read_csv(filename)
-    # מנגנון חכם: מחפש עמודה שנשמעת כמו סימבול
+    # זיהוי אוטומטי של עמודת הסימבולים
     possible_cols = ['Symbol', 'Ticker', 'Symbol ', 'TICKER']
     target_col = next((col for col in possible_cols if col in df.columns), df.columns[0])
-    
-    st.sidebar.write(f"משתמש בעמודה: {target_col}")
     return df[target_col].dropna().astype(str).tolist()
 
 def calculate_wyckoff_score(df):
@@ -26,11 +25,14 @@ def calculate_wyckoff_score(df):
     recent = df.tail(20)
     down = recent[recent['Close'] < recent['Close'].shift(1)]
     up = recent[recent['Close'] >= recent['Close'].shift(1)]
+    
     avg_vol_down = down['Volume'].mean() if len(down) > 0 else 1
     avg_vol_up = up['Volume'].mean() if len(up) > 0 else 1
     vol_ratio = avg_vol_up / avg_vol_down if avg_vol_down != 0 else 1
+    
     hi, lo = recent['High'].max(), recent['Low'].min()
     rw = (hi - lo) / ((hi + lo) / 2) * 100
+    
     score = 0
     if vol_ratio > 1.2: score += 40
     if rw < 7: score += 40
@@ -42,25 +44,49 @@ if 'results_df' not in st.session_state: st.session_state['results_df'] = None
 
 available_lists = get_available_lists()
 selected_file = st.sidebar.selectbox("בחר רשימת מניות:", available_lists)
-manual_ticker = st.sidebar.text_input("הזן טיקר ידני (למשל: MSFT):").upper()
+manual_ticker = st.sidebar.text_input("הזן טיקר ידנית (למשל: MSFT):").upper()
 
 if st.sidebar.button("הרץ סריקה"):
-    tickers = load_selected_list(selected_file)
-    if manual_ticker: tickers.append(manual_ticker)
+    tickers_from_file = load_selected_list(selected_file)
+    
+    # בניית רשימת סריקה מאוחדת (ידני ראשון)
+    all_tickers = []
+    if manual_ticker:
+        all_tickers.append(manual_ticker.strip())
+    
+    for t in tickers_from_file:
+        clean_t = str(t).strip()
+        if clean_t not in all_tickers:
+            all_tickers.append(clean_t)
     
     results = []
     progress_bar = st.progress(0)
+    status_text = st.sidebar.empty()
     
-    for i, ticker in enumerate(tickers[:100]):
+    # סריקה מוגבלת ל-50 מניות לטובת יציבות
+    for i, ticker in enumerate(all_tickers[:50]):
         try:
-            df = yf.Ticker(ticker.strip()).history(period="3mo")
+            status_text.text(f"סורק: {ticker}")
+            df = yf.Ticker(ticker).history(period="3mo")
+            if df.empty: continue
+            
             score, vr, rw = calculate_wyckoff_score(df)
             results.append({"Ticker": ticker, "Score": score, "VR": round(vr, 2), "RW": round(rw, 2)})
-            progress_bar.progress((i + 1) / 100)
-        except: continue
+            progress_bar.progress((i + 1) / 50)
+        except Exception:
+            continue
     
     st.session_state['results_df'] = pd.DataFrame(results)
     st.rerun()
 
+# --- תצוגה ---
 if st.session_state['results_df'] is not None:
-    st.dataframe(st.session_state['results_df'].sort_values("Score", ascending=False), use_container_width=True)
+    st.subheader("תוצאות הסריקה")
+    # הצגת טבלה ממוינת לפי ציון
+    df_results = st.session_state['results_df'].sort_values("Score", ascending=False)
+    st.dataframe(df_results, use_container_width=True)
+    
+    # הורדה ל-CSV
+    st.download_button("📥 הורד תוצאות ל-CSV", 
+                       data=df_results.to_csv(index=False), 
+                       file_name='scan_results.csv')
