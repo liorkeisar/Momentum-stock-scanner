@@ -1,57 +1,58 @@
 import streamlit as st
 import yfinance as yf
 import pandas as pd
-import pandas_ta as ta
+import plotly.graph_objects as go
 
-# הגדרות עיצוב
-st.set_page_config(layout="wide", page_title="סורק הצטברות מניות")
+# הגדרת דף ה-Dashboard
+st.set_page_config(page_title="סורק מניות מוסדי", layout="wide")
 
-# רשימת הטיקרים (העתקתי את הרשימה שלך מהסקריפט)
-TICKERS = ["AAPL", "MSFT", "NVDA", "AMD", "INTC", "QCOM", "MU", "AVGO", "TXN", "AMAT", "GOOGL", "META", "NFLX", "SNAP", "PINS", "ZM", "ROKU", "UBER", "LYFT", "TWLO", "JPM", "BAC", "WFC", "GS", "MS", "C", "BLK", "COF", "SCHW", "AXP", "JNJ", "PFE", "MRK", "ABBV", "BMY", "LLY", "CVS", "AMGN", "GILD", "BIIB", "XOM", "CVX", "COP", "SLB", "EOG", "MPC", "OXY", "HAL", "DVN", "FANG", "WMT", "TGT", "COST", "HD", "LOW", "NKE", "SBUX", "MCD", "YUM", "DPZ", "BA", "CAT", "GE", "MMM", "HON", "RTX", "LMT", "NOC", "GD", "DE", "FCX", "NEM", "AA", "CLF", "X", "NUE", "STLD", "ALB", "MP", "CCJ", "NEE", "DUK", "SO", "AEP", "EXC", "D", "PCG", "ETR", "NRG", "AES", "AMT", "PLD", "CCI", "EQIX", "PSA", "EXR", "AVB", "EQR", "VTR", "O", "TSLA", "F", "GM", "RIVN", "NIO", "LI", "XPEV", "LCID", "FSR", "PYPL", "SQ", "AFRM", "UPST", "SOFI", "HOOD", "MKTX", "IBKR", "DFS", "CRM", "NOW", "WDAY", "ADBE", "INTU", "VEEV", "HUBS", "MDB", "DDOG", "PLTR", "ZS", "CRWD", "S", "PANW", "FTNT", "CYBR", "TENB", "QLYS", "VRNT", "CHKP", "ORCL", "IBM", "SNOW", "CSCO", "HPQ", "DELL", "STX", "WDC", "NTAP", "PSTG", "LUV", "DAL", "UAL", "AAL", "JBLU", "ALK", "MAR", "HLT", "H", "CHH", "UPS", "FDX", "XPO", "SAIA", "ODFL", "WERN", "JBHT", "KNX", "CHRW", "EXPD", "AMRN", "ACAD", "SAGE", "AXSM", "REGN", "VRTX", "MRNA", "BNTX", "ILMN", "TDOC", "FSLR", "ENPH", "SEDG", "NOVA", "RUN", "ARRY", "CSIQ", "JKS", "DAQO", "HASI"]
+st.title("◈ סורק מניות מוסדי - Wyckoff Accumulation")
+st.markdown("סורק המבוסס על ניתוח נפח ותנודתיות לזיהוי שלבי איסוף (Accumulation).")
 
-def get_analysis(ticker):
+# --- לוגיקת Wyckoff ---
+def calculate_wyckoff_score(df):
+    if len(df) < 20: return 0, 0, 0
+    recent = df.tail(20)
+    
+    down = recent[recent['Close'] < recent['Close'].shift(1)]
+    up = recent[recent['Close'] >= recent['Close'].shift(1)]
+    
+    avg_vol_down = down['Volume'].mean() if len(down) > 0 else 1
+    avg_vol_up = up['Volume'].mean() if len(up) > 0 else 1
+    vol_ratio = avg_vol_up / avg_vol_down if avg_vol_down != 0 else 1
+    
+    hi, lo = recent['High'].max(), recent['Low'].min()
+    rw = (hi - lo) / ((hi + lo) / 2) * 100
+    
+    score = 0
+    if vol_ratio > 1.2: score += 40
+    if rw < 7: score += 40
+    if rw < 4: score += 20
+    
+    return min(score, 100), vol_ratio, rw
+
+# --- פונקציית סריקה ---
+def analyze_stock(ticker):
     try:
-        df = yf.download(ticker, period="3mo", interval="1d", progress=False)
-        if len(df) < 30: return None
-        
-        # אינדיקטורים
-        df['RSI'] = ta.rsi(df['Close'], length=14)
-        macd = ta.macd(df['Close'])
-        df = pd.concat([df, macd], axis=1)
-        df['OBV'] = ta.obv(df['Close'], df['Volume'])
-        adx = ta.adx(df['High'], df['Low'], df['Close'])
-        df = pd.concat([df, adx], axis=1)
-        
-        # חישוב לוגיקת סקור בסיסית
-        score = 0
-        if df['RSI'].iloc[-1] < 40: score += 20
-        if df['MACD_12_26_9'].iloc[-1] > df['MACDs_12_26_9'].iloc[-1]: score += 20
-        
-        return {
-            "Ticker": ticker,
-            "Price": float(df['Close'].iloc[-1]),
-            "RSI": float(df['RSI'].iloc[-1]),
-            "Score": score,
-            "Pattern": "Sideways" if df['ADX_14'].iloc[-1] < 20 else "Trending"
-        }
-    except:
-        return None
+        df = yf.Ticker(ticker).history(period="3mo")
+        score, vr, rw = calculate_wyckoff_score(df)
+        return {"Ticker": ticker, "Wyckoff_Score": score, "Vol_Ratio": round(vr, 2), "Range_Width": round(rw, 2)}
+    except: return None
 
-# ממשק משתמש
-st.title("◈ סורק הצטברות מניות")
+# --- ממשק משתמש ---
+TICKERS = ["AAPL", "MSFT", "NVDA", "AMD", "TSLA", "META", "GOOGL", "AMZN", "NFLX", "INTC"]
 
-if st.button("התחל סריקה"):
-    results = []
-    bar = st.progress(0)
-    for i, ticker in enumerate(TICKERS):
-        res = get_analysis(ticker)
-        if res: results.append(res)
-        bar.progress((i + 1) / len(TICKERS))
+if st.sidebar.button("הרץ סריקת איסוף מוסדי"):
+    data = [analyze_stock(t) for t in TICKERS]
+    df_results = pd.DataFrame([d for d in data if d])
     
-    df_results = pd.DataFrame(results)
-    st.dataframe(df_results.sort_values(by="Score", ascending=False), use_container_width=True)
-    
-    # ויזואליזציה פשוטה של המניה הראשונה שנמצאה
-    if not df_results.empty:
-        st.subheader(f"גרף למניה מובילה: {df_results.iloc[0]['Ticker']}")
-        st.line_chart(yf.download(df_results.iloc[0]['Ticker'], period="3mo")['Close'])
+    st.dataframe(
+        df_results.sort_values("Wyckoff_Score", ascending=False),
+        column_config={"Wyckoff_Score": st.column_config.ProgressColumn("ציון איסוף", min_value=0, max_value=100)},
+        use_container_width=True
+    )
+
+    selected = st.selectbox("בחר מניה לניתוח עומק:", TICKERS)
+    df = yf.Ticker(selected).history(period="6mo")
+    fig = go.Figure(data=[go.Candlestick(x=df.index, open=df['Open'], high=df['High'], low=df['Low'], close=df['Close'])])
+    st.plotly_chart(fig, use_container_width=True)
