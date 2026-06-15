@@ -28,7 +28,6 @@ def calculate_wyckoff_score(df):
     rw = (recent['High'].max() - recent['Low'].min()) / ((recent['High'].max() + recent['Low'].min()) / 2) * 100
     return min((40 if vr > 1.2 else 0) + (40 if rw < 7 else 0) + (20 if rw < 4 else 0), 100), vr, rw
 
-# --- פונקציית אתחול תיק בטוחה ---
 def get_portfolio_df():
     if not os.path.exists(PORTFOLIO_FILE) or os.path.getsize(PORTFOLIO_FILE) == 0:
         df = pd.DataFrame(columns=['Ticker', 'Date', 'EntryPrice'])
@@ -67,12 +66,22 @@ with tab1:
         df = df[df['Score'] >= min_score]
         st.dataframe(df.sort_values("Score", ascending=False), use_container_width=True)
         
-        to_add = st.selectbox("בחר מניה להוספה לתיק:", df['Ticker'].tolist())
-        if st.button("הוסף לתיק ההשקעות 💼"):
-            price = df[df['Ticker'] == to_add]['Price'].values[0]
-            new_row = pd.DataFrame({'Ticker': [to_add], 'Date': [datetime.now().strftime('%Y-%m-%d')], 'EntryPrice': [price]})
-            new_row.to_csv(PORTFOLIO_FILE, mode='a', header=False, index=False)
-            st.success(f"{to_add} נוספה בהצלחה!")
+        st.divider()
+        col_select, col_buttons = st.columns([2, 1])
+        with col_select:
+            to_add = st.selectbox("בחר מניה לעבודה:", df['Ticker'].tolist())
+        
+        with col_buttons:
+            if st.button("הוסף לתיק ההשקעות 💼"):
+                price = df[df['Ticker'] == to_add]['Price'].values[0]
+                new_row = pd.DataFrame({'Ticker': [to_add], 'Date': [datetime.now().strftime('%Y-%m-%d')], 'EntryPrice': [price]})
+                new_row.to_csv(PORTFOLIO_FILE, mode='a', header=False, index=False)
+                st.success(f"{to_add} נוספה!")
+        
+        # כפתורי עזר
+        c1, c2 = st.columns(2)
+        with c1: st.link_button(f"Yahoo Finance: {to_add}", f"https://finance.yahoo.com/quote/{to_add}")
+        with c2: st.link_button(f"Finviz: {to_add}", f"https://finviz.com/quote.ashx?t={to_add}")
 
 with tab2:
     portfolio = get_portfolio_df()
@@ -85,10 +94,9 @@ with tab2:
             except: continue
         
         st.dataframe(portfolio, use_container_width=True)
-        to_delete = st.selectbox("בחר מניה למחיקה מהתיק:", portfolio['Ticker'].tolist())
+        to_delete = st.selectbox("בחר מניה למחיקה:", portfolio['Ticker'].tolist())
         if st.button("מחק מניה מהתיק 🗑️"):
             portfolio = portfolio[portfolio['Ticker'] != to_delete]
             portfolio.to_csv(PORTFOLIO_FILE, index=False)
             st.rerun()
-    else: 
-        st.info("התיק ריק.")
+    else: st.info("התיק ריק.")
