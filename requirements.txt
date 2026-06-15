@@ -5,3 +5,6 @@ pandas
 numpy
 plotly
 scikit-learn
+pip   
+install
+pandas-ta
