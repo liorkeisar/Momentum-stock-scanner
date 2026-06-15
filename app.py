@@ -1,79 +1,57 @@
 import streamlit as st
 import yfinance as yf
 import pandas as pd
-from concurrent.futures import ThreadPoolExecutor
+import pandas_ta as ta
 
-st.set_page_config(layout="wide", page_title="TITAN: Pro Multi-Strategy Scanner")
+# הגדרות עיצוב
+st.set_page_config(layout="wide", page_title="סורק הצטברות מניות")
 
-# --- טעינת רשימת מניות ---
-@st.cache_data(ttl=86400)
-def get_universe():
+# רשימת הטיקרים (העתקתי את הרשימה שלך מהסקריפט)
+TICKERS = ["AAPL", "MSFT", "NVDA", "AMD", "INTC", "QCOM", "MU", "AVGO", "TXN", "AMAT", "GOOGL", "META", "NFLX", "SNAP", "PINS", "ZM", "ROKU", "UBER", "LYFT", "TWLO", "JPM", "BAC", "WFC", "GS", "MS", "C", "BLK", "COF", "SCHW", "AXP", "JNJ", "PFE", "MRK", "ABBV", "BMY", "LLY", "CVS", "AMGN", "GILD", "BIIB", "XOM", "CVX", "COP", "SLB", "EOG", "MPC", "OXY", "HAL", "DVN", "FANG", "WMT", "TGT", "COST", "HD", "LOW", "NKE", "SBUX", "MCD", "YUM", "DPZ", "BA", "CAT", "GE", "MMM", "HON", "RTX", "LMT", "NOC", "GD", "DE", "FCX", "NEM", "AA", "CLF", "X", "NUE", "STLD", "ALB", "MP", "CCJ", "NEE", "DUK", "SO", "AEP", "EXC", "D", "PCG", "ETR", "NRG", "AES", "AMT", "PLD", "CCI", "EQIX", "PSA", "EXR", "AVB", "EQR", "VTR", "O", "TSLA", "F", "GM", "RIVN", "NIO", "LI", "XPEV", "LCID", "FSR", "PYPL", "SQ", "AFRM", "UPST", "SOFI", "HOOD", "MKTX", "IBKR", "DFS", "CRM", "NOW", "WDAY", "ADBE", "INTU", "VEEV", "HUBS", "MDB", "DDOG", "PLTR", "ZS", "CRWD", "S", "PANW", "FTNT", "CYBR", "TENB", "QLYS", "VRNT", "CHKP", "ORCL", "IBM", "SNOW", "CSCO", "HPQ", "DELL", "STX", "WDC", "NTAP", "PSTG", "LUV", "DAL", "UAL", "AAL", "JBLU", "ALK", "MAR", "HLT", "H", "CHH", "UPS", "FDX", "XPO", "SAIA", "ODFL", "WERN", "JBHT", "KNX", "CHRW", "EXPD", "AMRN", "ACAD", "SAGE", "AXSM", "REGN", "VRTX", "MRNA", "BNTX", "ILMN", "TDOC", "FSLR", "ENPH", "SEDG", "NOVA", "RUN", "ARRY", "CSIQ", "JKS", "DAQO", "HASI"]
+
+def get_analysis(ticker):
     try:
-        url = "https://raw.githubusercontent.com/liorkeisar/Momentum-stock-scanner/main/nasdaq_screener.csv"
-        df = pd.read_csv(url)
-        tickers = df['Symbol'].dropna().unique().tolist()
-        return [str(t) for t in tickers if len(str(t)) < 6 and str(t).isalpha()]
+        df = yf.download(ticker, period="3mo", interval="1d", progress=False)
+        if len(df) < 30: return None
+        
+        # אינדיקטורים
+        df['RSI'] = ta.rsi(df['Close'], length=14)
+        macd = ta.macd(df['Close'])
+        df = pd.concat([df, macd], axis=1)
+        df['OBV'] = ta.obv(df['Close'], df['Volume'])
+        adx = ta.adx(df['High'], df['Low'], df['Close'])
+        df = pd.concat([df, adx], axis=1)
+        
+        # חישוב לוגיקת סקור בסיסית
+        score = 0
+        if df['RSI'].iloc[-1] < 40: score += 20
+        if df['MACD_12_26_9'].iloc[-1] > df['MACDs_12_26_9'].iloc[-1]: score += 20
+        
+        return {
+            "Ticker": ticker,
+            "Price": float(df['Close'].iloc[-1]),
+            "RSI": float(df['RSI'].iloc[-1]),
+            "Score": score,
+            "Pattern": "Sideways" if df['ADX_14'].iloc[-1] < 20 else "Trending"
+        }
     except:
-        return ["AAPL", "NVDA", "MSFT", "AMD", "TSLA"]
+        return None
 
-# --- לוגיקת הסריקה ---
-def run_scanner(ticker, mode):
-    try:
-        stock = yf.Ticker(ticker)
-        df = stock.history(period="300d")
-        if len(df) < 252 or df['Volume'].rolling(20).mean().iloc[-1] < 500000: return None
-        
-        # שליפת סקטור
-        info = stock.info
-        sector = info.get('sector', 'Unknown')
-        
-        df['MA20'] = df['Close'].rolling(20).mean()
-        df['RVOL'] = df['Volume'] / df['Volume'].rolling(20).mean()
-        df['BB_Width'] = (df['Close'].rolling(20).std() * 4 / df['MA20']) * 100
-        df['is_dropped'] = ((df['High'].rolling(252).max() - df['Close']) / df['High'].rolling(252).max()) > 0.25
-        
-        # אסטרטגיה 1: מניות במחיר מציאה
-        if mode == "מציאה":
-            if df['is_dropped'].iloc[-1] and df['BB_Width'].iloc[-1] < 10:
-                return ticker, df, 100, sector
-        
-        # אסטרטגיה 2: פריצות
-        elif mode == "פריצה":
-            if df['BB_Width'].iloc[-1] < 15 and df['RVOL'].iloc[-1] > 1.2:
-                score = min(100, int((15 - df['BB_Width'].iloc[-1]) * 3 + (df['RVOL'].iloc[-1] * 20)))
-                return ticker, df, score, sector
-    except: return None
-    return None
+# ממשק משתמש
+st.title("◈ סורק הצטברות מניות")
 
-# --- ממשק משתמש ---
-st.title("🛡️ TITAN: Multi-Strategy Scanner")
-tab1, tab2 = st.tabs(["📉 מניות במחיר מציאה", "🚀 מניות לפני פריצה"])
-
-def process_scan(mode):
-    tickers = get_universe()
-    progress_bar = st.progress(0)
-    results = {}
-    with ThreadPoolExecutor(max_workers=50) as ex:
-        futures = {ex.submit(run_scanner, t, mode): t for t in tickers}
-        for i, future in enumerate(futures):
-            res = future.result()
-            if res: results[res[0]] = (res[1], res[2], res[3])
-            progress_bar.progress((i + 1) / len(tickers))
-    return dict(sorted(results.items(), key=lambda item: item[1][1], reverse=True))
-
-# תצוגת לשוניות
-with tab1:
-    if st.button("סרוק מציאות"):
-        st.session_state['res_val'] = process_scan("מציאה")
-    if 'res_val' in st.session_state:
-        for t, (df, s, sec) in st.session_state['res_val'].items():
-            st.write(f"---")
-            st.write(f"**מניה:** {t} | **סקטור:** {sec}")
-
-with tab2:
-    if st.button("סרוק פריצות"):
-        st.session_state['res_brk'] = process_scan("פריצה")
-    if 'res_brk' in st.session_state:
-        for t, (df, s, sec) in st.session_state['res_brk'].items():
-            st.write(f"---")
-            st.write(f"**מניה:** {t} | **סקטור:** {sec} | **ציון פריצה:** {s}/100")
+if st.button("התחל סריקה"):
+    results = []
+    bar = st.progress(0)
+    for i, ticker in enumerate(TICKERS):
+        res = get_analysis(ticker)
+        if res: results.append(res)
+        bar.progress((i + 1) / len(TICKERS))
+    
+    df_results = pd.DataFrame(results)
+    st.dataframe(df_results.sort_values(by="Score", ascending=False), use_container_width=True)
+    
+    # ויזואליזציה פשוטה של המניה הראשונה שנמצאה
+    if not df_results.empty:
+        st.subheader(f"גרף למניה מובילה: {df_results.iloc[0]['Ticker']}")
+        st.line_chart(yf.download(df_results.iloc[0]['Ticker'], period="3mo")['Close'])
