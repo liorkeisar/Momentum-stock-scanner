@@ -1,16 +1,22 @@
 import streamlit as st
 import yfinance as yf
 import pandas as pd
-import plotly.graph_objects as go
+import time
 
-# הגדרת דף ה-Dashboard
-st.set_page_config(page_title="סורק מניות מוסדי", layout="wide")
-
+# הגדרות עמוד
+st.set_page_config(page_title="סורק מניות מוסדי - Wyckoff", layout="wide")
 st.title("◈ סורק מניות מוסדי - Wyckoff Accumulation")
-st.markdown("סורק המבוסס על ניתוח נפח ותנודתיות לזיהוי שלבי איסוף (Accumulation).")
 
-# --- לוגיקת Wyckoff ---
+# --- פונקציות עזר ---
+@st.cache_data
+def load_data():
+    """טעינת ה-CSV וסינון ראשוני למניעת עומס"""
+    df = pd.read_csv("nasdaq_screener.csv")
+    # סינון מניות איכותיות בלבד (שווי שוק > 300M, מחיר > 5$)
+    return df[(df['MarketCap'] > 300000000) & (df['Price'] > 5)]
+
 def calculate_wyckoff_score(df):
+    """חישוב ציון וייקוף מבוסס נפח ותנודתיות"""
     if len(df) < 20: return 0, 0, 0
     recent = df.tail(20)
     
@@ -28,31 +34,57 @@ def calculate_wyckoff_score(df):
     if vol_ratio > 1.2: score += 40
     if rw < 7: score += 40
     if rw < 4: score += 20
-    
     return min(score, 100), vol_ratio, rw
 
-# --- פונקציית סריקה ---
-def analyze_stock(ticker):
-    try:
-        df = yf.Ticker(ticker).history(period="3mo")
-        score, vr, rw = calculate_wyckoff_score(df)
-        return {"Ticker": ticker, "Wyckoff_Score": score, "Vol_Ratio": round(vr, 2), "Range_Width": round(rw, 2)}
-    except: return None
-
 # --- ממשק משתמש ---
-TICKERS = ["AAPL", "MSFT", "NVDA", "AMD", "TSLA", "META", "GOOGL", "AMZN", "NFLX", "INTC"]
+if 'results_df' not in st.session_state: st.session_state['results_df'] = None
+if 'watchlist' not in st.session_state: st.session_state['watchlist'] = []
 
-if st.sidebar.button("הרץ סריקת איסוף מוסדי"):
-    data = [analyze_stock(t) for t in TICKERS]
-    df_results = pd.DataFrame([d for d in data if d])
+# טעינת הנתונים
+try:
+    all_tickers = load_data()['Symbol'].tolist()
+except Exception as e:
+    st.error("לא ניתן למצוא את קובץ ה-CSV. וודא שהוא נמצא באותה תיקייה.")
+    st.stop()
+
+# פאנל צדי להגדרות
+num_to_scan = st.sidebar.slider("כמות מניות לסריקה:", 10, 500, 50)
+if st.sidebar.button("הרץ סריקה"):
+    results = []
+    progress_bar = st.progress(0)
+    status_text = st.sidebar.empty()
     
-    st.dataframe(
-        df_results.sort_values("Wyckoff_Score", ascending=False),
-        column_config={"Wyckoff_Score": st.column_config.ProgressColumn("ציון איסוף", min_value=0, max_value=100)},
-        use_container_width=True
-    )
+    for i, ticker in enumerate(all_tickers[:num_to_scan]):
+        try:
+            status_text.text(f"סורק את: {ticker}")
+            time.sleep(0.1) # מניעת חסימת IP
+            df = yf.Ticker(ticker).history(period="3mo")
+            score, vr, rw = calculate_wyckoff_score(df)
+            results.append({"Ticker": ticker, "Wyckoff_Score": score, "Vol_Ratio": vr, "Range_Width": rw})
+            progress_bar.progress((i + 1) / num_to_scan)
+        except: continue
+    
+    st.session_state['results_df'] = pd.DataFrame(results)
+    status_text.text("הסריקה הושלמה!")
 
-    selected = st.selectbox("בחר מניה לניתוח עומק:", TICKERS)
-    df = yf.Ticker(selected).history(period="6mo")
-    fig = go.Figure(data=[go.Candlestick(x=df.index, open=df['Open'], high=df['High'], low=df['Low'], close=df['Close'])])
-    st.plotly_chart(fig, use_container_width=True)
+# --- תצוגה וניהול ---
+if st.session_state['results_df'] is not None:
+    st.subheader("תוצאות הסריקה")
+    df = st.session_state['results_df'].sort_values("Wyckoff_Score", ascending=False)
+    st.dataframe(df, use_container_width=True)
+    
+    # בחירת מועדפים
+    watchlist = st.multiselect("בחר מניות להוספה למועדפים:", df['Ticker'].tolist(), default=st.session_state['watchlist'])
+    st.session_state['watchlist'] = watchlist
+    
+    if watchlist:
+        st.subheader("רשימת מועדפים")
+        watchlist_df = df[df['Ticker'].isin(watchlist)]
+        st.dataframe(watchlist_df)
+        
+        st.download_button(
+            "📥 הורד את המועדפים ל-Google Sheets", 
+            data=watchlist_df.to_csv(index=False), 
+            file_name='my_watchlist.csv',
+            mime='text/csv'
+        )
