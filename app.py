@@ -28,9 +28,12 @@ def calculate_wyckoff_score(df):
     rw = (recent['High'].max() - recent['Low'].min()) / ((recent['High'].max() + recent['Low'].min()) / 2) * 100
     return min((40 if vr > 1.2 else 0) + (40 if rw < 7 else 0) + (20 if rw < 4 else 0), 100), vr, rw
 
-# --- ניהול קובץ תיק השקעות ---
-if not os.path.exists(PORTFOLIO_FILE):
-    pd.DataFrame(columns=['Ticker', 'Date', 'EntryPrice']).to_csv(PORTFOLIO_FILE, index=False)
+# --- ניהול קובץ תיק השקעות (בטוח יותר) ---
+def init_portfolio():
+    if not os.path.exists(PORTFOLIO_FILE) or os.path.getsize(PORTFOLIO_FILE) == 0:
+        pd.DataFrame(columns=['Ticker', 'Date', 'EntryPrice']).to_csv(PORTFOLIO_FILE, index=False)
+
+init_portfolio()
 
 # --- ממשק טאבים ---
 tab1, tab2 = st.tabs(["📊 סורק וייקוף", "💼 תיק השקעות"])
@@ -65,18 +68,18 @@ with tab1:
             st.success(f"{to_add} נוספה בהצלחה!")
 
 with tab2:
+    init_portfolio()
     portfolio = pd.read_csv(PORTFOLIO_FILE)
     if not portfolio.empty:
-        # חישוב נתונים חיים
         for i, row in portfolio.iterrows():
-            curr = yf.Ticker(row['Ticker']).history(period="1d")['Close'].iloc[-1]
-            portfolio.loc[i, 'CurrentPrice'] = round(curr, 2)
-            portfolio.loc[i, 'Performance'] = f"{round(((curr - row['EntryPrice']) / row['EntryPrice']) * 100, 2)}%"
+            try:
+                curr = yf.Ticker(row['Ticker']).history(period="1d")['Close'].iloc[-1]
+                portfolio.loc[i, 'CurrentPrice'] = round(curr, 2)
+                portfolio.loc[i, 'Performance'] = f"{round(((curr - row['EntryPrice']) / row['EntryPrice']) * 100, 2)}%"
+            except: continue
         
         st.dataframe(portfolio, use_container_width=True)
-        
-        # מחיקת מניה
-        to_delete = st.selectbox("בחר מניה למחיקה מהתיק:", portfolio['Ticker'].tolist())
+        to_delete = st.selectbox("בחר מניה למחיקה:", portfolio['Ticker'].tolist())
         if st.button("מחק מניה מהתיק 🗑️"):
             portfolio = portfolio[portfolio['Ticker'] != to_delete]
             portfolio.to_csv(PORTFOLIO_FILE, index=False)
