@@ -28,12 +28,18 @@ def calculate_wyckoff_score(df):
     rw = (recent['High'].max() - recent['Low'].min()) / ((recent['High'].max() + recent['Low'].min()) / 2) * 100
     return min((40 if vr > 1.2 else 0) + (40 if rw < 7 else 0) + (20 if rw < 4 else 0), 100), vr, rw
 
-# --- ניהול קובץ תיק השקעות (בטוח יותר) ---
-def init_portfolio():
+# --- פונקציית אתחול תיק בטוחה ---
+def get_portfolio_df():
     if not os.path.exists(PORTFOLIO_FILE) or os.path.getsize(PORTFOLIO_FILE) == 0:
-        pd.DataFrame(columns=['Ticker', 'Date', 'EntryPrice']).to_csv(PORTFOLIO_FILE, index=False)
-
-init_portfolio()
+        df = pd.DataFrame(columns=['Ticker', 'Date', 'EntryPrice'])
+        df.to_csv(PORTFOLIO_FILE, index=False)
+        return df
+    try:
+        return pd.read_csv(PORTFOLIO_FILE)
+    except pd.errors.EmptyDataError:
+        df = pd.DataFrame(columns=['Ticker', 'Date', 'EntryPrice'])
+        df.to_csv(PORTFOLIO_FILE, index=False)
+        return df
 
 # --- ממשק טאבים ---
 tab1, tab2 = st.tabs(["📊 סורק וייקוף", "💼 תיק השקעות"])
@@ -64,12 +70,12 @@ with tab1:
         to_add = st.selectbox("בחר מניה להוספה לתיק:", df['Ticker'].tolist())
         if st.button("הוסף לתיק ההשקעות 💼"):
             price = df[df['Ticker'] == to_add]['Price'].values[0]
-            pd.DataFrame({'Ticker': [to_add], 'Date': [datetime.now().strftime('%Y-%m-%d')], 'EntryPrice': [price]}).to_csv(PORTFOLIO_FILE, mode='a', header=False, index=False)
+            new_row = pd.DataFrame({'Ticker': [to_add], 'Date': [datetime.now().strftime('%Y-%m-%d')], 'EntryPrice': [price]})
+            new_row.to_csv(PORTFOLIO_FILE, mode='a', header=False, index=False)
             st.success(f"{to_add} נוספה בהצלחה!")
 
 with tab2:
-    init_portfolio()
-    portfolio = pd.read_csv(PORTFOLIO_FILE)
+    portfolio = get_portfolio_df()
     if not portfolio.empty:
         for i, row in portfolio.iterrows():
             try:
@@ -79,9 +85,10 @@ with tab2:
             except: continue
         
         st.dataframe(portfolio, use_container_width=True)
-        to_delete = st.selectbox("בחר מניה למחיקה:", portfolio['Ticker'].tolist())
+        to_delete = st.selectbox("בחר מניה למחיקה מהתיק:", portfolio['Ticker'].tolist())
         if st.button("מחק מניה מהתיק 🗑️"):
             portfolio = portfolio[portfolio['Ticker'] != to_delete]
             portfolio.to_csv(PORTFOLIO_FILE, index=False)
             st.rerun()
-    else: st.info("התיק ריק.")
+    else: 
+        st.info("התיק ריק.")
