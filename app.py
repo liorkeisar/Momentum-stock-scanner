@@ -10,6 +10,14 @@ st.title("◈ מערכת השקעות מבוססת וייקוף")
 
 PORTFOLIO_FILE = 'portfolio.csv'
 
+# --- מילון אתרים ---
+ANALYSIS_SITES = {
+    "Yahoo Finance": "https://finance.yahoo.com/quote/",
+    "Finviz": "https://finviz.com/quote.ashx?t=",
+    "Investing.com": "https://www.investing.com/search/?q=",
+    "Webull": "https://www.webull.com/quote/"
+}
+
 # --- פונקציות עזר ---
 def get_available_lists(): return [f for f in os.listdir('.') if f.endswith('.csv')]
 
@@ -41,17 +49,18 @@ def get_portfolio_df():
         df.to_csv(PORTFOLIO_FILE, index=False)
         return df
 
+# --- פונקציית הצגת כפתור בחירה ---
+def display_analysis_selector(ticker):
+    col1, col2 = st.columns([1, 2])
+    with col1:
+        site_name = st.selectbox("בחר פלטפורמת ניתוח:", list(ANALYSIS_SITES.keys()), key=f"site_{ticker}")
+    with col2:
+        st.write("") # מרווח לעיצוב
+        st.write("") 
+        st.link_button(f"עבור ל-{site_name}", f"{ANALYSIS_SITES[site_name]}{ticker}")
+
 # --- ממשק טאבים ---
 tab1, tab2 = st.tabs(["📊 סורק וייקוף", "💼 תיק השקעות"])
-
-def show_buttons(ticker):
-    """פונקציה להצגת 4 כפתורי הניתוח"""
-    c1, c2 = st.columns(2)
-    with c1: st.link_button(f"Yahoo", f"https://finance.yahoo.com/quote/{ticker}")
-    with c2: st.link_button(f"Finviz", f"https://finviz.com/quote.ashx?t={ticker}")
-    c3, c4 = st.columns(2)
-    with c3: st.link_button(f"Investing", f"https://www.investing.com/search/?q={ticker}")
-    with c4: st.link_button(f"Webull", f"https://www.webull.com/quote/{ticker}")
 
 with tab1:
     available_lists = get_available_lists()
@@ -77,18 +86,14 @@ with tab1:
         st.dataframe(df.sort_values("Score", ascending=False), use_container_width=True)
         
         st.divider()
-        col_select, col_buttons = st.columns([2, 1])
-        with col_select:
-            to_add = st.selectbox("בחר מניה לעבודה:", df['Ticker'].tolist())
+        to_add = st.selectbox("בחר מניה לעבודה:", df['Ticker'].tolist())
+        if st.button("הוסף לתיק ההשקעות 💼"):
+            price = df[df['Ticker'] == to_add]['Price'].values[0]
+            new_row = pd.DataFrame({'Ticker': [to_add], 'Date': [datetime.now().strftime('%Y-%m-%d')], 'EntryPrice': [price]})
+            new_row.to_csv(PORTFOLIO_FILE, mode='a', header=False, index=False)
+            st.success(f"{to_add} נוספה!")
         
-        with col_buttons:
-            if st.button("הוסף לתיק ההשקעות 💼"):
-                price = df[df['Ticker'] == to_add]['Price'].values[0]
-                new_row = pd.DataFrame({'Ticker': [to_add], 'Date': [datetime.now().strftime('%Y-%m-%d')], 'EntryPrice': [price]})
-                new_row.to_csv(PORTFOLIO_FILE, mode='a', header=False, index=False)
-                st.success(f"{to_add} נוספה בהצלחה!")
-        
-        show_buttons(to_add)
+        display_analysis_selector(to_add)
 
 with tab2:
     portfolio = get_portfolio_df()
@@ -101,11 +106,10 @@ with tab2:
             except: continue
         
         st.dataframe(portfolio, use_container_width=True)
-        
         st.divider()
         to_manage = st.selectbox("בחר מניה לניהול:", portfolio['Ticker'].tolist())
         
-        show_buttons(to_manage)
+        display_analysis_selector(to_manage)
         
         if st.button("מחק מניה מהתיק 🗑️"):
             portfolio = portfolio[portfolio['Ticker'] != to_manage]
