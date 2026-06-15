@@ -10,10 +10,14 @@ st.title("◈ סורק מניות מוסדי - Wyckoff Accumulation")
 # --- פונקציות עזר ---
 @st.cache_data
 def load_data():
-    """טעינת ה-CSV וסינון ראשוני למניעת עומס"""
+    """טעינת ה-CSV וסינון מותאם למבנה הקובץ שלך"""
     df = pd.read_csv("nasdaq_screener.csv")
-    # סינון מניות איכותיות בלבד (שווי שוק > 300M, מחיר > 5$)
-    return df[(df['MarketCap'] > 300000000) & (df['Price'] > 5)]
+    
+    # ניקוי עמודת המחיר: הסרת סימני $ ו-, והמרה למספר
+    df['Price'] = df['Last Sale'].replace('[\$,]', '', regex=True).astype(float)
+    
+    # סינון: רק מניות עם מחיר מעל 5$
+    return df[df['Price'] > 5]
 
 def calculate_wyckoff_score(df):
     """חישוב ציון וייקוף מבוסס נפח ותנודתיות"""
@@ -44,7 +48,7 @@ if 'watchlist' not in st.session_state: st.session_state['watchlist'] = []
 try:
     all_tickers = load_data()['Symbol'].tolist()
 except Exception as e:
-    st.error("לא ניתן למצוא את קובץ ה-CSV. וודא שהוא נמצא באותה תיקייה.")
+    st.error(f"שגיאה בטעינת הקובץ: {e}. וודא ש-nasdaq_screener.csv בתיקייה הראשית.")
     st.stop()
 
 # פאנל צדי להגדרות
