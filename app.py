@@ -4,6 +4,7 @@ import pandas as pd
 import os
 from datetime import datetime
 
+# --- הגדרות דף ---
 st.set_page_config(page_title="מערכת וייקוף Pro", layout="wide")
 st.title("◈ מערכת השקעות מבוססת וייקוף")
 
@@ -76,9 +77,8 @@ with tab1:
                 price = df[df['Ticker'] == to_add]['Price'].values[0]
                 new_row = pd.DataFrame({'Ticker': [to_add], 'Date': [datetime.now().strftime('%Y-%m-%d')], 'EntryPrice': [price]})
                 new_row.to_csv(PORTFOLIO_FILE, mode='a', header=False, index=False)
-                st.success(f"{to_add} נוספה!")
+                st.success(f"{to_add} נוספה בהצלחה!")
         
-        # כפתורי עזר
         c1, c2 = st.columns(2)
         with c1: st.link_button(f"Yahoo Finance: {to_add}", f"https://finance.yahoo.com/quote/{to_add}")
         with c2: st.link_button(f"Finviz: {to_add}", f"https://finviz.com/quote.ashx?t={to_add}")
@@ -94,9 +94,19 @@ with tab2:
             except: continue
         
         st.dataframe(portfolio, use_container_width=True)
-        to_delete = st.selectbox("בחר מניה למחיקה:", portfolio['Ticker'].tolist())
+        
+        st.divider()
+        col_select, col_buttons = st.columns([2, 1])
+        with col_select:
+            to_manage = st.selectbox("בחר מניה לניהול:", portfolio['Ticker'].tolist())
+        
+        # כפתורים בתוך טאב התיק
+        c1, c2 = st.columns(2)
+        with c1: st.link_button(f"Yahoo Finance: {to_manage}", f"https://finance.yahoo.com/quote/{to_manage}")
+        with c2: st.link_button(f"Finviz: {to_manage}", f"https://finviz.com/quote.ashx?t={to_manage}")
+        
         if st.button("מחק מניה מהתיק 🗑️"):
-            portfolio = portfolio[portfolio['Ticker'] != to_delete]
+            portfolio = portfolio[portfolio['Ticker'] != to_manage]
             portfolio.to_csv(PORTFOLIO_FILE, index=False)
             st.rerun()
     else: st.info("התיק ריק.")
