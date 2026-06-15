@@ -79,9 +79,10 @@ with tab1:
                 new_row.to_csv(PORTFOLIO_FILE, mode='a', header=False, index=False)
                 st.success(f"{to_add} נוספה בהצלחה!")
         
-        c1, c2 = st.columns(2)
-        with c1: st.link_button(f"Yahoo Finance: {to_add}", f"https://finance.yahoo.com/quote/{to_add}")
-        with c2: st.link_button(f"Finviz: {to_add}", f"https://finviz.com/quote.ashx?t={to_add}")
+        c1, c2, c3 = st.columns(3)
+        with c1: st.link_button(f"Yahoo", f"https://finance.yahoo.com/quote/{to_add}")
+        with c2: st.link_button(f"Finviz", f"https://finviz.com/quote.ashx?t={to_add}")
+        with c3: st.link_button(f"Investing", f"https://www.investing.com/search/?q={to_add}")
 
 with tab2:
     portfolio = get_portfolio_df()
@@ -96,14 +97,12 @@ with tab2:
         st.dataframe(portfolio, use_container_width=True)
         
         st.divider()
-        col_select, col_buttons = st.columns([2, 1])
-        with col_select:
-            to_manage = st.selectbox("בחר מניה לניהול:", portfolio['Ticker'].tolist())
+        to_manage = st.selectbox("בחר מניה לניהול:", portfolio['Ticker'].tolist())
         
-        # כפתורים בתוך טאב התיק
-        c1, c2 = st.columns(2)
-        with c1: st.link_button(f"Yahoo Finance: {to_manage}", f"https://finance.yahoo.com/quote/{to_manage}")
-        with c2: st.link_button(f"Finviz: {to_manage}", f"https://finviz.com/quote.ashx?t={to_manage}")
+        c1, c2, c3 = st.columns(3)
+        with c1: st.link_button(f"Yahoo", f"https://finance.yahoo.com/quote/{to_manage}")
+        with c2: st.link_button(f"Finviz", f"https://finviz.com/quote.ashx?t={to_manage}")
+        with c3: st.link_button(f"Investing", f"https://www.investing.com/search/?q={to_manage}")
         
         if st.button("מחק מניה מהתיק 🗑️"):
             portfolio = portfolio[portfolio['Ticker'] != to_manage]
