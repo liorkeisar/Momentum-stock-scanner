@@ -1,12 +1,11 @@
 import streamlit as st
 import yfinance as yf
 import pandas as pd
-import time
 import os
 
-# הגדרות עמוד
-st.set_page_config(page_title="סורק וייקוף מוסדי", layout="wide")
-st.title("◈ סורק מניות מוסדי - Wyckoff Accumulation")
+# הגדרת דף
+st.set_page_config(page_title="סורק וייקוף Pro", layout="wide")
+st.title("◈ סורק מניות מוסדי - Wyckoff Pro")
 
 # --- פונקציות עזר ---
 def get_available_lists():
@@ -15,78 +14,55 @@ def get_available_lists():
 @st.cache_data
 def load_selected_list(filename):
     df = pd.read_csv(filename)
-    # זיהוי אוטומטי של עמודת הסימבולים
-    possible_cols = ['Symbol', 'Ticker', 'Symbol ', 'TICKER']
-    target_col = next((col for col in possible_cols if col in df.columns), df.columns[0])
-    return df[target_col].dropna().astype(str).tolist()
+    # זיהוי עמודה חכם
+    cols = ['Symbol', 'Ticker', 'Symbol ', 'TICKER', 'Symbol (NASDAQ)']
+    target = next((c for c in cols if c in df.columns), df.columns[0])
+    return df[target].dropna().astype(str).tolist()
 
 def calculate_wyckoff_score(df):
-    if len(df) < 20: return 0, 0, 0
+    if df is None or len(df) < 20: return 0, 0, 0
     recent = df.tail(20)
-    down = recent[recent['Close'] < recent['Close'].shift(1)]
     up = recent[recent['Close'] >= recent['Close'].shift(1)]
+    down = recent[recent['Close'] < recent['Close'].shift(1)]
     
-    avg_vol_down = down['Volume'].mean() if len(down) > 0 else 1
-    avg_vol_up = up['Volume'].mean() if len(up) > 0 else 1
-    vol_ratio = avg_vol_up / avg_vol_down if avg_vol_down != 0 else 1
+    vr = (up['Volume'].mean() / down['Volume'].mean()) if down['Volume'].mean() > 0 else 1
+    rw = (recent['High'].max() - recent['Low'].min()) / ((recent['High'].max() + recent['Low'].min()) / 2) * 100
     
-    hi, lo = recent['High'].max(), recent['Low'].min()
-    rw = (hi - lo) / ((hi + lo) / 2) * 100
-    
-    score = 0
-    if vol_ratio > 1.2: score += 40
-    if rw < 7: score += 40
-    if rw < 4: score += 20
-    return min(score, 100), vol_ratio, rw
+    score = (40 if vr > 1.2 else 0) + (40 if rw < 7 else 0) + (20 if rw < 4 else 0)
+    return min(score, 100), vr, rw
 
 # --- ממשק משתמש ---
-if 'results_df' not in st.session_state: st.session_state['results_df'] = None
-
 available_lists = get_available_lists()
-selected_file = st.sidebar.selectbox("בחר רשימת מניות:", available_lists)
-manual_ticker = st.sidebar.text_input("הזן טיקר ידנית (למשל: MSFT):").upper()
+selected_file = st.sidebar.selectbox("בחר רשימה:", available_lists)
+min_score = st.sidebar.slider("סנן מניות עם ציון מינימלי:", 0, 100, 40)
+manual_ticker = st.sidebar.text_input("הזן טיקר ידני (ולחץ Enter):").upper().strip()
 
 if st.sidebar.button("הרץ סריקה"):
-    tickers_from_file = load_selected_list(selected_file)
+    # ניקוי תוצאות קודמות
+    st.session_state['results_df'] = None
     
-    # בניית רשימת סריקה מאוחדת (ידני ראשון)
-    all_tickers = []
-    if manual_ticker:
-        all_tickers.append(manual_ticker.strip())
-    
-    for t in tickers_from_file:
-        clean_t = str(t).strip()
-        if clean_t not in all_tickers:
-            all_tickers.append(clean_t)
+    # בניית רשימה מאוחדת
+    tickers = [manual_ticker] if manual_ticker else []
+    tickers.extend([t for t in load_selected_list(selected_file) if t not in tickers])
     
     results = []
     progress_bar = st.progress(0)
-    status_text = st.sidebar.empty()
     
-    # סריקה מוגבלת ל-50 מניות לטובת יציבות
-    for i, ticker in enumerate(all_tickers[:50]):
+    for i, ticker in enumerate(tickers[:50]): # סריקת 50 מניות למניעת עומס
         try:
-            status_text.text(f"סורק: {ticker}")
             df = yf.Ticker(ticker).history(period="3mo")
-            if df.empty: continue
-            
-            score, vr, rw = calculate_wyckoff_score(df)
-            results.append({"Ticker": ticker, "Score": score, "VR": round(vr, 2), "RW": round(rw, 2)})
-            progress_bar.progress((i + 1) / 50)
-        except Exception:
-            continue
+            if not df.empty:
+                score, vr, rw = calculate_wyckoff_score(df)
+                tv_link = f"https://www.tradingview.com/chart/?symbol={ticker}"
+                results.append({"Ticker": ticker, "Score": score, "VR": round(vr, 2), "RW": round(rw, 2), "Chart": tv_link})
+        except: continue
+        progress_bar.progress((i + 1) / 50)
     
     st.session_state['results_df'] = pd.DataFrame(results)
     st.rerun()
 
 # --- תצוגה ---
-if st.session_state['results_df'] is not None:
-    st.subheader("תוצאות הסריקה")
-    # הצגת טבלה ממוינת לפי ציון
-    df_results = st.session_state['results_df'].sort_values("Score", ascending=False)
-    st.dataframe(df_results, use_container_width=True)
-    
-    # הורדה ל-CSV
-    st.download_button("📥 הורד תוצאות ל-CSV", 
-                       data=df_results.to_csv(index=False), 
-                       file_name='scan_results.csv')
+if st.session_state.get('results_df') is not None:
+    df = st.session_state['results_df']
+    df = df[df['Score'] >= min_score] # סינון דינמי לפי ה-Slider
+    st.dataframe(df.sort_values("Score", ascending=False), use_container_width=True)
