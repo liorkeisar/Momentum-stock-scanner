@@ -4,8 +4,8 @@ import pandas as pd
 import os
 
 # הגדרת דף
-st.set_page_config(page_title="סורק וייקוף Pro", layout="wide")
-st.title("◈ סורק מניות מוסדי - Wyckoff Pro")
+st.set_page_config(page_title="סורק וייקוף מוסדי", layout="wide")
+st.title("◈ סורק מניות מוסדי - Wyckoff Accumulation")
 
 # --- פונקציות עזר ---
 def get_available_lists():
@@ -33,22 +33,18 @@ def calculate_wyckoff_score(df):
 
 # --- ממשק משתמש ---
 available_lists = get_available_lists()
-selected_file = st.sidebar.selectbox("בחר רשימה:", available_lists)
+selected_file = st.sidebar.selectbox("בחר רשימת מניות לסריקה:", available_lists)
 min_score = st.sidebar.slider("סנן מניות עם ציון מינימלי:", 0, 100, 40)
-manual_ticker = st.sidebar.text_input("הזן טיקר ידני (ולחץ Enter):").upper().strip()
 
 if st.sidebar.button("הרץ סריקה"):
-    # ניקוי תוצאות קודמות
     st.session_state['results_df'] = None
-    
-    # בניית רשימה מאוחדת
-    tickers = [manual_ticker] if manual_ticker else []
-    tickers.extend([t for t in load_selected_list(selected_file) if t not in tickers])
+    tickers = load_selected_list(selected_file)
     
     results = []
     progress_bar = st.progress(0)
     
-    for i, ticker in enumerate(tickers[:50]): # סריקת 50 מניות למניעת עומס
+    # סריקה מוגבלת ל-50 מניות למניעת קריסה
+    for i, ticker in enumerate(tickers[:50]):
         try:
             df = yf.Ticker(ticker).history(period="3mo")
             if not df.empty:
@@ -64,5 +60,5 @@ if st.sidebar.button("הרץ סריקה"):
 # --- תצוגה ---
 if st.session_state.get('results_df') is not None:
     df = st.session_state['results_df']
-    df = df[df['Score'] >= min_score] # סינון דינמי לפי ה-Slider
+    df = df[df['Score'] >= min_score]
     st.dataframe(df.sort_values("Score", ascending=False), use_container_width=True)
