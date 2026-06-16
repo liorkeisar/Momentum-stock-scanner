@@ -10,11 +10,13 @@ st.title("◈ מערכת השקעות מבוססת וייקוף")
 
 PORTFOLIO_FILE = 'portfolio.csv'
 
+# הוספנו את ה-AI Analyst לרשימת האתרים
 ANALYSIS_SITES = {
     "Yahoo Finance": "https://finance.yahoo.com/quote/",
     "Finviz": "https://finviz.com/quote.ashx?t=",
     "Investing.com": "https://www.investing.com/search/?q=",
-    "Webull": "https://www.webull.com/quote/"
+    "Webull": "https://www.webull.com/quote/",
+    "AI Wyckoff Analyst": "https://chatgpt.com/?q=Analyze+the+stock+ticker+"
 }
 
 # --- פונקציות עזר ---
@@ -44,7 +46,11 @@ def display_analysis_selector(ticker):
         site_name = st.selectbox("בחר פלטפורמת ניתוח:", list(ANALYSIS_SITES.keys()), key=f"site_{ticker}")
     with col2:
         st.write("---") 
-        st.link_button(f"עבור ל-{site_name}", f"{ANALYSIS_SITES[site_name]}{ticker}")
+        url = f"{ANALYSIS_SITES[site_name]}{ticker}"
+        # אם בחרנו AI, נוסיף לפרומפט את ההקשר של וייקוף
+        if site_name == "AI Wyckoff Analyst":
+            url += "+using+Wyckoff+strategy+technical+analysis"
+        st.link_button(f"עבור ל-{site_name}", url)
 
 # --- ממשק ---
 tab1, tab2, tab3 = st.tabs(["📊 סורק וייקוף", "💼 תיק השקעות", "💡 אסטרטגיית וייקוף"])
@@ -124,10 +130,5 @@ with tab3:
     2. **שלבי שוק:**
        - **Accumulation (איסוף):** כסף חכם קונה בשקט בטווח מחירים צר. כאן ה-**Range Width (RW)** שלנו נמוך.
        - **Markup (עליית ערך):** המניה פורצת את הדשדוש בלוויית ווליום גבוה.
-    
-    **איך להשתמש בסורק:**
-    - חפש מניות עם ציון גבוה (Score > 70).
-    - וודא שה-VR גבוה מ-1.2 (סימן לעניין מצד המוסדיים).
-    - השתמש בגרפים חיצוניים (Yahoo/Finviz) כדי לוודא פריצה של קווי התנגדות.
     """)
     st.info("זכור: שום אסטרטגיה אינה מבטיחה רווח. נהל סיכונים בהתאם!")
