@@ -10,13 +10,11 @@ st.title("◈ מערכת השקעות מבוססת וייקוף")
 
 PORTFOLIO_FILE = 'portfolio.csv'
 
-# מערך האתרים לניתוח (כולל ה-AI)
 ANALYSIS_SITES = {
     "Yahoo Finance": "https://finance.yahoo.com/quote/",
     "Finviz": "https://finviz.com/quote.ashx?t=",
     "Investing.com": "https://www.investing.com/search/?q=",
-    "Webull": "https://www.webull.com/quote/",
-    "AI Wyckoff Analyst": "https://chatgpt.com/?q=Analyze+stock+ticker+" 
+    "Webull": "https://www.webull.com/quote/"
 }
 
 # --- פונקציות עזר ---
@@ -46,10 +44,7 @@ def display_analysis_selector(ticker):
         site_name = st.selectbox("בחר פלטפורמת ניתוח:", list(ANALYSIS_SITES.keys()), key=f"site_{ticker}")
     with col2:
         st.write("---") 
-        url = f"{ANALYSIS_SITES[site_name]}{ticker}"
-        if "chatgpt" in url:
-            url += "+using+Wyckoff+Strategy"
-        st.link_button(f"עבור ל-{site_name}", url)
+        st.link_button(f"עבור ל-{site_name}", f"{ANALYSIS_SITES[site_name]}{ticker}")
 
 # --- ממשק ---
 tab1, tab2, tab3 = st.tabs(["📊 סורק וייקוף", "💼 תיק השקעות", "💡 אסטרטגיית וייקוף"])
@@ -60,51 +55,56 @@ with tab1:
     min_score = st.sidebar.slider("ציון מינימלי:", 0, 100, 40)
 
     if st.sidebar.button("הרץ סריקה"):
-        tickers = load_selected_list(selected_file)
-        results = []
-        with st.spinner(f"סורק את {selected_file}..."):
-            for ticker in tickers:
-                try:
-                    df = yf.Ticker(ticker).history(period="3mo")
-                    if not df.empty and df['Close'].iloc[-1] >= 5:
-                        score, vr, rw = calculate_wyckoff_score(df)
-                        results.append({
-                            "Ticker": ticker, "Score": score, "Price": round(df['Close'].iloc[-1], 2),
-                            "VR (Volume Ratio)": round(vr, 2), "RW (Range Width)": round(rw, 2)
-                        })
-                except Exception: continue
-        st.session_state['results_df'] = pd.DataFrame(results)
-        st.rerun()
+        try:
+            tickers = load_selected_list(selected_file)
+            results = []
+            with st.spinner(f"סורק את {selected_file}..."):
+                for ticker in tickers:
+                    try:
+                        df = yf.Ticker(ticker).history(period="3mo")
+                        if not df.empty and df['Close'].iloc[-1] >= 5:
+                            score, vr, rw = calculate_wyckoff_score(df)
+                            results.append({
+                                "Ticker": ticker, 
+                                "Score": score, 
+                                "Price": round(df['Close'].iloc[-1], 2),
+                                "VR (Volume Ratio)": round(vr, 2),
+                                "RW (Range Width)": round(rw, 2)
+                            })
+                    except Exception: continue
+            st.session_state['results_df'] = pd.DataFrame(results)
+            st.rerun()
+        except Exception as e:
+            st.error(f"שגיאה בטעינת הקובץ: {e}")
 
     if st.session_state.get('results_df') is not None:
         filtered_df = st.session_state['results_df'][st.session_state['results_df']['Score'] >= min_score].sort_values("Score", ascending=False)
         st.dataframe(filtered_df, use_container_width=True)
+        
         st.divider()
         if not filtered_df.empty:
-            to_add = st.selectbox("בחר מניה להוספה:", filtered_df['Ticker'].tolist())
+            to_add = st.selectbox("בחר מניה להוספה לתיק:", filtered_df['Ticker'].tolist())
             if st.button("הוסף לתיק ההשקעות 💼"):
                 price = filtered_df[filtered_df['Ticker'] == to_add]['Price'].values[0]
                 new_row = pd.DataFrame({'Ticker': [to_add], 'Date': [datetime.now().strftime('%Y-%m-%d')], 'EntryPrice': [price]})
                 new_row.to_csv(PORTFOLIO_FILE, mode='a', header=not os.path.exists(PORTFOLIO_FILE), index=False)
-                st.success(f"{to_add} נוספה!")
+                st.success(f"{to_add} נוספה בהצלחה!")
 
 with tab2:
     portfolio = get_portfolio_df()
     if not portfolio.empty:
-        # פתרון קריטי: יצירת עמודות כ-DataFrame חדש כדי למנוע את ה-TypeError
-        processed_portfolio = portfolio.copy()
-        processed_portfolio['CurrentPrice'] = 0.0
-        processed_portfolio['Performance'] = "0%"
-        
-        for i, row in processed_portfolio.iterrows():
+        portfolio['CurrentPrice'] = 0.0
+        portfolio['Performance'] = "0%"
+        for i, row in portfolio.iterrows():
             try:
                 curr = yf.Ticker(row['Ticker']).history(period="1d")['Close'].iloc[-1]
-                processed_portfolio.loc[i, 'CurrentPrice'] = round(curr, 2)
-                processed_portfolio.loc[i, 'Performance'] = f"{round(((curr - row['EntryPrice']) / row['EntryPrice']) * 100, 2)}%"
-            except Exception: pass
+                portfolio.loc[i, 'CurrentPrice'] = round(curr, 2)
+                portfolio.loc[i, 'Performance'] = f"{round(((curr - row['EntryPrice']) / row['EntryPrice']) * 100, 2)}%"
+            except Exception:
+                portfolio.loc[i, 'CurrentPrice'] = 0.0
+                portfolio.loc[i, 'Performance'] = "N/A"
         
-        st.dataframe(processed_portfolio, use_container_width=True)
-        st.divider()
+        st.dataframe(portfolio, use_container_width=True)
         to_manage = st.selectbox("בחר מניה לניהול:", portfolio['Ticker'].unique().tolist())
         display_analysis_selector(to_manage)
         
@@ -120,9 +120,14 @@ with tab3:
     st.write("---")
     st.success("""
     **עקרונות המפתח של השיטה:**
-    1. **חוק ההיצע והביקוש:** ביקוש גבוה מהיצע מעיד על כסף חכם.
+    1. **חוק ההיצע והביקוש:** כאשר הביקוש עולה על ההיצע, המחיר עולה. הסורק שלנו מזהה זאת דרך ה-**Volume Ratio (VR)**.
     2. **שלבי שוק:**
-       - **איסוף (Accumulation):** טווח מחירים צר, נמוך ב-RW.
-       - **פריצה (Markup):** עלייה בולטת ב-VR.
+       - **Accumulation (איסוף):** כסף חכם קונה בשקט בטווח מחירים צר. כאן ה-**Range Width (RW)** שלנו נמוך.
+       - **Markup (עליית ערך):** המניה פורצת את הדשדוש בלוויית ווליום גבוה.
+    
+    **איך להשתמש בסורק:**
+    - חפש מניות עם ציון גבוה (Score > 70).
+    - וודא שה-VR גבוה מ-1.2 (סימן לעניין מצד המוסדיים).
+    - השתמש בגרפים חיצוניים (Yahoo/Finviz) כדי לוודא פריצה של קווי התנגדות.
     """)
-    st.info("השתמש ב-AI להעמקת הניתוח בכל מניה דרך לשונית הניתוח!")
+    st.info("זכור: שום אסטרטגיה אינה מבטיחה רווח. נהל סיכונים בהתאם!")
