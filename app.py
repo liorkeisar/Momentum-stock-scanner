@@ -47,7 +47,7 @@ def display_analysis_selector(ticker):
         st.link_button(f"עבור ל-{site_name}", f"{ANALYSIS_SITES[site_name]}{ticker}")
 
 # --- ממשק ---
-tab1, tab2 = st.tabs(["📊 סורק וייקוף", "💼 תיק השקעות"])
+tab1, tab2, tab3 = st.tabs(["📊 סורק וייקוף", "💼 תיק השקעות", "💡 אסטרטגיית וייקוף"])
 
 with tab1:
     file_options = [f"nasdaq_{i}.csv" for i in range(1, 28)]
@@ -93,10 +93,8 @@ with tab1:
 with tab2:
     portfolio = get_portfolio_df()
     if not portfolio.empty:
-        # יצירת עמודות מראש למניעת שגיאות
         portfolio['CurrentPrice'] = 0.0
         portfolio['Performance'] = "0%"
-        
         for i, row in portfolio.iterrows():
             try:
                 curr = yf.Ticker(row['Ticker']).history(period="1d")['Close'].iloc[-1]
@@ -116,3 +114,21 @@ with tab2:
             st.rerun()
     else:
         st.info("התיק ריק כרגע.")
+
+with tab3:
+    st.markdown("<h2 style='color:green;'>אסטרטגיית וייקוף (Wyckoff Strategy)</h2>", unsafe_allow_html=True)
+    [attachment_0](attachment)
+    st.write("---")
+    st.success("""
+    **עקרונות המפתח של השיטה:**
+    1. **חוק ההיצע והביקוש:** כאשר הביקוש עולה על ההיצע, המחיר עולה. הסורק שלנו מזהה זאת דרך ה-**Volume Ratio (VR)**.
+    2. **שלבי שוק:**
+       - **Accumulation (איסוף):** כסף חכם קונה בשקט בטווח מחירים צר. כאן ה-**Range Width (RW)** שלנו נמוך.
+       - **Markup (עליית ערך):** המניה פורצת את הדשדוש בלוויית ווליום גבוה.
+    
+    **איך להשתמש בסורק:**
+    - חפש מניות עם ציון גבוה (Score > 70).
+    - וודא שה-VR גבוה מ-1.2 (סימן לעניין מצד המוסדיים).
+    - השתמש בגרפים חיצוניים (Yahoo/Finviz) כדי לוודא פריצה של קווי התנגדות.
+    """)
+    st.info("זכור: שום אסטרטגיה אינה מבטיחה רווח. נהל סיכונים בהתאם!")
