@@ -78,25 +78,25 @@ with tab1:
             st.error(f"שגיאה בטעינת הקובץ: {e}")
 
     if st.session_state.get('results_df') is not None:
-        df_res = st.session_state['results_df']
-        st.dataframe(df_res[df_res['Score'] >= min_score].sort_values("Score", ascending=False), use_container_width=True)
+        filtered_df = st.session_state['results_df'][st.session_state['results_df']['Score'] >= min_score].sort_values("Score", ascending=False)
+        st.dataframe(filtered_df, use_container_width=True)
         
         st.divider()
-        to_add = st.selectbox("בחר מניה להוספה לתיק:", df_res['Ticker'].tolist())
-        if st.button("הוסף לתיק ההשקעות 💼"):
-            price = df_res[df_res['Ticker'] == to_add]['Price'].values[0]
-            new_row = pd.DataFrame({'Ticker': [to_add], 'Date': [datetime.now().strftime('%Y-%m-%d')], 'EntryPrice': [price]})
-            new_row.to_csv(PORTFOLIO_FILE, mode='a', header=not os.path.exists(PORTFOLIO_FILE), index=False)
-            st.success(f"{to_add} נוספה בהצלחה!")
+        if not filtered_df.empty:
+            to_add = st.selectbox("בחר מניה להוספה לתיק:", filtered_df['Ticker'].tolist())
+            if st.button("הוסף לתיק ההשקעות 💼"):
+                price = filtered_df[filtered_df['Ticker'] == to_add]['Price'].values[0]
+                new_row = pd.DataFrame({'Ticker': [to_add], 'Date': [datetime.now().strftime('%Y-%m-%d')], 'EntryPrice': [price]})
+                new_row.to_csv(PORTFOLIO_FILE, mode='a', header=not os.path.exists(PORTFOLIO_FILE), index=False)
+                st.success(f"{to_add} נוספה בהצלחה!")
 
 with tab2:
     portfolio = get_portfolio_df()
     if not portfolio.empty:
-        # יצירת עמודות מראש כדי למנוע TypeError
+        # יצירת עמודות מראש למניעת שגיאות
         portfolio['CurrentPrice'] = 0.0
         portfolio['Performance'] = "0%"
         
-        # חישוב ביצועים בזמן אמת
         for i, row in portfolio.iterrows():
             try:
                 curr = yf.Ticker(row['Ticker']).history(period="1d")['Close'].iloc[-1]
