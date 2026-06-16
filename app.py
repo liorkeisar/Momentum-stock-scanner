@@ -10,11 +10,13 @@ st.title("◈ מערכת השקעות מבוססת וייקוף")
 
 PORTFOLIO_FILE = 'portfolio.csv'
 
+# הוספנו קישור ל-AI!
 ANALYSIS_SITES = {
     "Yahoo Finance": "https://finance.yahoo.com/quote/",
     "Finviz": "https://finviz.com/quote.ashx?t=",
     "Investing.com": "https://www.investing.com/search/?q=",
-    "Webull": "https://www.webull.com/quote/"
+    "Webull": "https://www.webull.com/quote/",
+    "AI Wyckoff Analyst": "https://chatgpt.com/?q=Analyze+stock+ticker+" 
 }
 
 # --- פונקציות עזר ---
@@ -44,7 +46,11 @@ def display_analysis_selector(ticker):
         site_name = st.selectbox("בחר פלטפורמת ניתוח:", list(ANALYSIS_SITES.keys()), key=f"site_{ticker}")
     with col2:
         st.write("---") 
-        st.link_button(f"עבור ל-{site_name}", f"{ANALYSIS_SITES[site_name]}{ticker}")
+        # הקישור ל-AI עובד עכשיו בדיוק כמו יאהו
+        url = f"{ANALYSIS_SITES[site_name]}{ticker}"
+        if "chatgpt" in url:
+            url += "+using+Wyckoff+Strategy"
+        st.link_button(f"עבור ל-{site_name}", url)
 
 # --- ממשק ---
 tab1, tab2, tab3 = st.tabs(["📊 סורק וייקוף", "💼 תיק השקעות", "💡 אסטרטגיית וייקוף"])
@@ -127,7 +133,7 @@ with tab3:
     
     **איך להשתמש בסורק:**
     - חפש מניות עם ציון גבוה (Score > 70).
-    - וודא שה-VR גבוה מ-1.2 (סימן לעניין מצד המוסדיים).
+    - וודא שה-VR גבוה מ1.2 (סימן לעניין מצד המוסדיים).
     - השתמש בגרפים חיצוניים (Yahoo/Finviz) כדי לוודא פריצה של קווי התנגדות.
     """)
     st.info("זכור: שום אסטרטגיה אינה מבטיחה רווח. נהל סיכונים בהתאם!")
