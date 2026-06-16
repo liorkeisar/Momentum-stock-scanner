@@ -35,9 +35,7 @@ def calculate_wyckoff_score(df):
 
 def get_portfolio_df():
     if not os.path.exists(PORTFOLIO_FILE) or os.path.getsize(PORTFOLIO_FILE) == 0:
-        df = pd.DataFrame(columns=['Ticker', 'Date', 'EntryPrice'])
-        df.to_csv(PORTFOLIO_FILE, index=False)
-        return df
+        return pd.DataFrame(columns=['Ticker', 'Date', 'EntryPrice'])
     return pd.read_csv(PORTFOLIO_FILE)
 
 def display_analysis_selector(ticker):
@@ -88,20 +86,25 @@ with tab1:
         if st.button("הוסף לתיק ההשקעות 💼"):
             price = df_res[df_res['Ticker'] == to_add]['Price'].values[0]
             new_row = pd.DataFrame({'Ticker': [to_add], 'Date': [datetime.now().strftime('%Y-%m-%d')], 'EntryPrice': [price]})
-            new_row.to_csv(PORTFOLIO_FILE, mode='a', header=False, index=False)
+            new_row.to_csv(PORTFOLIO_FILE, mode='a', header=not os.path.exists(PORTFOLIO_FILE), index=False)
             st.success(f"{to_add} נוספה בהצלחה!")
 
 with tab2:
     portfolio = get_portfolio_df()
     if not portfolio.empty:
+        # יצירת עמודות מראש כדי למנוע TypeError
+        portfolio['CurrentPrice'] = 0.0
+        portfolio['Performance'] = "0%"
+        
         # חישוב ביצועים בזמן אמת
         for i, row in portfolio.iterrows():
             try:
                 curr = yf.Ticker(row['Ticker']).history(period="1d")['Close'].iloc[-1]
                 portfolio.loc[i, 'CurrentPrice'] = round(curr, 2)
                 portfolio.loc[i, 'Performance'] = f"{round(((curr - row['EntryPrice']) / row['EntryPrice']) * 100, 2)}%"
-            except:
-                portfolio.loc[i, 'CurrentPrice'] = "N/A"
+            except Exception:
+                portfolio.loc[i, 'CurrentPrice'] = 0.0
+                portfolio.loc[i, 'Performance'] = "N/A"
         
         st.dataframe(portfolio, use_container_width=True)
         to_manage = st.selectbox("בחר מניה לניהול:", portfolio['Ticker'].unique().tolist())
