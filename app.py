@@ -10,7 +10,7 @@ st.title("◈ מערכת השקעות מבוססת וייקוף")
 
 PORTFOLIO_FILE = 'portfolio.csv'
 
-# הוספנו קישור ל-AI!
+# מערך האתרים לניתוח (כולל ה-AI)
 ANALYSIS_SITES = {
     "Yahoo Finance": "https://finance.yahoo.com/quote/",
     "Finviz": "https://finviz.com/quote.ashx?t=",
@@ -46,7 +46,6 @@ def display_analysis_selector(ticker):
         site_name = st.selectbox("בחר פלטפורמת ניתוח:", list(ANALYSIS_SITES.keys()), key=f"site_{ticker}")
     with col2:
         st.write("---") 
-        # הקישור ל-AI עובד עכשיו בדיוק כמו יאהו
         url = f"{ANALYSIS_SITES[site_name]}{ticker}"
         if "chatgpt" in url:
             url += "+using+Wyckoff+Strategy"
@@ -86,10 +85,9 @@ with tab1:
     if st.session_state.get('results_df') is not None:
         filtered_df = st.session_state['results_df'][st.session_state['results_df']['Score'] >= min_score].sort_values("Score", ascending=False)
         st.dataframe(filtered_df, use_container_width=True)
-        
         st.divider()
         if not filtered_df.empty:
-            to_add = st.selectbox("בחר מניה להוספה לתיק:", filtered_df['Ticker'].tolist())
+            to_add = st.selectbox("בחר מניה להוספה:", filtered_df['Ticker'].tolist())
             if st.button("הוסף לתיק ההשקעות 💼"):
                 price = filtered_df[filtered_df['Ticker'] == to_add]['Price'].values[0]
                 new_row = pd.DataFrame({'Ticker': [to_add], 'Date': [datetime.now().strftime('%Y-%m-%d')], 'EntryPrice': [price]})
@@ -99,18 +97,17 @@ with tab1:
 with tab2:
     portfolio = get_portfolio_df()
     if not portfolio.empty:
-        portfolio['CurrentPrice'] = 0.0
-        portfolio['Performance'] = "0%"
+        # יצירת עמודות למניעת שגיאות
+        portfolio = portfolio.assign(CurrentPrice=0.0, Performance="0%")
         for i, row in portfolio.iterrows():
             try:
                 curr = yf.Ticker(row['Ticker']).history(period="1d")['Close'].iloc[-1]
                 portfolio.loc[i, 'CurrentPrice'] = round(curr, 2)
                 portfolio.loc[i, 'Performance'] = f"{round(((curr - row['EntryPrice']) / row['EntryPrice']) * 100, 2)}%"
-            except Exception:
-                portfolio.loc[i, 'CurrentPrice'] = 0.0
-                portfolio.loc[i, 'Performance'] = "N/A"
+            except Exception: pass
         
         st.dataframe(portfolio, use_container_width=True)
+        st.divider()
         to_manage = st.selectbox("בחר מניה לניהול:", portfolio['Ticker'].unique().tolist())
         display_analysis_selector(to_manage)
         
@@ -123,17 +120,13 @@ with tab2:
 
 with tab3:
     st.markdown("<h2 style='color:green;'>אסטרטגיית וייקוף (Wyckoff Strategy)</h2>", unsafe_allow_html=True)
+    [attachment_0](attachment)
     st.write("---")
     st.success("""
     **עקרונות המפתח של השיטה:**
-    1. **חוק ההיצע והביקוש:** כאשר הביקוש עולה על ההיצע, המחיר עולה. הסורק שלנו מזהה זאת דרך ה-**Volume Ratio (VR)**.
+    1. **חוק ההיצע והביקוש:** ביקוש גבוה מהיצע מעיד על כסף חכם.
     2. **שלבי שוק:**
-       - **Accumulation (איסוף):** כסף חכם קונה בשקט בטווח מחירים צר. כאן ה-**Range Width (RW)** שלנו נמוך.
-       - **Markup (עליית ערך):** המניה פורצת את הדשדוש בלוויית ווליום גבוה.
-    
-    **איך להשתמש בסורק:**
-    - חפש מניות עם ציון גבוה (Score > 70).
-    - וודא שה-VR גבוה מ1.2 (סימן לעניין מצד המוסדיים).
-    - השתמש בגרפים חיצוניים (Yahoo/Finviz) כדי לוודא פריצה של קווי התנגדות.
+       - **איסוף (Accumulation):** טווח מחירים צר, נמוך ב-RW.
+       - **פריצה (Markup):** עלייה בולטת ב-VR.
     """)
-    st.info("זכור: שום אסטרטגיה אינה מבטיחה רווח. נהל סיכונים בהתאם!")
+    st.info("השתמש ב-AI להעמקת הניתוח בכל מניה דרך לשונית הניתוח!")
