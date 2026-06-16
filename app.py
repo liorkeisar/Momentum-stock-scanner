@@ -117,7 +117,6 @@ with tab2:
 
 with tab3:
     st.markdown("<h2 style='color:green;'>אסטרטגיית וייקוף (Wyckoff Strategy)</h2>", unsafe_allow_html=True)
-    [attachment_0](attachment)
     st.write("---")
     st.success("""
     **עקרונות המפתח של השיטה:**
