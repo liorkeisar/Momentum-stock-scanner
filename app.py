@@ -10,7 +10,6 @@ st.title("◈ מערכת השקעות מבוססת וייקוף")
 
 PORTFOLIO_FILE = 'portfolio.csv'
 
-# --- מילון אתרים ---
 ANALYSIS_SITES = {
     "Yahoo Finance": "https://finance.yahoo.com/quote/",
     "Finviz": "https://finviz.com/quote.ashx?t=",
@@ -19,14 +18,10 @@ ANALYSIS_SITES = {
 }
 
 # --- פונקציות עזר ---
-def get_available_lists(): return [f for f in os.listdir('.') if f.endswith('.csv')]
-
 @st.cache_data
 def load_selected_list(filename):
     df = pd.read_csv(filename)
-    cols = ['Symbol', 'Ticker', 'Symbol ', 'TICKER', 'Symbol (NASDAQ)']
-    target = next((c for c in cols if c in df.columns), df.columns[0])
-    return df[target].dropna().astype(str).tolist()
+    return df['Ticker'].dropna().astype(str).tolist()
 
 def calculate_wyckoff_score(df):
     if df is None or len(df) < 20: return 0, 0, 0
@@ -35,84 +30,86 @@ def calculate_wyckoff_score(df):
     down = recent[recent['Close'] < recent['Close'].shift(1)]
     vr = (up['Volume'].mean() / down['Volume'].mean()) if down['Volume'].mean() > 0 else 1
     rw = (recent['High'].max() - recent['Low'].min()) / ((recent['High'].max() + recent['Low'].min()) / 2) * 100
-    return min((40 if vr > 1.2 else 0) + (40 if rw < 7 else 0) + (20 if rw < 4 else 0), 100), vr, rw
+    score = min((40 if vr > 1.2 else 0) + (40 if rw < 7 else 0) + (20 if rw < 4 else 0), 100)
+    return score, vr, rw
 
 def get_portfolio_df():
     if not os.path.exists(PORTFOLIO_FILE) or os.path.getsize(PORTFOLIO_FILE) == 0:
         df = pd.DataFrame(columns=['Ticker', 'Date', 'EntryPrice'])
         df.to_csv(PORTFOLIO_FILE, index=False)
         return df
-    try:
-        return pd.read_csv(PORTFOLIO_FILE)
-    except pd.errors.EmptyDataError:
-        df = pd.DataFrame(columns=['Ticker', 'Date', 'EntryPrice'])
-        df.to_csv(PORTFOLIO_FILE, index=False)
-        return df
+    return pd.read_csv(PORTFOLIO_FILE)
 
-# --- פונקציית הצגת כפתור בחירה ---
 def display_analysis_selector(ticker):
     col1, col2 = st.columns([1, 2])
     with col1:
         site_name = st.selectbox("בחר פלטפורמת ניתוח:", list(ANALYSIS_SITES.keys()), key=f"site_{ticker}")
     with col2:
-        st.write("") # מרווח לעיצוב
-        st.write("") 
+        st.write("---") 
         st.link_button(f"עבור ל-{site_name}", f"{ANALYSIS_SITES[site_name]}{ticker}")
 
-# --- ממשק טאבים ---
+# --- ממשק ---
 tab1, tab2 = st.tabs(["📊 סורק וייקוף", "💼 תיק השקעות"])
 
 with tab1:
-    available_lists = get_available_lists()
-    selected_file = st.sidebar.selectbox("בחר רשימה:", available_lists)
+    file_options = [f"nasdaq_{i}.csv" for i in range(1, 28)]
+    selected_file = st.sidebar.selectbox("בחר רשימת סריקה:", file_options)
     min_score = st.sidebar.slider("ציון מינימלי:", 0, 100, 40)
 
     if st.sidebar.button("הרץ סריקה"):
-        tickers = load_selected_list(selected_file)
-        results = []
-        for ticker in tickers[:30]:
-            try:
-                df = yf.Ticker(ticker).history(period="3mo")
-                if not df.empty:
-                    score, vr, rw = calculate_wyckoff_score(df)
-                    results.append({"Ticker": ticker, "Score": score, "Price": round(df['Close'].iloc[-1], 2)})
-            except: continue
-        st.session_state['results_df'] = pd.DataFrame(results)
-        st.rerun()
+        try:
+            tickers = load_selected_list(selected_file)
+            results = []
+            with st.spinner(f"סורק את {selected_file}..."):
+                for ticker in tickers:
+                    try:
+                        df = yf.Ticker(ticker).history(period="3mo")
+                        if not df.empty and df['Close'].iloc[-1] >= 5:
+                            score, vr, rw = calculate_wyckoff_score(df)
+                            results.append({
+                                "Ticker": ticker, 
+                                "Score": score, 
+                                "Price": round(df['Close'].iloc[-1], 2),
+                                "VR (Volume Ratio)": round(vr, 2),
+                                "RW (Range Width)": round(rw, 2)
+                            })
+                    except Exception: continue
+            st.session_state['results_df'] = pd.DataFrame(results)
+            st.rerun()
+        except Exception as e:
+            st.error(f"שגיאה בטעינת הקובץ: {e}")
 
     if st.session_state.get('results_df') is not None:
-        df = st.session_state['results_df']
-        df = df[df['Score'] >= min_score]
-        st.dataframe(df.sort_values("Score", ascending=False), use_container_width=True)
+        df_res = st.session_state['results_df']
+        st.dataframe(df_res[df_res['Score'] >= min_score].sort_values("Score", ascending=False), use_container_width=True)
         
         st.divider()
-        to_add = st.selectbox("בחר מניה לעבודה:", df['Ticker'].tolist())
+        to_add = st.selectbox("בחר מניה להוספה לתיק:", df_res['Ticker'].tolist())
         if st.button("הוסף לתיק ההשקעות 💼"):
-            price = df[df['Ticker'] == to_add]['Price'].values[0]
+            price = df_res[df_res['Ticker'] == to_add]['Price'].values[0]
             new_row = pd.DataFrame({'Ticker': [to_add], 'Date': [datetime.now().strftime('%Y-%m-%d')], 'EntryPrice': [price]})
             new_row.to_csv(PORTFOLIO_FILE, mode='a', header=False, index=False)
-            st.success(f"{to_add} נוספה!")
-        
-        display_analysis_selector(to_add)
+            st.success(f"{to_add} נוספה בהצלחה!")
 
 with tab2:
     portfolio = get_portfolio_df()
     if not portfolio.empty:
+        # חישוב ביצועים בזמן אמת
         for i, row in portfolio.iterrows():
             try:
                 curr = yf.Ticker(row['Ticker']).history(period="1d")['Close'].iloc[-1]
                 portfolio.loc[i, 'CurrentPrice'] = round(curr, 2)
                 portfolio.loc[i, 'Performance'] = f"{round(((curr - row['EntryPrice']) / row['EntryPrice']) * 100, 2)}%"
-            except: continue
+            except:
+                portfolio.loc[i, 'CurrentPrice'] = "N/A"
         
         st.dataframe(portfolio, use_container_width=True)
-        st.divider()
-        to_manage = st.selectbox("בחר מניה לניהול:", portfolio['Ticker'].tolist())
-        
+        to_manage = st.selectbox("בחר מניה לניהול:", portfolio['Ticker'].unique().tolist())
         display_analysis_selector(to_manage)
         
         if st.button("מחק מניה מהתיק 🗑️"):
             portfolio = portfolio[portfolio['Ticker'] != to_manage]
             portfolio.to_csv(PORTFOLIO_FILE, index=False)
             st.rerun()
-    else: st.info("התיק ריק.")
+    else:
+        st.info("התיק ריק כרגע.")
