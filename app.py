@@ -60,27 +60,21 @@ with tab1:
     min_score = st.sidebar.slider("ציון מינימלי:", 0, 100, 40)
 
     if st.sidebar.button("הרץ סריקה"):
-        try:
-            tickers = load_selected_list(selected_file)
-            results = []
-            with st.spinner(f"סורק את {selected_file}..."):
-                for ticker in tickers:
-                    try:
-                        df = yf.Ticker(ticker).history(period="3mo")
-                        if not df.empty and df['Close'].iloc[-1] >= 5:
-                            score, vr, rw = calculate_wyckoff_score(df)
-                            results.append({
-                                "Ticker": ticker, 
-                                "Score": score, 
-                                "Price": round(df['Close'].iloc[-1], 2),
-                                "VR (Volume Ratio)": round(vr, 2),
-                                "RW (Range Width)": round(rw, 2)
-                            })
-                    except Exception: continue
-            st.session_state['results_df'] = pd.DataFrame(results)
-            st.rerun()
-        except Exception as e:
-            st.error(f"שגיאה בטעינת הקובץ: {e}")
+        tickers = load_selected_list(selected_file)
+        results = []
+        with st.spinner(f"סורק את {selected_file}..."):
+            for ticker in tickers:
+                try:
+                    df = yf.Ticker(ticker).history(period="3mo")
+                    if not df.empty and df['Close'].iloc[-1] >= 5:
+                        score, vr, rw = calculate_wyckoff_score(df)
+                        results.append({
+                            "Ticker": ticker, "Score": score, "Price": round(df['Close'].iloc[-1], 2),
+                            "VR (Volume Ratio)": round(vr, 2), "RW (Range Width)": round(rw, 2)
+                        })
+                except Exception: continue
+        st.session_state['results_df'] = pd.DataFrame(results)
+        st.rerun()
 
     if st.session_state.get('results_df') is not None:
         filtered_df = st.session_state['results_df'][st.session_state['results_df']['Score'] >= min_score].sort_values("Score", ascending=False)
@@ -92,21 +86,24 @@ with tab1:
                 price = filtered_df[filtered_df['Ticker'] == to_add]['Price'].values[0]
                 new_row = pd.DataFrame({'Ticker': [to_add], 'Date': [datetime.now().strftime('%Y-%m-%d')], 'EntryPrice': [price]})
                 new_row.to_csv(PORTFOLIO_FILE, mode='a', header=not os.path.exists(PORTFOLIO_FILE), index=False)
-                st.success(f"{to_add} נוספה בהצלחה!")
+                st.success(f"{to_add} נוספה!")
 
 with tab2:
     portfolio = get_portfolio_df()
     if not portfolio.empty:
-        # יצירת עמודות למניעת שגיאות
-        portfolio = portfolio.assign(CurrentPrice=0.0, Performance="0%")
-        for i, row in portfolio.iterrows():
+        # פתרון קריטי: יצירת עמודות כ-DataFrame חדש כדי למנוע את ה-TypeError
+        processed_portfolio = portfolio.copy()
+        processed_portfolio['CurrentPrice'] = 0.0
+        processed_portfolio['Performance'] = "0%"
+        
+        for i, row in processed_portfolio.iterrows():
             try:
                 curr = yf.Ticker(row['Ticker']).history(period="1d")['Close'].iloc[-1]
-                portfolio.loc[i, 'CurrentPrice'] = round(curr, 2)
-                portfolio.loc[i, 'Performance'] = f"{round(((curr - row['EntryPrice']) / row['EntryPrice']) * 100, 2)}%"
+                processed_portfolio.loc[i, 'CurrentPrice'] = round(curr, 2)
+                processed_portfolio.loc[i, 'Performance'] = f"{round(((curr - row['EntryPrice']) / row['EntryPrice']) * 100, 2)}%"
             except Exception: pass
         
-        st.dataframe(portfolio, use_container_width=True)
+        st.dataframe(processed_portfolio, use_container_width=True)
         st.divider()
         to_manage = st.selectbox("בחר מניה לניהול:", portfolio['Ticker'].unique().tolist())
         display_analysis_selector(to_manage)
@@ -120,7 +117,6 @@ with tab2:
 
 with tab3:
     st.markdown("<h2 style='color:green;'>אסטרטגיית וייקוף (Wyckoff Strategy)</h2>", unsafe_allow_html=True)
-    [attachment_0](attachment)
     st.write("---")
     st.success("""
     **עקרונות המפתח של השיטה:**
