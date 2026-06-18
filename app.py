@@ -7,108 +7,96 @@ from datetime import datetime
 # --- הגדרות דף ---
 st.set_page_config(page_title="מערכת וייקוף Pro", layout="wide")
 st.title("◈ מערכת השקעות מבוססת וייקוף")
-
 PORTFOLIO_FILE = 'portfolio.csv'
 
+# פונקציית עזר לתיקון בסיס הנתונים
+def init_portfolio():
+    if not os.path.exists(PORTFOLIO_FILE):
+        pd.DataFrame(columns=['Ticker', 'Date', 'EntryPrice']).to_csv(PORTFOLIO_FILE, index=False)
+
+def get_portfolio_df():
+    init_portfolio()
+    return pd.read_csv(PORTFOLIO_FILE)
+
 # --- פונקציות עזר ---
-def get_available_lists(): return [f for f in os.listdir('.') if f.endswith('.csv')]
+def get_available_lists(): return [f for f in os.listdir('.') if f.endswith('.csv') and f != PORTFOLIO_FILE]
 
 @st.cache_data
 def load_selected_list(filename):
     df = pd.read_csv(filename)
+    # בחירה חכמה של עמודת הסימול
     cols = ['Symbol', 'Ticker', 'Symbol ', 'TICKER', 'Symbol (NASDAQ)']
     target = next((c for c in cols if c in df.columns), df.columns[0])
-    return df[target].dropna().astype(str).tolist()
+    return df[target].dropna().astype(str).unique().tolist()
 
 def calculate_wyckoff_score(df):
     if df is None or len(df) < 20: return 0, 0, 0
     recent = df.tail(20)
     up = recent[recent['Close'] >= recent['Close'].shift(1)]
     down = recent[recent['Close'] < recent['Close'].shift(1)]
-    vr = (up['Volume'].mean() / down['Volume'].mean()) if down['Volume'].mean() > 0 else 1
+    
+    vr = (up['Volume'].mean() / down['Volume'].mean()) if down['Volume'].mean() > 0 and not pd.isna(down['Volume'].mean()) else 1.0
     rw = (recent['High'].max() - recent['Low'].min()) / ((recent['High'].max() + recent['Low'].min()) / 2) * 100
-    return min((40 if vr > 1.2 else 0) + (40 if rw < 7 else 0) + (20 if rw < 4 else 0), 100), vr, rw
+    
+    score = min((40 if vr > 1.2 else 0) + (40 if rw < 7 else 0) + (20 if rw < 4 else 0), 100)
+    return score, vr, rw
 
-def get_portfolio_df():
-    if not os.path.exists(PORTFOLIO_FILE) or os.path.getsize(PORTFOLIO_FILE) == 0:
-        df = pd.DataFrame(columns=['Ticker', 'Date', 'EntryPrice'])
-        df.to_csv(PORTFOLIO_FILE, index=False)
-        return df
-    try:
-        return pd.read_csv(PORTFOLIO_FILE)
-    except pd.errors.EmptyDataError:
-        df = pd.DataFrame(columns=['Ticker', 'Date', 'EntryPrice'])
-        df.to_csv(PORTFOLIO_FILE, index=False)
-        return df
-
-# --- ממשק טאבים ---
+# --- ממשק ---
 tab1, tab2 = st.tabs(["📊 סורק וייקוף", "💼 תיק השקעות"])
-
-def show_buttons(ticker):
-    """פונקציה להצגת 4 כפתורי הניתוח"""
-    c1, c2 = st.columns(2)
-    with c1: st.link_button(f"Yahoo", f"https://finance.yahoo.com/quote/{ticker}")
-    with c2: st.link_button(f"Finviz", f"https://finviz.com/quote.ashx?t={ticker}")
-    c3, c4 = st.columns(2)
-    with c3: st.link_button(f"Investing", f"https://www.investing.com/search/?q={ticker}")
-    with c4: st.link_button(f"Webull", f"https://www.webull.com/quote/{ticker}")
 
 with tab1:
     available_lists = get_available_lists()
-    selected_file = st.sidebar.selectbox("בחר רשימה:", available_lists)
-    min_score = st.sidebar.slider("ציון מינימלי:", 0, 100, 40)
+    if not available_lists: st.error("לא נמצאו קבצי CSV")
+    else:
+        selected_file = st.sidebar.selectbox("בחר רשימה:", available_lists)
+        min_score = st.sidebar.slider("ציון מינימלי:", 0, 100, 40)
 
-    if st.sidebar.button("הרץ סריקה"):
-        tickers = load_selected_list(selected_file)
-        results = []
-        for ticker in tickers[:30]:
-            try:
-                df = yf.Ticker(ticker).history(period="3mo")
-                if not df.empty:
-                    score, vr, rw = calculate_wyckoff_score(df)
-                    results.append({"Ticker": ticker, "Score": score, "Price": round(df['Close'].iloc[-1], 2)})
-            except: continue
-        st.session_state['results_df'] = pd.DataFrame(results)
-        st.rerun()
+        if st.sidebar.button("הרץ סריקה"):
+            tickers = load_selected_list(selected_file)
+            results = []
+            bar = st.progress(0)
+            for i, ticker in enumerate(tickers):
+                bar.progress((i + 1) / len(tickers))
+                try:
+                    df = yf.Ticker(ticker).history(period="3mo", interval="1d")
+                    if not df.empty:
+                        score, vr, rw = calculate_wyckoff_score(df)
+                        if score >= min_score:
+                            results.append({"Ticker": ticker, "Score": score, "Price": round(df['Close'].iloc[-1], 2)})
+                except: continue
+            st.session_state['results_df'] = pd.DataFrame(results)
+            st.rerun()
 
-    if st.session_state.get('results_df') is not None:
-        df = st.session_state['results_df']
-        df = df[df['Score'] >= min_score]
-        st.dataframe(df.sort_values("Score", ascending=False), use_container_width=True)
-        
-        st.divider()
-        col_select, col_buttons = st.columns([2, 1])
-        with col_select:
+        if st.session_state.get('results_df') is not None:
+            df = st.session_state['results_df']
+            st.dataframe(df.sort_values("Score", ascending=False), use_container_width=True)
             to_add = st.selectbox("בחר מניה לעבודה:", df['Ticker'].tolist())
-        
-        with col_buttons:
             if st.button("הוסף לתיק ההשקעות 💼"):
                 price = df[df['Ticker'] == to_add]['Price'].values[0]
+                df_port = get_portfolio_df()
                 new_row = pd.DataFrame({'Ticker': [to_add], 'Date': [datetime.now().strftime('%Y-%m-%d')], 'EntryPrice': [price]})
-                new_row.to_csv(PORTFOLIO_FILE, mode='a', header=False, index=False)
-                st.success(f"{to_add} נוספה בהצלחה!")
-        
-        show_buttons(to_add)
+                pd.concat([df_port, new_row]).to_csv(PORTFOLIO_FILE, index=False)
+                st.success("נוסף!")
 
 with tab2:
     portfolio = get_portfolio_df()
     if not portfolio.empty:
-        for i, row in portfolio.iterrows():
+        # יצירת עותק לחישובים כדי לא לפגוע בנתונים המקוריים
+        view_df = portfolio.copy()
+        view_df['CurrentPrice'] = 0.0
+        view_df['Performance'] = "0%"
+        
+        for i, row in view_df.iterrows():
             try:
                 curr = yf.Ticker(row['Ticker']).history(period="1d")['Close'].iloc[-1]
-                portfolio.loc[i, 'CurrentPrice'] = round(curr, 2)
-                portfolio.loc[i, 'Performance'] = f"{round(((curr - row['EntryPrice']) / row['EntryPrice']) * 100, 2)}%"
+                view_df.at[i, 'CurrentPrice'] = round(curr, 2)
+                view_df.at[i, 'Performance'] = f"{round(((curr - row['EntryPrice']) / row['EntryPrice']) * 100, 2)}%"
             except: continue
         
-        st.dataframe(portfolio, use_container_width=True)
-        
-        st.divider()
-        to_manage = st.selectbox("בחר מניה לניהול:", portfolio['Ticker'].tolist())
-        
-        show_buttons(to_manage)
+        st.dataframe(view_df, use_container_width=True)
+        to_manage = st.selectbox("בחר מניה לניהול:", view_df['Ticker'].unique().tolist())
         
         if st.button("מחק מניה מהתיק 🗑️"):
             portfolio = portfolio[portfolio['Ticker'] != to_manage]
             portfolio.to_csv(PORTFOLIO_FILE, index=False)
             st.rerun()
-    else: st.info("התיק ריק.")
