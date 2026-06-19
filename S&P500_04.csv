@@ -1,42 +1,97 @@
-Ticker,Company,Price
-ADM,Archer-Daniels-Midland,62.44
-BG,Bunge Global,108.33
-TSN,Tyson Foods,54.22
-K,Kellanova,59.44
-GIS,General Mills,68.22
-HRL,Hormel Foods,31.55
-CPB,Campbell Soup,42.77
-MDLZ,Mondelez,71.33
-KHC,Kraft Heinz,35.44
-SJM,JM Smucker,112.55
-MKC,McCormick,69.22
-CL,Colgate-Palmolive,94.33
-EL,Estee Lauder,118.44
-PG,Procter & Gamble,150.43
-CHD,Church & Dwight,107.22
-CLX,Clorox,131.55
-KMB,Kimberly-Clark,128.22
-MO,Altria,45.33
-PM,Philip Morris,98.44
-BTI,British American Tobacco,31.22
-UL,Unilever,52.44
-KO,Coca-Cola,79.01
-PEP,PepsiCo,178.22
-MNST,Monster Beverage,53.77
-STZ,Constellation Brands,255.44
-TAP,Molson Coors,49.22
-WBA,Walgreens Boots Alliance,12.88
-CVS,CVS Health,59.44
-CI,Cigna,345.22
-HUM,Humana,312.88
-UNH,UnitedHealth,401.07
-ANTM,Elevance Health,519.44
-DGX,Quest Diagnostics,142.22
-LH,LabCorp,210.55
-BDX,Becton Dickinson,234.33
-SYK,Stryker,342.44
-ZBH,Zimmer Biomet,121.55
-EW,Edwards Lifesciences,87.22
-ABT,Abbott Laboratories,88.41
-MDT,Medtronic,86.55
-ISRG,Intuitive Surgical,412.22
+GRMN,Garmin Ltd.,Consumer Discretionary
+IT,Gartner Inc.,Information Technology
+GE,General Electric Company,Industrials
+GIS,General Mills Inc.,Consumer Staples
+GM,General Motors Company,Consumer Discretionary
+GPC,Genuine Parts Company,Consumer Discretionary
+GILD,Gilead Sciences Inc.,Healthcare
+GPN,Global Payments Inc.,Information Technology
+GL,Globe Life Inc.,Financials
+GS,The Goldman Sachs Group Inc.,Financials
+HAL,Halliburton Company,Energy
+HBI,HanestBrands Inc.,Consumer Discretionary
+HOG,Harley-Davidson Inc.,Consumer Discretionary
+HIG,The Hartford Financial Services Group Inc.,Financials
+HAS,Hasbro Inc.,Consumer Discretionary
+HCA,HCA Healthcare Inc.,Healthcare
+PEAK,Healthpeak Properties Inc.,Real Estate
+HSIC,Henry Schein Inc.,Healthcare
+HES,Hess Corporation,Energy
+HPE,Hewlett Packard Enterprise Company,Information Technology
+HLT,Hilton Worldwide Holdings Inc.,Consumer Discretionary
+HOLX,Hologic Inc.,Healthcare
+HD,The Home Depot Inc.,Consumer Discretionary
+HON,Honeywell International Inc.,Industrials
+HRL,Hormel Foods Corporation,Consumer Staples
+HST,Host Hotels & Resorts Inc.,Real Estate
+HWM,Howmet Aerospace Inc.,Industrials
+HPQ,HP Inc.,Information Technology
+HUM,Humana Inc.,Healthcare
+HBAN,Huntington Bancshares Incorporated,Financials
+HII,Huntington Ingalls Industries Inc.,Industrials
+IEX,IDEX Corporation,Industrials
+IDXX,IDEXX Laboratories Inc.,Healthcare
+INFO,IHS Markit Ltd.,Industrials
+ITW,Illinois Tool Works Inc.,Industrials
+ILMN,Illumina Inc.,Healthcare
+INCY,Incyte Corporation,Healthcare
+IR,Ingersoll Rand Inc.,Industrials
+INTC,Intel Corporation,Information Technology
+ICE,Intercontinental Exchange Inc.,Financials
+IBM,International Business Machines Corporation,Information Technology
+IP,International Paper Company,Materials
+IPG,Interpublic Group of Companies Inc.,Communication Services
+IFF,International Flavors & Fragrances Inc.,Materials
+INTU,Intuit Inc.,Information Technology
+ISRG,Intuitive Surgical Inc.,Healthcare
+IVZ,Invesco Ltd.,Financials
+IPGP,IPG Photonics Corporation,Information Technology
+IQV,IQVIA Holdings Inc.,Healthcare
+IRM,Iron Mountain Incorporated,Real Estate
+JBHT,J.B. Hunt Transport Services Inc.,Industrials
+JKHY,Jack Henry & Associates Inc.,Information Technology
+J,Jacobs Engineering Group Inc.,Industrials
+SJM,The J. M. Smucker Company,Consumer Staples
+JNJ,Johnson & Johnson,Healthcare
+JCI,Johnson Controls International plc,Industrials
+JPM,JPMorgan Chase & Co.,Financials
+JNPR,Juniper Networks Inc.,Information Technology
+K,Kellogg Company,Consumer Staples
+KEY,KeyCorp,Financials
+KEYS,Keysight Technologies Inc.,Information Technology
+KMB,Kimberly-Clark Corporation,Consumer Staples
+KIM,Kimco Realty Corporation,Real Estate
+KMI, Kinder Morgan Inc.,Energy
+KLAC,KLA Corporation,Information Technology
+KHC,The Kraft Heinz Company,Consumer Staples
+KR,The Kroger Co.,Consumer Staples
+LHX,L3Harris Technologies Inc.,Industrials
+LH,LabCorp,Healthcare
+LRCX,Lam Research Corporation,Information Technology
+LW,Lamb Weston Holdings Inc.,Consumer Staples
+LVS,Las Vegas Sands Corp.,Consumer Discretionary
+LEG,Leggett & Platt Incorporated,Consumer Discretionary
+LDOS,Leidos Holdings Inc.,Industrials
+LEN,Lennar Corporation Class A,Consumer Discretionary
+LLY,Eli Lilly and Company,Healthcare
+LNC,Lincoln National Corporation,Financials
+LIN,Linde plc,Materials
+LYV,Live Nation Entertainment Inc.,Communication Services
+LKQ,LKQ Corporation,Consumer Discretionary
+LMT,Lockheed Martin Corporation,Industrials
+L,Loews Corporation,Financials
+LOW,Lowe’s Companies Inc.,Consumer Discretionary
+LUMN,Lumen Technologies Inc.,Communication Services
+LYB,LyondellBasell Industries N.V.,Materials
+MTB,M&T Bank Corporation,Financials
+MRO,Marathon Oil Corporation,Energy
+MPC,Marathon Petroleum Corporation,Energy
+MKTX,MarketAxess Holdings Inc.,Financials
+MAR,Marriott International Inc. Class A,Consumer Discretionary
+MMC,Marsh & McLennan Companies Inc.,Financials
+MLM,Martin Marietta Materials Inc.,Materials
+MAS,Masco Corporation,Industrials
+MA,Mastercard Incorporated Class A,Information Technology
+MTCH,Match Group Inc.,Communication Services
+MKC,McCormick & Company Incorporated,Consumer Staples
+MCD,McDonald’s Corporation,Consumer Discretionary
