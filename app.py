@@ -16,7 +16,7 @@ EMAIL_SENDER = "your_email@gmail.com"
 EMAIL_PASSWORD = "your_app_password" 
 EMAIL_RECEIVER = "your_email@gmail.com"
 
-# --- פונקציות טכניות ---
+# --- פונקציות ---
 def send_email(ticker):
     msg = EmailMessage()
     msg.set_content(f"מניה חדשה באזור לחץ (Squeeze): {ticker}. בדוק OBV בגרף!")
@@ -66,7 +66,7 @@ with tab1:
                     df = yf.Ticker(ticker).history(period="6mo")
                     if len(df) > 50 and df['Volume'].tail(20).mean() > MIN_VOLUME:
                         df = get_indicators(df)
-                        if not df.empty and df['Squeeze_Width'].iloc[-1] < 0.15:
+                        if df['Squeeze_Width'].iloc[-1] < 0.15:
                             duration = calculate_squeeze_score(df)
                             master_list.append({"Ticker": ticker, "Price": round(float(df['Close'].iloc[-1]), 2), "Squeeze": round(df['Squeeze_Width'].iloc[-1], 3), "Duration_Days": duration})
                             if duration == 1: send_email(ticker)
@@ -78,8 +78,11 @@ with tab1:
     if os.path.exists(SCAN_RESULTS_FILE):
         df_res = pd.read_csv(SCAN_RESULTS_FILE)
         if not df_res.empty:
-            df_res = df_res.sort_values(by="Duration_Days", ascending=False)
+            # הגנה: אם העמודה לא קיימת משום מה, נציג בלי מיון
+            if "Duration_Days" in df_res.columns:
+                df_res = df_res.sort_values(by="Duration_Days", ascending=False)
             st.dataframe(df_res, use_container_width=True)
+            
             selected = st.selectbox("בחר מניה לניתוח:", df_res['Ticker'].unique())
             if st.button("הצג גרפים"):
                 data = get_indicators(yf.Ticker(selected).history(period="6mo"))
@@ -91,7 +94,7 @@ with tab1:
                 if st.button("הוסף לתיק"):
                     pd.DataFrame({'Ticker': [selected]}).to_csv(PORTFOLIO_FILE, mode='a', header=False, index=False)
                     st.success("נוספה!")
-        else: st.info("לא נמצאו מניות בתנאי הסריקה.")
+        else: st.info("הקובץ ריק.")
 
 with tab2:
     if os.path.exists(PORTFOLIO_FILE):
@@ -99,6 +102,6 @@ with tab2:
 
 with tab3:
     st.header("🎓 מדריך אסטרטגי")
-    st.write("השיטה מתבססת על התכנסות בולינגר המעידה על איסוף מוסדי.")
+    st.write("הסבר תמציתי על אסטרטגיית הדחיסה:")
     
     [attachment_0](attachment)
