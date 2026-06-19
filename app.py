@@ -8,7 +8,7 @@ from datetime import datetime
 
 # --- הגדרות דף ---
 st.set_page_config(page_title="TITAN Wyckoff Pro", layout="wide")
-st.title("◈ TITAN: מערכת וייקוף מוסדית")
+st.title("◈ TITAN: מערכת השקעות מוסדית - וייקוף")
 PORTFOLIO_FILE = 'portfolio.csv'
 
 # --- פונקציות תשתית ---
@@ -30,9 +30,9 @@ def load_selected_list(filename):
     target = next((c for c in cols if c in df.columns), df.columns[0])
     return df[target].dropna().astype(str).unique().tolist()
 
-# --- מנוע הניתוח המקצועי (מתוקן) ---
+# --- מנוע הניתוח המקצועי ---
 def calculate_wyckoff_and_risk(df):
-    """חישוב מדדי וייקוף וניהול סיכונים עם הגנה מ-NaN"""
+    """חישוב מדדי וייקוף (VR, RW) וניהול סיכונים (ATR)"""
     if df is None or len(df) < 30: return None
     
     # 1. ATR - ניהול סיכון
@@ -51,19 +51,22 @@ def calculate_wyckoff_and_risk(df):
     vr = up_vol / down_vol
     rw = (recent['High'].max() - recent['Low'].min()) / recent['Close'].iloc[-1] * 100
     
-    # 3. ניקוד
-    score = min((40 if vr > 1.2 else 0) + (40 if rw < 7 else 0) + (20 if rw < 4 else 0), 100)
+    # 3. מערכת ניקוד מוסדית (Score)
+    score = 0
+    if vr > 1.5: score += 50
+    elif vr > 1.1: score += 25
     
-    if np.isnan(atr) or np.isnan(score): return None
+    if rw < 5: score += 50
+    elif rw < 10: score += 25
     
-    return score, round(vr, 2), round(rw, 2), round(atr, 2)
+    return min(score, 100), round(vr, 2), round(rw, 2), round(atr, 2)
 
 # --- ממשק משתמש ---
 tab1, tab2 = st.tabs(["📊 סורק וייקוף", "💼 תיק השקעות"])
 
 with tab1:
     available_lists = get_available_lists()
-    if not available_lists: st.error("לא נמצאו קבצי CSV")
+    if not available_lists: st.error("לא נמצאו קבצי CSV בתיקייה")
     else:
         selected_file = st.sidebar.selectbox("בחר רשימה:", available_lists)
         min_score = st.sidebar.slider("ציון מינימלי:", 0, 100, 40)
@@ -78,8 +81,8 @@ with tab1:
                 try:
                     time.sleep(0.05)
                     df = yf.Ticker(ticker).history(period="6mo", interval="1d")
-                    # הגנה: חייב להיות ווליום תקין ונתונים
-                    if not df.empty and df['Volume'].iloc[-1] > 200000:
+                    # סינון מניות: ווליום > 200K ומחיר >= 10$
+                    if not df.empty and df['Volume'].iloc[-1] > 200000 and df['Close'].iloc[-1] >= 10:
                         res = calculate_wyckoff_and_risk(df)
                         if res:
                             score, vr, rw, atr = res
@@ -89,7 +92,8 @@ with tab1:
                                     "Ticker": ticker, "Score": score, "Price": round(price, 2),
                                     "VR": vr, "RW%": rw,
                                     "StopLoss": round(price - (2 * atr), 2),
-                                    "Target": round(price + (6 * atr), 2)
+                                    "Target": round(price + (6 * atr), 2),
+                                    "Status": "🚀 Buy Zone" if score >= 75 else "📈 Accumulating"
                                 })
                 except: continue
             
@@ -105,14 +109,17 @@ with tab1:
                 price = df[df['Ticker'] == to_add]['Price'].values[0]
                 df_port = get_portfolio_df()
                 pd.concat([df_port, pd.DataFrame({'Ticker': [to_add], 'Date': [datetime.now().strftime('%Y-%m-%d')], 'EntryPrice': [price]})]).to_csv(PORTFOLIO_FILE, index=False)
-                st.success("נוסף!")
+                st.success("נוסף בהצלחה!")
 
 with tab2:
     portfolio = get_portfolio_df()
     if not portfolio.empty:
-        # הצגה נקייה ללא None
-        st.dataframe(portfolio, use_container_width=True)
-        to_manage = st.selectbox("בחר מניה לניהול:", portfolio['Ticker'].unique().tolist())
+        view_df = portfolio.copy()
+        view_df['CurrentPrice'] = [round(yf.Ticker(t).history(period="1d")['Close'].iloc[-1], 2) for t in view_df['Ticker']]
+        view_df['Perf%'] = round(((view_df['CurrentPrice'] - view_df['EntryPrice']) / view_df['EntryPrice']) * 100, 2)
+        st.dataframe(view_df, use_container_width=True)
+        
+        to_manage = st.selectbox("בחר מניה לניהול:", view_df['Ticker'].unique().tolist())
         if st.button("מחק מניה 🗑️"):
             portfolio[portfolio['Ticker'] != to_manage].to_csv(PORTFOLIO_FILE, index=False)
             st.rerun()
