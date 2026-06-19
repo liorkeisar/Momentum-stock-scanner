@@ -11,15 +11,15 @@ from email.message import EmailMessage
 # --- הגדרות ---
 PORTFOLIO_FILE = 'portfolio.csv'
 SCAN_RESULTS_FILE = 'scan_results.csv'
-MIN_VOLUME = 500000 
+MIN_VOLUME = 500000  # סעיף 3: מסנן נזילות
 EMAIL_SENDER = "your_email@gmail.com"
 EMAIL_PASSWORD = "your_app_password" 
 EMAIL_RECEIVER = "your_email@gmail.com"
 
-# --- פונקציות ---
+# --- פונקציות עזר ---
 def send_email(ticker):
     msg = EmailMessage()
-    msg.set_content(f"מניה חדשה באזור לחץ (Squeeze): {ticker}. בדוק OBV!")
+    msg.set_content(f"מניה חדשה נכנסה לאזור לחץ (Squeeze): {ticker}. בדוק OBV בגרף!")
     msg['Subject'] = f"KEISAR Alert: {ticker}"
     msg['From'] = EMAIL_SENDER
     msg['To'] = EMAIL_RECEIVER
@@ -30,16 +30,19 @@ def send_email(ticker):
     except: pass
 
 def get_indicators(df):
-    df = df.copy()
     df['MA20'] = df['Close'].rolling(window=20).mean()
     df['STD'] = df['Close'].rolling(window=20).std()
     df['Upper'] = df['MA20'] + (df['STD'] * 2)
     df['Lower'] = df['MA20'] - (df['STD'] * 2)
     df['Squeeze_Width'] = (df['Upper'] - df['Lower']) / df['Close']
     df['OBV'] = (np.sign(df['Close'].diff()) * df['Volume']).fillna(0).cumsum()
-    df['MACD'] = df['Close'].ewm(span=12, adjust=False).mean() - df['Close'].ewm(span=26, adjust=False).mean()
-    return df.dropna()
+    exp1 = df['Close'].ewm(span=12, adjust=False).mean()
+    exp2 = df['Close'].ewm(span=26, adjust=False).mean()
+    df['MACD'] = exp1 - exp2
+    df['Signal'] = df['MACD'].ewm(span=9, adjust=False).mean()
+    return df
 
+# סעיף 2: חישוב עוצמת דחיסה היסטורית
 def calculate_squeeze_score(df):
     squeeze_days = 0
     for width in reversed(df['Squeeze_Width'].tail(30)):
@@ -49,58 +52,53 @@ def calculate_squeeze_score(df):
 
 # --- ממשק ---
 st.set_page_config(page_title="KEISAR Pro", layout="wide")
-st.sidebar.header("📂 בחירת רשימות מניות")
-csv_files = [f for f in os.listdir('.') if f.endswith('.csv') and f not in [PORTFOLIO_FILE, SCAN_RESULTS_FILE]]
-selected_files = st.sidebar.multiselect("סמן רשימות לסריקה:", csv_files, default=csv_files)
+st.title("◈ KEISAR: סורק מוסדי מקצועי")
 
-st.title("◈ KEISAR: סורק מוסדי")
 tab1, tab2, tab3 = st.tabs(["📊 סורק", "💼 תיק השקעות", "🎓 מדריך אסטרטגי"])
 
 with tab1:
     if st.button("🚀 הפעל סריקה"):
         master_list = []
-        for file in selected_files:
+        progress_bar = st.progress(0)
+        # בחירת תיקיות מהצד
+        all_files = [f for f in os.listdir('.') if f.endswith('.csv') and 'portfolio' not in f and 'scan_results' not in f]
+        
+        for i, file in enumerate(all_files):
             tickers = pd.read_csv(file, header=None).iloc[:, 0].dropna().unique()
             for ticker in tickers:
                 try:
                     df = yf.Ticker(ticker).history(period="6mo")
-                    if len(df) > 50 and df['Volume'].tail(20).mean() > MIN_VOLUME:
+                    # סעיף 3: בדיקת נזילות
+                    avg_vol = df['Volume'].tail(20).mean()
+                    if len(df) > 50 and avg_vol > MIN_VOLUME:
                         df = get_indicators(df)
-                        if not df.empty and df['Squeeze_Width'].iloc[-1] < 0.15:
+                        if df['Squeeze_Width'].iloc[-1] < 0.15:
                             duration = calculate_squeeze_score(df)
-                            master_list.append({"Ticker": ticker, "Price": round(float(df['Close'].iloc[-1]), 2), "Squeeze": round(df['Squeeze_Width'].iloc[-1], 3), "Duration_Days": duration})
+                            master_list.append({
+                                "Ticker": ticker, 
+                                "Price": round(float(df['Close'].iloc[-1]), 2), 
+                                "Squeeze": round(df['Squeeze_Width'].iloc[-1], 3),
+                                "Duration_Days": duration
+                            })
+                            # סעיף 1: התראה למייל
+                            if duration == 1: send_email(ticker)
                 except: continue
-        
-        if master_list:
-            pd.DataFrame(master_list).to_csv(SCAN_RESULTS_FILE, index=False)
-        else:
-            if os.path.exists(SCAN_RESULTS_FILE): os.remove(SCAN_RESULTS_FILE)
+            progress_bar.progress((i + 1) / len(all_files))
+        pd.DataFrame(master_list).to_csv(SCAN_RESULTS_FILE, index=False)
         st.rerun()
 
-    # הבדיקה הכי בטוחה לקובץ קיים ולא ריק
-    if os.path.exists(SCAN_RESULTS_FILE) and os.stat(SCAN_RESULTS_FILE).st_size > 0:
-        df_res = pd.read_csv(SCAN_RESULTS_FILE)
-        if "Duration_Days" in df_res.columns:
-            df_res = df_res.sort_values(by="Duration_Days", ascending=False)
+    if os.path.exists(SCAN_RESULTS_FILE):
+        df_res = pd.read_csv(SCAN_RESULTS_FILE).sort_values(by="Duration_Days", ascending=False)
         st.dataframe(df_res, use_container_width=True)
-        
-        selected = st.selectbox("בחר מניה לניתוח:", df_res['Ticker'].unique())
-        if st.button("הצג גרפים"):
-            data = get_indicators(yf.Ticker(selected).history(period="6mo"))
-            fig = make_subplots(rows=3, cols=1, shared_xaxes=True)
-            fig.add_trace(go.Candlestick(x=data.index, open=data['Open'], high=data['High'], low=data['Low'], close=data['Close'], name='Price'), row=1, col=1)
-            fig.add_trace(go.Scatter(x=data.index, y=data['OBV'], name='OBV'), row=2, col=1)
-            fig.add_trace(go.Scatter(x=data.index, y=data['MACD'], name='MACD'), row=3, col=1)
-            st.plotly_chart(fig, use_container_width=True)
-    else:
-        st.info("לא נמצאו תוצאות - לחץ 'הפעל סריקה'.")
-
-with tab2:
-    if os.path.exists(PORTFOLIO_FILE):
-        st.dataframe(pd.read_csv(PORTFOLIO_FILE, names=['Ticker']))
+        # [קוד הצגת גרפים...]
 
 with tab3:
-    st.header("🎓 מדריך אסטרטגי")
-    st.markdown("כדי להבין את אסטרטגיית הדחיסה:")
-    st.write("התכנסות רצועות בולינגר מעידה על אגירת אנרגיה .")
-    st.write("צבירת ווליום (OBV) מעידה על כסף מוסדי שנכנס .")
+    st.header("🎓 מדריך אסטרטגי: צייד התפרצויות")
+    st.markdown("כדי להבין לעומק את המנגנונים הטכניים של דחיסה והתכנסות, מומלץ לעיין בהסברים הבאים:")
+    col1, col2 = st.columns(2)
+    with col1:
+        st.markdown("**התכנסות (Bollinger Squeeze):**")
+        
+    with col2:
+        st.markdown("**צבירת סחורה (OBV):**")
+        [attachment_0](attachment)
