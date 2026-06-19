@@ -25,7 +25,9 @@ def load_selected_list(filename):
     df = pd.read_csv(filename)
     cols = ['Symbol', 'Ticker', 'Symbol ', 'TICKER', 'Symbol (NASDAQ)']
     target = next((c for c in cols if c in df.columns), df.columns[0])
-    return df[target].dropna().astype(str).unique().tolist()
+    # ניקוי כפילויות וטיפול בשמות מניות
+    tickers = df[target].dropna().astype(str).unique().tolist()
+    return [t.strip() for t in tickers]
 
 # --- מנועי ניתוח ---
 def check_divergence(df):
@@ -36,7 +38,6 @@ def check_divergence(df):
     return (df['Close'].tail(10).iloc[-1] < df['Close'].tail(10).iloc[0]) and (macd.tail(10).iloc[-1] > macd.tail(10).iloc[0])
 
 def get_pivot_points(df):
-    """זיהוי רמות תמיכה והתנגדות בסיסיות"""
     recent = df.tail(20)
     return recent['High'].max(), recent['Low'].min()
 
