@@ -1,39 +1,102 @@
-Ticker,Company,Price
-GS,Goldman Sachs,412.77
-SCHW,Charles Schwab,78.44
-SPGI,S&P Global,428.55
-ICE,Intercontinental Exchange,142.33
-CB,Chubb,263.44
-PGR,Progressive,210.22
-TRV,Travelers,221.77
-AIG,American International Group,74.55
-MET,MetLife,72.33
-PRU,Prudential,98.44
-AFL,Aflac,115.47
-HIG,Hartford Financial,103.22
-ALL,Allstate,221.17
-SO,Southern Company,76.44
-DUK,Duke Energy,102.55
-NEE,NextEra Energy,72.33
-D, Dominion Energy,51.44
-AEP,American Electric Power,89.22
-EXC,Exelon,37.55
-SRE,Sempra Energy,74.33
-ED,Consolidated Edison,89.44
-XEL,Xcel Energy,58.22
-PEG,Public Service Enterprise,64.55
-WEC,WEC Energy,82.33
-EIX,Edison International,78.44
-PCG,PG&E,17.88
-VLO,Valero Energy,152.22
-MPC,Marathon Petroleum,168.44
-PSX,Phillips 66,142.55
-HES,Hess,132.33
-COP,ConocoPhillips,118.44
-SLB,Schlumberger,48.55
-HAL,Halliburton,36.22
-BKR,Baker Hughes,32.44
-OXY,Occidental Petroleum,64.22
-KMI,Kinder Morgan,18.55
-WMB,Williams Companies,41.22
-OKE,ONEOK,82.44
+CMG,Chipotle Mexican Grill Inc.,Consumer Discretionary
+CB,Chubb Limited,Financials
+CHD,Church & Dwight Co. Inc.,Consumer Staples
+CI,Cigna Group,Healthcare
+CINF,Cincinnati Financial Corporation,Financials
+CTAS,Cintas Corporation,Industrials
+CSCO,Cisco Systems Inc.,Information Technology
+C, Citigroup Inc.,Financials
+CFG,Citizens Financial Group Inc.,Financials
+CLX,The Clorox Company,Consumer Staples
+CME,CME Group Inc. Class A,Financials
+CMS,CMS Energy Corporation,Utilities
+KO,The Coca-Cola Company,Consumer Staples
+CTSH,Cognizant Technology Solutions Corp.,Information Technology
+CL,Colgate-Palmolive Company,Consumer Staples
+CMCSA,Comcast Corporation Class A,Communication Services
+CMA,Comerica Incorporated,Financials
+CAG,Conagra Brands Inc.,Consumer Staples
+COP,ConocoPhillips,Energy
+ED,Consolidated Edison Inc.,Utilities
+STZ,Constellation Brands Inc. Class A,Consumer Staples
+CEG,Constellation Energy Corporation,Utilities
+COO,The Cooper Companies Inc.,Healthcare
+CPRT,Copart Inc.,Industrials
+GLW,Corning Inc.,Information Technology
+CTVA,Corteva Inc.,Materials
+CSX,CSX Corporation,Industrials
+CMI,Cummins Inc.,Industrials
+CVS,CVS Health Corporation,Healthcare
+DHI,D.R. Horton Inc.,Consumer Discretionary
+DHR,Danaher Corporation,Healthcare
+DRI,Darden Restaurants Inc.,Consumer Discretionary
+DVA,DaVita Inc.,Healthcare
+DE,Deere & Company,Industrials
+DAL,Delta Air Lines Inc.,Industrials
+XRAY,Dentsply Sirona Inc.,Healthcare
+DVN,Devon Energy Corporation,Energy
+DXCM,DexCom Inc.,Healthcare
+FANG,Diamondback Energy Inc.,Energy
+DLR,Digital Realty Trust Inc.,Real Estate
+DFS,Discover Financial Services,Financials
+DISCA,Discovery Inc. Class A,Communication Services
+DISCK,Discovery Inc. Class C,Communication Services
+DISH,DISH Network Corporation Class A,Communication Services
+DG,Dollar General Corporation,Consumer Staples
+DLTR,Dollar Tree Inc.,Consumer Staples
+D, Dominion Energy Inc.,Utilities
+DPZ,Domino’s Pizza Inc.,Consumer Discretionary
+DOV,Dover Corporation,Industrials
+DOW,Dow Inc.,Materials
+DTE,DTE Energy Company,Utilities
+DUK,Duke Energy Corporation,Utilities
+DRE,Duke Realty Corporation,Real Estate
+DD,DuPont de Nemours Inc.,Materials
+DXC,DXC Technology Company,Information Technology
+EMN,Eastman Chemical Company,Materials
+ETN,Eaton Corporation plc,Industrials
+EBAY,eBay Inc.,Consumer Discretionary
+ECL,Ecolab Inc.,Materials
+EIX,Edison International,Utilities
+EW,Edwards Lifesciences Corporation,Healthcare
+EA,Electronic Arts Inc.,Communication Services
+LLY,Eli Lilly and Company,Healthcare
+EMR,Emerson Electric Co.,Industrials
+ENPH,Enphase Energy Inc.,Information Technology
+ETR,Entergy Corporation,Utilities
+EOG,EOG Resources Inc.,Energy
+EFX,Equifax Inc.,Industrials
+EQIX,Equinix Inc.,Real Estate
+EQR,Equity Residential,Real Estate
+ESS,Essex Property Trust Inc.,Real Estate
+EL,The Estée Lauder Companies Inc. Class A,Consumer Staples
+ETSY,Etsy Inc.,Consumer Discretionary
+RE,Everest Re Group Ltd.,Financials
+EVRG,Evergy Inc.,Utilities
+ES,Eversource Energy,Utilities
+EXC,Exelon Corporation,Utilities
+EXPE,Expedia Group Inc.,Consumer Discretionary
+EXPD,Expeditors International of Washington Inc.,Industrials
+EXR,Extra Space Storage Inc.,Real Estate
+XOM,Exxon Mobil Corporation,Energy
+FFIV,F5 Inc.,Information Technology
+FDS,FactSet Research Systems Inc.,Financials
+FICO,Fair Isaac Corporation,Information Technology
+FAST,Fastenal Company,Industrials
+FRT,Federal Realty Investment Trust,Real Estate
+FDX,FedEx Corporation,Industrials
+FITB,Fifth Third Bancorp,Financials
+FRC,First Republic Bank,Financials
+FE,FirstEnergy Corp.,Utilities
+FIS,Fidelity National Information Services Inc.,Information Technology
+FISV,Fiserv Inc.,Information Technology
+FLT,FleetCor Technologies Inc.,Information Technology
+FMC,FMC Corporation,Materials
+F, Ford Motor Company,Consumer Discretionary
+FTNT,Fortinet Inc.,Information Technology
+FTV,Fortive Corporation,Industrials
+FBHS,Fortune Brands Home & Security Inc.,Industrials
+FOXA,Fox Corporation Class A,Communication Services
+FOX,Fox Corporation Class B,Communication Services
+BEN,Franklin Resources Inc.,Financials
+FCX,Freeport-McMoRan Inc.,Materials
