@@ -16,10 +16,10 @@ EMAIL_SENDER = "your_email@gmail.com"
 EMAIL_PASSWORD = "your_app_password" 
 EMAIL_RECEIVER = "your_email@gmail.com"
 
-# --- פונקציות טכניות ---
+# --- פונקציות ---
 def send_email(ticker):
     msg = EmailMessage()
-    msg.set_content(f"מניה חדשה באזור לחץ (Squeeze): {ticker}. בדוק OBV בגרף!")
+    msg.set_content(f"מניה חדשה באזור לחץ (Squeeze): {ticker}. בדוק OBV!")
     msg['Subject'] = f"KEISAR Alert: {ticker}"
     msg['From'] = EMAIL_SENDER
     msg['To'] = EMAIL_RECEIVER
@@ -86,7 +86,6 @@ with tab1:
                 if os.path.exists(SCAN_RESULTS_FILE): os.remove(SCAN_RESULTS_FILE)
             st.rerun()
 
-    # טעינה בטוחה: בדיקת קיום + בדיקת גודל הקובץ
     if os.path.exists(SCAN_RESULTS_FILE) and os.path.getsize(SCAN_RESULTS_FILE) > 0:
         df_res = pd.read_csv(SCAN_RESULTS_FILE)
         if "Duration_Days" in df_res.columns:
@@ -105,7 +104,7 @@ with tab1:
                 pd.DataFrame({'Ticker': [selected]}).to_csv(PORTFOLIO_FILE, mode='a', header=False, index=False)
                 st.success("נוספה!")
     else:
-        st.info("הסורק מוכן. הפעל סריקה כדי לראות תוצאות (או שלא נמצאו מניות בתנאים כרגע).")
+        st.info("הסורק מוכן. הפעל סריקה כדי לראות תוצאות.")
 
 with tab2:
     if os.path.exists(PORTFOLIO_FILE):
@@ -113,7 +112,10 @@ with tab2:
 
 with tab3:
     st.header("🎓 מדריך אסטרטגי")
-    st.markdown("כדי להבין את הקונספט לעומק, עיין בדיאגרמות הבאות:")
-        ```
-
-**טיפ:** אם הקוד עדיין מציג את השגיאה, זה אומר שיש קובץ זמני פגום בשרת של סטרימלייט. במצב כזה, פשוט תמחק את כל הקבצים שמתחילים ב-`scan_results` מהשרת שלך (דרך ה-File manager של Streamlit) והוא יתחיל מדף חלק.
+    st.markdown("להלן המנגנונים הטכניים של האסטרטגיה:")
+    # למד על התכנסות
+    st.markdown("**1. התכנסות (Bollinger Squeeze):**")
+    
+    # למד על איסוף סחורה
+    st.markdown("**2. צבירת סחורה (OBV):**")
+    [attachment_0](attachment)
