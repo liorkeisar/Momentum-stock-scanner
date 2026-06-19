@@ -16,6 +16,29 @@ def get_available_lists():
 
 @st.cache_data
 def load_selected_list(filename):
+    df = pd.read_csv(filename, header=None)
+    return df.iloc[:, 0].dropna().astype(str).str.strip().unique().tolist()
+
+def calculate_wyckoff_score(df):
+    if df is None or len(df) < 30: return
+import streamlit as st
+import yfinance as yf
+import pandas as pd
+import os
+from datetime import datetime
+
+# --- הגדרות דף ---
+st.set_page_config(page_title="מערכת וייקוף Pro", layout="wide")
+st.title("◈ מערכת השקעות מבוססת וייקוף")
+
+PORTFOLIO_FILE = 'portfolio.csv'
+
+# --- פונקציות עזר ---
+def get_available_lists(): 
+    return [f for f in os.listdir('.') if f.endswith('.csv') and f != PORTFOLIO_FILE]
+
+@st.cache_data
+def load_selected_list(filename):
     # קריאה ללא כותרות כדי למנוע אובדן שורות, לקיחת העמודה הראשונה
     df = pd.read_csv(filename, header=None)
     # מוודאים שלוקחים את העמודה הראשונה ומנקים רווחים
