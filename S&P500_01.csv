@@ -1,53 +1,96 @@
-Ticker,Company,Price
-AOS,A.O. Smith,58.22
-ABT,Abbott Laboratories,88.41
-ABBV,AbbVie,216.49
-ACN,Accenture,127.98
-ADBE,Adobe,195.16
-AES,AES,14.62
-AFL,Aflac,115.47
-A,Agilent Technologies,127.06
-APD,Air Products and Chemicals,280.21
-ABNB,Airbnb,142.41
-AKAM,Akamai,124.91
-ALB,Albemarle,160.35
-ARE,Alexandria Real Estate,51.03
-ALGN,Align Technology,182.08
-ALLE,Allegion,133.57
-LNT,Alliant Energy,73.00
-ALL,Allstate,221.17
-GOOGL,Alphabet A,368.03
-GOOG,Alphabet C,367.46
-AMZN,Amazon,239.68
-AMD,Advanced Micro Devices,537.37
-NVDA,NVIDIA,206.31
-MSFT,Microsoft,383.58
-META,Meta Platforms,576.90
-MU,Micron,1059.40
-INTC,Intel,133.99
-TSLA,Tesla,402.25
-AVGO,Broadcom,395.81
-AAPL,Apple,295.88
-ORCL,Oracle,184.29
-AMAT,Applied Materials,617.11
-LRCX,Lam Research,389.04
-QCOM,Qualcomm,226.11
-CAT,Caterpillar,985.82
-JPM,JPMorgan,325.22
-BRK.B,Berkshire Hathaway B,489.28
-XOM,Exxon Mobil,137.81
-CVX,Chevron,172.92
-WMT,Walmart,118.13
-PG,Procter & Gamble,150.43
-KO,Coca-Cola,79.01
-PEP,PepsiCo,178.22
-TMO,Thermo Fisher,529.44
-ACN,Accenture,127.98
-MCD,McDonald's,280.61
-UPS,UPS,142.55
-BA,Boeing,222.61
-IBM,IBM,168.22
-NFLX,Netflix,643.77
-CRM,Salesforce,151.78
-ADBE,Adobe,195.16
-TXN,Texas Instruments,322.86
+MMM,3M Company,Industrials
+AOS,A. O. Smith Corporation,Industrials
+ABT,Abbott Laboratories,Healthcare
+ABBV,AbbVie Inc.,Healthcare
+ACN,Accenture plc,Information Technology
+ADBE,Adobe Inc.,Information Technology
+AMD,Advanced Micro Devices Inc.,Information Technology
+AES,AES Corporation,Utilities
+AFL,Aflac Incorporated,Financials
+A,Agilent Technologies Inc.,Healthcare
+APD,Air Products and Chemicals Inc.,Materials
+AKAM,Akamai Technologies Inc.,Information Technology
+ALB,Albemarle Corporation,Materials
+ARE,Alexandria Real Estate Equities Inc.,Real Estate
+ALGN,Align Technology Inc.,Healthcare
+ALLE,Allegion plc,Industrials
+LNT,Alliant Energy Corporation,Utilities
+ALL,Allstate Corporation,Financials
+GOOGL,Alphabet Inc. Class A,Communication Services
+GOOG,Alphabet Inc. Class C,Communication Services
+MO,Altria Group Inc.,Consumer Staples
+AMZN,Amazon.com Inc.,Consumer Discretionary
+AMCR,Amcor plc,Materials
+AEE,Ameren Corporation,Utilities
+AAL,American Airlines Group Inc.,Industrials
+AEP,American Electric Power Company Inc.,Utilities
+AXP,American Express Company,Financials
+AIG,American International Group Inc.,Financials
+AMT,American Tower Corporation,Real Estate
+AWK,American Water Works Company Inc.,Utilities
+AMP,Ameriprise Financial Inc.,Financials
+ABC,AmerisourceBergen Corporation,Healthcare
+AME,AMETEK Inc.,Industrials
+AMGN,Amgen Inc.,Healthcare
+APH,Amphenol Corporation,Information Technology
+ADI,Analog Devices Inc.,Information Technology
+ANSS,ANSYS Inc.,Information Technology
+AON,Aon plc,Financials
+APA,APA Corporation,Energy
+AAPL,Apple Inc.,Information Technology
+AMAT,Applied Materials Inc.,Information Technology
+APTV,Aptiv plc,Consumer Discretionary
+ACGL,Arch Capital Group Ltd.,Financials
+ADM,Archer-Daniels-Midland Company,Consumer Staples
+ANET,Arista Networks Inc.,Information Technology
+AJG,Arthur J. Gallagher & Co.,Financials
+AIZ,Assurant Inc.,Financials
+T,AT&T Inc.,Communication Services
+ATO,Atmos Energy Corporation,Utilities
+ADSK,Autodesk Inc.,Information Technology
+AZO,AutoZone Inc.,Consumer Discretionary
+AVB,AvalonBay Communities Inc.,Real Estate
+AVY,Avery Dennison Corporation,Materials
+BKR,Baker Hughes Company,Energy
+BALL,Ball Corporation,Materials
+BAC,Bank of America Corporation,Financials
+BBWI,Bath & Body Works Inc.,Consumer Discretionary
+BAX,Baxter International Inc.,Healthcare
+BDX,Becton Dickinson and Company,Healthcare
+BRK.B,Berkshire Hathaway Inc. Class B,Financials
+BBY,Best Buy Co. Inc.,Consumer Discretionary
+BIO,Bio-Rad Laboratories Inc.,Healthcare
+TECH,Bio-Techne Corporation,Healthcare
+BIIB,Biogen Inc.,Healthcare
+BLK,BlackRock Inc.,Financials
+BX,Blackstone Inc.,Financials
+BK,The Bank of New York Mellon Corporation,Financials
+BA,The Boeing Company,Industrials
+BKNG,Booking Holdings Inc.,Consumer Discretionary
+BWA,BorgWarner Inc.,Consumer Discretionary
+BXP,Boston Properties Inc.,Real Estate
+BSX,Boston Scientific Corporation,Healthcare
+BMY,Bristol-Myers Squibb Company,Healthcare
+AVGO,Broadcom Inc.,Information Technology
+BR,Broadridge Financial Solutions Inc.,Information Technology
+BRO,Brown & Brown Inc.,Financials
+BF.B,Brown-Forman Corporation Class B,Consumer Staples
+CHRW,C.H. Robinson Worldwide Inc.,Industrials
+CDNS,Cadence Design Systems Inc.,Information Technology
+CZR,Caesars Entertainment Inc.,Consumer Discretionary
+CPB,Campbell Soup Company,Consumer Staples
+COF,Capital One Financial Corporation,Financials
+CAH,Cardinal Health Inc.,Healthcare
+KMX,CarMax Inc.,Consumer Discretionary
+CCL,Carnival Corporation,Consumer Discretionary
+CARR,Carrier Global Corporation,Industrials
+CTLT,Catalent Inc.,Healthcare
+CAT,Caterpillar Inc.,Industrials
+CBOE,Cboe Global Markets Inc.,Financials
+CBRE,CBRE Group Inc.,Real Estate
+CDW,CDW Corporation,Information Technology
+CE,Celanese Corporation,Materials
+CNC,Centene Corporation,Healthcare
+CNP,CenterPoint Energy Inc.,Utilities
+CDAY,Ceridian HCM Holding Inc.,Information Technology
+CF,CF Industries Holdings Inc.,Materials
