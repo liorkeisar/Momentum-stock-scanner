@@ -16,19 +16,7 @@ EMAIL_SENDER = "your_email@gmail.com"
 EMAIL_PASSWORD = "your_app_password" 
 EMAIL_RECEIVER = "your_email@gmail.com"
 
-# --- פונקציות ---
-def send_email(ticker):
-    msg = EmailMessage()
-    msg.set_content(f"מניה חדשה באזור לחץ (Squeeze): {ticker}. בדוק OBV בגרף!")
-    msg['Subject'] = f"KEISAR Alert: {ticker}"
-    msg['From'] = EMAIL_SENDER
-    msg['To'] = EMAIL_RECEIVER
-    try:
-        with smtplib.SMTP_SSL('smtp.gmail.com', 465) as smtp:
-            smtp.login(EMAIL_SENDER, EMAIL_PASSWORD)
-            smtp.send_message(msg)
-    except: pass
-
+# --- פונקציות טכניות ---
 def get_indicators(df):
     df = df.copy()
     df['MA20'] = df['Close'].rolling(window=20).mean()
@@ -49,36 +37,46 @@ def calculate_squeeze_score(df):
 
 # --- ממשק ---
 st.set_page_config(page_title="KEISAR Pro", layout="wide")
+
+# --- צד - בחירת רשימות מניות ---
+st.sidebar.header("📂 בחירת רשימות מניות")
+# סריקת קבצי CSV בתיקייה הנוכחית
+csv_files = [f for f in os.listdir('.') if f.endswith('.csv') and f not in [PORTFOLIO_FILE, SCAN_RESULTS_FILE]]
+selected_files = st.sidebar.multiselect("סמן את הרשימות לסריקה:", csv_files, default=csv_files)
+
 st.title("◈ KEISAR: סורק מוסדי")
 
 tab1, tab2, tab3 = st.tabs(["📊 סורק", "💼 תיק השקעות", "🎓 מדריך אסטרטגי"])
 
 with tab1:
     if st.button("🚀 הפעל סריקה"):
-        master_list = []
-        all_files = [f for f in os.listdir('.') if f.endswith('.csv') and 'portfolio' not in f and 'scan' not in f]
-        progress_bar = st.progress(0)
-        
-        for i, file in enumerate(all_files):
-            tickers = pd.read_csv(file, header=None).iloc[:, 0].dropna().unique()
-            for ticker in tickers:
-                try:
-                    df = yf.Ticker(ticker).history(period="6mo")
-                    if len(df) > 50 and df['Volume'].tail(20).mean() > MIN_VOLUME:
-                        df = get_indicators(df)
-                        if df['Squeeze_Width'].iloc[-1] < 0.15:
-                            duration = calculate_squeeze_score(df)
-                            master_list.append({"Ticker": ticker, "Price": round(float(df['Close'].iloc[-1]), 2), "Squeeze": round(df['Squeeze_Width'].iloc[-1], 3), "Duration_Days": duration})
-                            if duration == 1: send_email(ticker)
-                except: continue
-            progress_bar.progress((i + 1) / len(all_files))
-        pd.DataFrame(master_list).to_csv(SCAN_RESULTS_FILE, index=False)
-        st.rerun()
+        if not selected_files:
+            st.error("לא נבחרו קבצי רשימות. בחר מהתפריט בצד.")
+        else:
+            master_list = []
+            progress_bar = st.progress(0)
+            for i, file in enumerate(selected_files):
+                tickers = pd.read_csv(file, header=None).iloc[:, 0].dropna().unique()
+                for ticker in tickers:
+                    try:
+                        df = yf.Ticker(ticker).history(period="6mo")
+                        if len(df) > 50 and df['Volume'].tail(20).mean() > MIN_VOLUME:
+                            df = get_indicators(df)
+                            if not df.empty and df['Squeeze_Width'].iloc[-1] < 0.15:
+                                master_list.append({
+                                    "Ticker": ticker, 
+                                    "Price": round(float(df['Close'].iloc[-1]), 2), 
+                                    "Squeeze": round(df['Squeeze_Width'].iloc[-1], 3), 
+                                    "Duration_Days": calculate_squeeze_score(df)
+                                })
+                    except: continue
+                progress_bar.progress((i + 1) / len(selected_files))
+            pd.DataFrame(master_list).to_csv(SCAN_RESULTS_FILE, index=False)
+            st.rerun()
 
     if os.path.exists(SCAN_RESULTS_FILE):
         df_res = pd.read_csv(SCAN_RESULTS_FILE)
         if not df_res.empty:
-            # הגנה: אם העמודה לא קיימת משום מה, נציג בלי מיון
             if "Duration_Days" in df_res.columns:
                 df_res = df_res.sort_values(by="Duration_Days", ascending=False)
             st.dataframe(df_res, use_container_width=True)
@@ -91,10 +89,7 @@ with tab1:
                 fig.add_trace(go.Scatter(x=data.index, y=data['OBV'], name='OBV', line=dict(color='blue')), row=2, col=1)
                 fig.add_trace(go.Scatter(x=data.index, y=data['MACD'], name='MACD', line=dict(color='red')), row=3, col=1)
                 st.plotly_chart(fig, use_container_width=True)
-                if st.button("הוסף לתיק"):
-                    pd.DataFrame({'Ticker': [selected]}).to_csv(PORTFOLIO_FILE, mode='a', header=False, index=False)
-                    st.success("נוספה!")
-        else: st.info("הקובץ ריק.")
+        else: st.info("לא נמצאו מניות בתנאי הסריקה.")
 
 with tab2:
     if os.path.exists(PORTFOLIO_FILE):
@@ -102,6 +97,7 @@ with tab2:
 
 with tab3:
     st.header("🎓 מדריך אסטרטגי")
-    st.write("הסבר תמציתי על אסטרטגיית הדחיסה:")
-    
+    st.markdown("האסטרטגיה מתבססת על זיהוי **דחיסה טכנית (Squeeze)** שמצביעה על אגירת אנרגיה לפני מהלך גדול.")
+    st.markdown("---")
+    st.columns(2)[0].markdown("**איסוף מוסדי (Wyckoff):**")
     [attachment_0](attachment)
