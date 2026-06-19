@@ -16,32 +16,8 @@ def get_available_lists():
 
 @st.cache_data
 def load_selected_list(filename):
+    # קריאה ללא כותרות, לוקחים את העמודה הראשונה
     df = pd.read_csv(filename, header=None)
-    return df.iloc[:, 0].dropna().astype(str).str.strip().unique().tolist()
-
-def calculate_wyckoff_score(df):
-    if df is None or len(df) < 30: return
-import streamlit as st
-import yfinance as yf
-import pandas as pd
-import os
-from datetime import datetime
-
-# --- הגדרות דף ---
-st.set_page_config(page_title="מערכת וייקוף Pro", layout="wide")
-st.title("◈ מערכת השקעות מבוססת וייקוף")
-
-PORTFOLIO_FILE = 'portfolio.csv'
-
-# --- פונקציות עזר ---
-def get_available_lists(): 
-    return [f for f in os.listdir('.') if f.endswith('.csv') and f != PORTFOLIO_FILE]
-
-@st.cache_data
-def load_selected_list(filename):
-    # קריאה ללא כותרות כדי למנוע אובדן שורות, לקיחת העמודה הראשונה
-    df = pd.read_csv(filename, header=None)
-    # מוודאים שלוקחים את העמודה הראשונה ומנקים רווחים
     return df.iloc[:, 0].dropna().astype(str).str.strip().unique().tolist()
 
 def calculate_wyckoff_score(df):
@@ -58,11 +34,11 @@ def calculate_wyckoff_score(df):
     # חישוב טווח מסחר (RW)
     high_max = recent['High'].max()
     low_min = recent['Low'].min()
-    rw = (high_max - low_min) / ((high_max + low_min) / 2) * 100
+    rw = (high_max - low_min) / ((high_max + low_min) / 2) * 100 if (high_max + low_min) != 0 else 0
     
     # חישוב ציון
     score = min((40 if vr > 1.2 else 0) + (40 if rw < 7 else 0) + (20 if rw < 4 else 0), 100)
-    return score, round(vr, 2), round(rw, 2)
+    return round(score, 2), round(vr, 2), round(rw, 2)
 
 def get_portfolio_df():
     if not os.path.exists(PORTFOLIO_FILE):
@@ -85,22 +61,19 @@ with tab1:
         for i, ticker in enumerate(tickers):
             bar.progress((i + 1) / len(tickers))
             try:
-                # משיכת נתונים
                 stock = yf.Ticker(ticker)
                 df = stock.history(period="6mo")
                 
                 if not df.empty and 'Close' in df.columns:
-                    current_price = df['Close'].iloc[-1]
                     score, vr, rw = calculate_wyckoff_score(df)
-                    
-                    if score >= 0: # תמיד נוסיף אם יש מחיר
-                        results.append({
-                            "Ticker": ticker, 
-                            "Score": score, 
-                            "Price": round(float(current_price), 2), 
-                            "VR": vr
-                        })
-            except Exception as e:
+                    results.append({
+                        "Ticker": ticker, 
+                        "Score": score, 
+                        "Price": round(float(df['Close'].iloc[-1]), 2), 
+                        "VR": vr,
+                        "RW%": rw
+                    })
+            except Exception:
                 continue
         
         st.session_state['results_df'] = pd.DataFrame(results)
@@ -111,17 +84,16 @@ with tab1:
         df = df[df['Score'] >= min_score]
         st.dataframe(df.sort_values("Score", ascending=False), use_container_width=True)
         
-        to_add = st.selectbox("בחר מניה לעבודה:", df['Ticker'].tolist())
+        to_add = st.selectbox("בחר מניה להוספה:", df['Ticker'].tolist())
         if st.button("הוסף לתיק ההשקעות 💼"):
             price = df[df['Ticker'] == to_add]['Price'].values[0]
             new_entry = pd.DataFrame({'Ticker': [to_add], 'Date': [datetime.now().strftime('%Y-%m-%d')], 'EntryPrice': [price]})
             new_entry.to_csv(PORTFOLIO_FILE, mode='a', header=False, index=False)
-            st.success(f"{to_add} נוספה!")
+            st.success(f"{to_add} נוספה בהצלחה!")
 
 with tab2:
     portfolio = get_portfolio_df()
     if not portfolio.empty:
-        # הצגת נתוני התיק
         st.dataframe(portfolio, use_container_width=True)
         to_manage = st.selectbox("בחר מניה לניהול:", portfolio['Ticker'].tolist())
         
