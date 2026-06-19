@@ -1,44 +1,89 @@
-Ticker,Company,Price
-KLAC,KLA,259.56
-ON,ON Semiconductor,121.62
-TER,Teradyne,437.92
-NXPI,NXP Semiconductors,313.27
-MPWR,Monolithic Power Systems,1563.70
-SMCI,Super Micro Computer,30.66
-GLW,Corning,194.92
-SBUX,Starbucks,78.44
-NKE,Nike,92.55
-TJX,TJX Companies,112.33
-TGT,Target,152.44
-HD,Home Depot,345.77
-LOW,Lowe's,238.55
-DG,Dollar General,128.33
-DLTR,Dollar Tree,111.65
-MAR,Marriott,221.55
-HLT,Hilton,192.44
-BKNG,Booking Holdings,3456.77
-FDX,FedEx,254.33
-UPS,UPS,142.55
-DAL,Delta Air Lines,48.22
-UAL,United Airlines,51.77
-AAL,American Airlines,12.44
-LUV,Southwest Airlines,32.55
-DE,Deere & Co,382.44
-GM,General Motors,45.22
-F,Ford,12.88
-PFE,Pfizer,31.22
-MRK,Merck,128.44
-AMGN,Amgen,291.55
-REGN,Regeneron,1012.44
-ZTS,Zoetis,172.33
-CVS,CVS Health,59.44
-CI,Cigna,345.22
-HUM,Humana,312.88
-AXP,American Express,224.55
-V, Visa,327.31
-MA, Mastercard,489.91
-BLK,BlackRock,812.44
-MS,Morgan Stanley,223.19
-BAC,Bank of America,56.16
-C,Citigroup,63.44
-WFC,Wells Fargo,52.33
+SHW,The Sherwin-Williams Company,Materials
+SPG,Simon Property Group Inc.,Real Estate
+SWKS,Skyworks Solutions Inc.,Information Technology
+SJM,The J. M. Smucker Company,Consumer Staples
+SNA,Snap-on Incorporated,Industrials
+SEDG,SolarEdge Technologies Inc.,Information Technology
+SO,Southern Company,Utilities
+LUV,Southwest Airlines Co.,Industrials
+SWK,Stanley Black & Decker Inc.,Industrials
+SBUX,Starbucks Corporation,Consumer Discretionary
+STT,State Street Corporation,Financials
+STE,Steris plc,Healthcare
+SYK,Stryker Corporation,Healthcare
+SIVB,SVB Financial Group,Financials
+SYF,Synchrony Financial,Financials
+SNPS,Synopsys Inc.,Information Technology
+SYY,Sysco Corporation,Consumer Staples
+TMUS,T-Mobile US Inc.,Communication Services
+TROW,T. Rowe Price Group Inc.,Financials
+TTWO,Take-Two Interactive Software Inc.,Communication Services
+TPR,Tapestry Inc.,Consumer Discretionary
+TGT,Target Corporation,Consumer Staples
+TEL,TE Connectivity Ltd.,Information Technology
+TDY,Teledyne Technologies Incorporated,Industrials
+TFX,Teleflex Incorporated,Healthcare
+TER,Teradyne Inc.,Information Technology
+TSLA,Tesla Inc.,Consumer Discretionary
+TXN,Texas Instruments Incorporated,Information Technology
+TXT,Textron Inc.,Industrials
+TMO,Thermo Fisher Scientific Inc.,Healthcare
+TJX,The TJX Companies Inc.,Consumer Discretionary
+TSCO,Tractor Supply Company,Consumer Discretionary
+TT,Trane Technologies plc,Industrials
+TDG,TransDigm Group Incorporated,Industrials
+TRV,The Travelers Companies Inc.,Financials
+TRMB,Trimble Inc.,Information Technology
+TFC,Truist Financial Corporation,Financials
+TWTR,Twitter Inc.,Communication Services
+TYL,Tyler Technologies Inc.,Information Technology
+TSN,Tyson Foods Inc. Class A,Consumer Staples
+USB,U.S. Bancorp,Financials
+UDR,UDR Inc.,Real Estate
+ULTA,Ulta Beauty Inc.,Consumer Discretionary
+UNP,Union Pacific Corporation,Industrials
+UAL,United Airlines Holdings Inc.,Industrials
+UNH,UnitedHealth Group Incorporated,Healthcare
+UPS,United Parcel Service Inc. Class B,Industrials
+URI,United Rentals Inc.,Industrials
+UHS,Universal Health Services Inc. Class B,Healthcare
+VLO,Valero Energy Corporation,Energy
+VTR,Ventas Inc.,Real Estate
+VRSN,VeriSign Inc.,Information Technology
+VZ,Verizon Communications Inc.,Communication Services
+VRTX,Vertex Pharmaceuticals Incorporated,Healthcare
+VFC,VF Corporation,Consumer Discretionary
+VIAC,ViacomCBS Inc. Class B,Communication Services
+VTRS,Viatris Inc.,Healthcare
+V, Visa Inc. Class A,Financials
+VNO,Vornado Realty Trust,Real Estate
+VMC,Vulcan Materials Company,Materials
+WRB,W. R. Berkley Corporation,Financials
+GWW,W. W. Grainger Inc.,Industrials
+WAB,Westinghouse Air Brake Technologies Corporation,Industrials
+WMT,Walmart Inc.,Consumer Staples
+WBA,Walgreens Boots Alliance Inc.,Consumer Staples
+DIS,The Walt Disney Company,Communication Services
+WM,Waste Management Inc.,Industrials
+WAT,Waters Corporation,Healthcare
+WEC,WEC Energy Group Inc.,Utilities
+WFC,Wells Fargo & Company,Financials
+WELL,Welltower Inc.,Real Estate
+WST,West Pharmaceutical Services Inc.,Healthcare
+WDC,Western Digital Corporation,Information Technology
+WU,The Western Union Company,Information Technology
+WRK,WestRock Company,Materials
+WY,Weyerhaeuser Company,Real Estate
+WHR,Whirlpool Corporation,Consumer Discretionary
+WMB,The Williams Companies Inc.,Energy
+WLTW,Willis Towers Watson Public Limited Company,Financials
+WYNN,Wynn Resorts Limited,Consumer Discretionary
+XEL,Xcel Energy Inc.,Utilities
+XRX,Xerox Holdings Corporation,Information Technology
+XLNX,Xilinx Inc.,Information Technology
+XYL,Xylem Inc.,Industrials
+YUM,Yum! Brands Inc.,Consumer Discretionary
+ZBRA,Zebra Technologies Corporation,Information Technology
+ZBH,Zimmer Biomet Holdings Inc.,Healthcare
+ZION,Zions Bancorporation N.A.,Financials
+ZTS,Zoetis Inc.,Healthcare
