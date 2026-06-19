@@ -11,8 +11,9 @@ st.set_page_config(page_title="KEISAR Pro Hunter", layout="wide")
 PORTFOLIO_FILE = 'portfolio.csv'
 SCAN_RESULTS_FILE = 'scan_results.csv'
 
-# פונקציות חישוב טכני
+# פונקציות חישוב טכני (כולל הגנה על ערכים ריקים)
 def get_indicators(df):
+    df = df.copy()
     df['MA20'] = df['Close'].rolling(window=20).mean()
     df['STD'] = df['Close'].rolling(window=20).std()
     df['Upper'] = df['MA20'] + (df['STD'] * 2)
@@ -22,7 +23,7 @@ def get_indicators(df):
     exp2 = df['Close'].ewm(span=26, adjust=False).mean()
     df['MACD'] = exp1 - exp2
     df['Signal'] = df['MACD'].ewm(span=9, adjust=False).mean()
-    return df
+    return df.dropna()
 
 # ממשק
 st.sidebar.header("⚙️ הגדרות סריקה")
@@ -53,10 +54,16 @@ with tab1:
                             master_list.append({"Ticker": ticker, "Price": round(float(df['Close'].iloc[-1]), 2), "Squeeze": round(squeeze, 3)})
                 except: continue
             progress_bar.progress((i + 1) / len(selected_files))
-        pd.DataFrame(master_list).to_csv(SCAN_RESULTS_FILE, index=False)
+        
+        # שמירה בטוחה: רק אם נמצאו תוצאות
+        if master_list:
+            pd.DataFrame(master_list).to_csv(SCAN_RESULTS_FILE, index=False)
+        else:
+            if os.path.exists(SCAN_RESULTS_FILE): os.remove(SCAN_RESULTS_FILE)
         st.rerun()
 
-    if os.path.exists(SCAN_RESULTS_FILE):
+    # הצגה בטוחה למניעת EmptyDataError
+    if os.path.exists(SCAN_RESULTS_FILE) and os.path.getsize(SCAN_RESULTS_FILE) > 10:
         df_res = pd.read_csv(SCAN_RESULTS_FILE)
         st.dataframe(df_res, use_container_width=True)
         if 'Ticker' in df_res.columns:
@@ -80,17 +87,18 @@ with tab2:
 
 with tab3:
     st.header("🎓 מדריך אסטרטגי: צייד התפרצויות (ASST Style)")
-    st.markdown("עקרון העבודה: זיהוי דחיסה טכנית המלווה בצבירת ווליום (OBV).")
-    c1, c2 = st.columns(2)
-    with c1:
-        check1 = st.checkbox("Squeeze נמוך מ-0.15 (התכנסות)")
-        check2 = st.checkbox("OBV עולה/יציב בגרף שבועי")
-    with c2:
-        check3 = st.checkbox("מחיר מעל ממוצע נע 20")
-        check4 = st.checkbox("היסטוגרמת MACD חיובית")
-    if check1 and check2 and check3 and check4: st.success("✅ המניה עומדת בכל הקריטריונים!")
+    st.write("עקרון העבודה: זיהוי דחיסה טכנית המלווה בצבירת ווליום (OBV).")
+    
+    col1, col2 = st.columns(2)
+    with col1:
+        st.checkbox("Squeeze נמוך מ-0.15 (התכנסות)")
+        st.checkbox("OBV עולה/יציב בגרף שבועי")
+    with col2:
+        st.checkbox("מחיר מעל ממוצע נע 20")
+        st.checkbox("היסטוגרמת MACD חיובית")
     
     st.write("---")
-    st.markdown("**הבנת המנגנונים:**")
-    st.write("1. **התכנסות (Bollinger Squeeze):** מייצגת אנרגיה שנאגרת לפני פריצה. [attachment_0](attachment)")
-    st.write("2. **צבירת סחורה (OBV):** עדות לפעילות מוסדית תומכת מתחת לפני השטח. [attachment_1](attachment)")
+    st.markdown("**1. התכנסות (Bollinger Squeeze):** מייצגת אנרגיה שנאגרת לפני פריצה.")
+    
+    st.markdown("**2. צבירת סחורה (OBV):** עדות לפעילות מוסדית תומכת.")
+    [attachment_0](attachment)
