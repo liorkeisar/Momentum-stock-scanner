@@ -16,10 +16,10 @@ EMAIL_SENDER = "your_email@gmail.com"
 EMAIL_PASSWORD = "your_app_password" 
 EMAIL_RECEIVER = "your_email@gmail.com"
 
-# --- פונקציות ---
+# --- פונקציות טכניות ---
 def send_email(ticker):
     msg = EmailMessage()
-    msg.set_content(f"מניה חדשה באזור לחץ (Squeeze): {ticker}. בדוק OBV!")
+    msg.set_content(f"מניה חדשה באזור לחץ (Squeeze): {ticker}. בדוק OBV בגרף!")
     msg['Subject'] = f"KEISAR Alert: {ticker}"
     msg['From'] = EMAIL_SENDER
     msg['To'] = EMAIL_RECEIVER
@@ -54,7 +54,6 @@ csv_files = [f for f in os.listdir('.') if f.endswith('.csv') and f not in [PORT
 selected_files = st.sidebar.multiselect("סמן רשימות לסריקה:", csv_files, default=csv_files)
 
 st.title("◈ KEISAR: סורק מוסדי")
-
 tab1, tab2, tab3 = st.tabs(["📊 סורק", "💼 תיק השקעות", "🎓 מדריך אסטרטגי"])
 
 with tab1:
@@ -71,29 +70,50 @@ with tab1:
                         if len(df) > 50 and df['Volume'].tail(20).mean() > MIN_VOLUME:
                             df = get_indicators(df)
                             if not df.empty and df['Squeeze_Width'].iloc[-1] < 0.15:
+                                duration = calculate_squeeze_score(df)
                                 master_list.append({
                                     "Ticker": ticker, 
                                     "Price": round(float(df['Close'].iloc[-1]), 2), 
                                     "Squeeze": round(df['Squeeze_Width'].iloc[-1], 3), 
-                                    "Duration_Days": calculate_squeeze_score(df)
+                                    "Duration_Days": duration
                                 })
+                                if duration == 1: send_email(ticker)
                     except: continue
             
-            # שמירה בטוחה: אם הרשימה ריקה, לא נכתוב קובץ או שנכתוב הודעה
             if master_list:
                 pd.DataFrame(master_list).to_csv(SCAN_RESULTS_FILE, index=False)
             else:
                 if os.path.exists(SCAN_RESULTS_FILE): os.remove(SCAN_RESULTS_FILE)
             st.rerun()
 
-    # הגנה מיוחדת בטעינה: בדיקה אם הקובץ קיים ואינו ריק
+    # טעינה בטוחה: בדיקת קיום + בדיקת גודל הקובץ
     if os.path.exists(SCAN_RESULTS_FILE) and os.path.getsize(SCAN_RESULTS_FILE) > 0:
         df_res = pd.read_csv(SCAN_RESULTS_FILE)
         if "Duration_Days" in df_res.columns:
             df_res = df_res.sort_values(by="Duration_Days", ascending=False)
         st.dataframe(df_res, use_container_width=True)
-        # ... (שאר קוד הגרפים)
+        
+        selected = st.selectbox("בחר מניה לניתוח:", df_res['Ticker'].unique())
+        if st.button("הצג גרפים"):
+            data = get_indicators(yf.Ticker(selected).history(period="6mo"))
+            fig = make_subplots(rows=3, cols=1, shared_xaxes=True, row_heights=[0.5, 0.25, 0.25])
+            fig.add_trace(go.Candlestick(x=data.index, open=data['Open'], high=data['High'], low=data['Low'], close=data['Close'], name='Price'), row=1, col=1)
+            fig.add_trace(go.Scatter(x=data.index, y=data['OBV'], name='OBV', line=dict(color='blue')), row=2, col=1)
+            fig.add_trace(go.Scatter(x=data.index, y=data['MACD'], name='MACD', line=dict(color='red')), row=3, col=1)
+            st.plotly_chart(fig, use_container_width=True)
+            if st.button("הוסף לתיק"):
+                pd.DataFrame({'Ticker': [selected]}).to_csv(PORTFOLIO_FILE, mode='a', header=False, index=False)
+                st.success("נוספה!")
     else:
-        st.info("הסורק מוכן. הפעל סריקה כדי לראות תוצאות (או שלא נמצאו מניות בתנאים).")
+        st.info("הסורק מוכן. הפעל סריקה כדי לראות תוצאות (או שלא נמצאו מניות בתנאים כרגע).")
 
-# ... (שאר הלשוניות)
+with tab2:
+    if os.path.exists(PORTFOLIO_FILE):
+        st.dataframe(pd.read_csv(PORTFOLIO_FILE, names=['Ticker']))
+
+with tab3:
+    st.header("🎓 מדריך אסטרטגי")
+    st.markdown("כדי להבין את הקונספט לעומק, עיין בדיאגרמות הבאות:")
+        ```
+
+**טיפ:** אם הקוד עדיין מציג את השגיאה, זה אומר שיש קובץ זמני פגום בשרת של סטרימלייט. במצב כזה, פשוט תמחק את כל הקבצים שמתחילים ב-`scan_results` מהשרת שלך (דרך ה-File manager של Streamlit) והוא יתחיל מדף חלק.
