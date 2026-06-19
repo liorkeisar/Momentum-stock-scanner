@@ -6,7 +6,7 @@ from datetime import datetime
 
 # --- הגדרות ---
 st.set_page_config(page_title="KEISAR Auto-Scanner", layout="wide")
-st.title("◈ TITAN: סורק מוסדי אוטומטי")
+st.title("◈ KEISAR: סורק מוסדי אוטומטי")
 PORTFOLIO_FILE = 'portfolio.csv'
 
 # --- פונקציות ---
@@ -23,20 +23,13 @@ def calculate_wyckoff(df):
     score = min((40 if vr > 1.2 else 0) + (40 if rw < 7 else 0) + (20 if rw < 4 else 0), 100)
     return round(score, 2), round(vr, 2), round(rw, 2)
 
-# פונקציית רמזור לעיצוב הטבלה
-def color_score(val):
-    if val >= 70: color = 'green'
-    elif val >= 40: color = 'orange'
-    else: color = 'red'
-    return f'color: {color}; font-weight: bold'
-
 # --- ממשק ---
 tab1, tab2 = st.tabs(["📊 סורק אוטומטי", "💼 תיק השקעות"])
 
 with tab1:
     min_score = st.sidebar.slider("סנן לפי ציון מינימלי:", 0, 100, 0)
     
-    if st.button("🚀 הפעל סריקה אוטומטית"):
+    if st.button("🚀 הפעל סריקה אוטומטית - KEISAR"):
         all_files = [f for f in os.listdir('.') if f.endswith('.csv') and f != PORTFOLIO_FILE]
         master_results = []
         bar = st.progress(0)
@@ -62,12 +55,8 @@ with tab1:
 
     if 'master_df' in st.session_state:
         df_display = st.session_state['master_df'][st.session_state['master_df']['Score'] >= min_score]
+        st.dataframe(df_display.sort_values("Score", ascending=False), use_container_width=True)
         
-        # החלת הרמזור
-        styled_df = df_display.style.map(color_score, subset=['Score'])
-        st.dataframe(styled_df.sort_values("Score", ascending=False), use_container_width=True)
-        
-        # הוספה לתיק
         to_add = st.selectbox("בחר מניה להוספה לתיק:", df_display['Ticker'].unique())
         if st.button("הוסף לתיק ההשקעות 💼"):
             row = df_display[df_display['Ticker'] == to_add].iloc[0]
