@@ -1,3 +1,21 @@
+def calculate_wyckoff_metrics(df):
+    if len(df) < 30: return None
+    
+    # 1. VR - הקיים
+    recent = df.tail(20)
+    up_vol = recent[df['Close'] >= df['Close'].shift(1)]['Volume'].mean()
+    down_vol = recent[df['Close'] < df['Close'].shift(1)]['Volume'].mean()
+    vr = up_vol / down_vol
+    
+    # 2. הוספת מדד Efficiency (המאמץ מול התוצאה)
+    # מחשב את השינוי היומי הממוצע ביחס לווליום הממוצע
+    daily_change = (df['High'] - df['Low']).mean()
+    avg_vol = df['Volume'].mean()
+    efficiency = daily_change / (avg_vol / 1000000) # כמה "תנועה" קיבלנו לכל מיליון מניות
+    
+    # 3. ציון משוקלל
+    score = (40 if vr > 1.2 else 0) + (30 if efficiency < 1.0 else 0) + 30
+    return round(score, 2), round(vr, 2), round(efficiency, 2)
 import streamlit as st
 import yfinance as yf
 import pandas as pd
