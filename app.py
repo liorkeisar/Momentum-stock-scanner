@@ -16,6 +16,10 @@ def init_portfolio():
     if not os.path.exists(PORTFOLIO_FILE):
         pd.DataFrame(columns=['Ticker', 'Date', 'EntryPrice']).to_csv(PORTFOLIO_FILE, index=False)
 
+def get_portfolio_df():
+    init_portfolio()
+    return pd.read_csv(PORTFOLIO_FILE)
+
 @st.cache_data
 def load_selected_list(filename):
     df = pd.read_csv(filename)
@@ -30,6 +34,11 @@ def check_divergence(df):
     exp2 = df['Close'].ewm(span=26, adjust=False).mean()
     macd = exp1 - exp2
     return (df['Close'].tail(10).iloc[-1] < df['Close'].tail(10).iloc[0]) and (macd.tail(10).iloc[-1] > macd.tail(10).iloc[0])
+
+def get_pivot_points(df):
+    """זיהוי רמות תמיכה והתנגדות בסיסיות"""
+    recent = df.tail(20)
+    return recent['High'].max(), recent['Low'].min()
 
 def calculate_wyckoff_and_risk(df):
     if len(df) < 30: return None
@@ -71,18 +80,25 @@ with tab1:
         st.rerun()
 
     if 'results_df' in st.session_state and not st.session_state['results_df'].empty:
-        df = st.session_state['results_df'].sort_values("Score", ascending=False)
-        st.dataframe(df, use_container_width=True)
+        st.dataframe(st.session_state['results_df'].sort_values("Score", ascending=False), use_container_width=True)
         
-        # אזור הניתוח האינטראקטיבי
-        target = st.selectbox("בחר מניה לניתוח מעמיק:", df['Ticker'].tolist())
+        target = st.selectbox("בחר מניה לניתוח מעמיק:", st.session_state['results_df']['Ticker'].tolist())
         if st.button("בצע Deep Dive למניה"):
-            st.info(f"מנתח נתוני עומק עבור {target}...")
-            # כאן ניתן להוסיף הצגת גרפים או ניתוח מורחב
             df_deep = yf.Ticker(target).history(period="1y")
+            res, sup = get_pivot_points(df_deep)
+            st.subheader(f"ניתוח עומק: {target}")
+            col1, col2 = st.columns(2)
+            col1.metric("התנגדות קרובה", round(res, 2))
+            col2.metric("תמיכה קרובה", round(sup, 2))
             st.line_chart(df_deep['Close'])
             st.success("הניתוח הושלם!")
 
 with tab2:
     init_portfolio()
-    st.dataframe(pd.read_csv(PORTFOLIO_FILE), use_container_width=True)
+    portfolio = pd.read_csv(PORTFOLIO_FILE)
+    if not portfolio.empty:
+        st.dataframe(portfolio, use_container_width=True)
+        to_manage = st.selectbox("בחר מניה לניהול:", portfolio['Ticker'].unique().tolist())
+        if st.button("מחק מניה 🗑️"):
+            portfolio[portfolio['Ticker'] != to_manage].to_csv(PORTFOLIO_FILE, index=False)
+            st.rerun()
