@@ -1,88 +1,100 @@
 import streamlit as st
 import yfinance as yf
 import pandas as pd
-import plotly.graph_objects as go
-from plotly.subplots import make_subplots
 import os
-import numpy as np
-import smtplib
-from email.message import EmailMessage
+from datetime import datetime
 
 # --- הגדרות ---
+st.set_page_config(page_title="KEISAR Pro Hunter", layout="wide")
+st.title("◈ KEISAR: סורק מוסדי (צייד שפלים ופערים)")
 PORTFOLIO_FILE = 'portfolio.csv'
-SCAN_RESULTS_FILE = 'scan_results.csv'
-MIN_VOLUME = 500000 
-EMAIL_SENDER = "your_email@gmail.com"
-EMAIL_PASSWORD = "your_app_password" 
-EMAIL_RECEIVER = "your_email@gmail.com"
 
 # --- פונקציות ---
-def get_indicators(df):
-    df = df.copy()
-    df['MA20'] = df['Close'].rolling(window=20).mean()
-    df['STD'] = df['Close'].rolling(window=20).std()
-    df['Upper'] = df['MA20'] + (df['STD'] * 2)
-    df['Lower'] = df['MA20'] - (df['STD'] * 2)
-    df['Squeeze_Width'] = (df['Upper'] - df['Lower']) / df['Close']
-    df['OBV'] = (np.sign(df['Close'].diff()) * df['Volume']).fillna(0).cumsum()
-    df['MACD'] = df['Close'].ewm(span=12, adjust=False).mean() - df['Close'].ewm(span=26, adjust=False).mean()
-    return df.dropna()
+def check_gap_closure(df):
+    """בודק אם היה פער (Gap) שנסגר ביום האחרון"""
+    if len(df) < 5: return False
+    yesterday = df.iloc[-2]
+    today = df.iloc[-1]
+    # בדיקה האם מחיר הסגירה של אתמול נמצא בטווח המסחר של היום (סימן לסגירת פער)
+    if today['Low'] <= yesterday['Close'] <= today['High']:
+        return True
+    return False
 
-def calculate_squeeze_score(df):
-    squeeze_days = 0
-    for width in reversed(df['Squeeze_Width'].tail(30)):
-        if width < 0.15: squeeze_days += 1
-        else: break
-    return squeeze_days
+def calculate_wyckoff(ticker_obj, df):
+    if df is None or len(df) < 30: return 0, 0, 0
+    
+    # 1. פילטר שווי שוק (מינימום 300 מיליון דולר)
+    market_cap = ticker_obj.info.get('marketCap', 0)
+    if market_cap < 300_000_000: return 0, 0, 0
+    
+    recent = df.tail(20)
+    up = recent[recent['Close'] >= recent['Close'].shift(1)]['Volume'].mean()
+    down = recent[recent['Close'] < recent['Close'].shift(1)]['Volume'].mean()
+    vr = (up / down) if (pd.notna(down) and down > 0) else 1
+    
+    low_min = recent['Low'].min()
+    high_max = recent['High'].max()
+    rw = ((high_max - low_min) / ((high_max + low_min) / 2) * 100)
+    
+    # 2. בונוס שפלים שנתיים
+    year_low = df['Low'].min()
+    current_price = df['Close'].iloc[-1]
+    dist_from_low = (current_price - year_low) / (year_low + 0.001)
+    bottom_bonus = 1.8 if dist_from_low < 0.20 else 1.0
+    
+    # 3. בונוס סגירת פער
+    gap_bonus = 1.3 if check_gap_closure(df) else 1.0
+    
+    # חישוב ציון
+    raw_score = (40 if vr > 1.2 else 0) + (40 if rw < 7 else 0) + (20 if rw < 4 else 0)
+    score = min(raw_score * bottom_bonus * gap_bonus, 100)
+    
+    return round(score, 2), round(vr, 2), round(rw, 2)
 
 # --- ממשק ---
-st.set_page_config(page_title="KEISAR Pro", layout="wide")
-st.sidebar.header("📂 בחירת רשימות מניות")
-csv_files = [f for f in os.listdir('.') if f.endswith('.csv') and f not in [PORTFOLIO_FILE, SCAN_RESULTS_FILE]]
-selected_files = st.sidebar.multiselect("סמן רשימות לסריקה:", csv_files, default=csv_files)
+tab1, tab2 = st.tabs(["📊 סורק KEISAR", "💼 תיק השקעות"])
 
-st.title("◈ KEISAR: סורק מוסדי")
-
-if st.button("🚀 הפעל סריקה"):
-    master_list = []
-    for file in selected_files:
-        tickers = pd.read_csv(file, header=None).iloc[:, 0].dropna().unique()
-        for ticker in tickers:
-            try:
-                df = yf.Ticker(ticker).history(period="6mo")
-                if len(df) > 50 and df['Volume'].tail(20).mean() > MIN_VOLUME:
-                    df = get_indicators(df)
-                    if not df.empty and df['Squeeze_Width'].iloc[-1] < 0.15:
-                        master_list.append({
-                            "Ticker": ticker, 
-                            "Price": round(float(df['Close'].iloc[-1]), 2), 
-                            "Squeeze": round(df['Squeeze_Width'].iloc[-1], 3), 
-                            "Duration_Days": calculate_squeeze_score(df)
-                        })
-            except: continue
+with tab1:
+    min_score = st.sidebar.slider("סנן לפי ציון מינימלי:", 0, 100, 50)
     
-    if master_list:
-        pd.DataFrame(master_list).to_csv(SCAN_RESULTS_FILE, index=False)
-    else:
-        if os.path.exists(SCAN_RESULTS_FILE): os.remove(SCAN_RESULTS_FILE)
-    st.rerun()
-
-# --- הצגה בטוחה ---
-if os.path.exists(SCAN_RESULTS_FILE) and os.path.getsize(SCAN_RESULTS_FILE) > 10:
-    df_res = pd.read_csv(SCAN_RESULTS_FILE)
-    if "Duration_Days" in df_res.columns:
-        df_res = df_res.sort_values(by="Duration_Days", ascending=False)
-        st.dataframe(df_res, use_container_width=True)
+    if st.button("🚀 הפעל סריקת KEISAR"):
+        all_files = [f for f in os.listdir('.') if f.endswith('.csv') and f != PORTFOLIO_FILE]
+        master_results = []
+        bar = st.progress(0)
         
-        selected = st.selectbox("בחר מניה לניתוח:", df_res['Ticker'].unique())
-        if st.button("הצג גרפים"):
-            data = get_indicators(yf.Ticker(selected).history(period="6mo"))
-            fig = make_subplots(rows=3, cols=1, shared_xaxes=True)
-            fig.add_trace(go.Candlestick(x=data.index, open=data['Open'], high=data['High'], low=data['Low'], close=data['Close'], name='Price'), row=1, col=1)
-            fig.add_trace(go.Scatter(x=data.index, y=data['OBV'], name='OBV'), row=2, col=1)
-            fig.add_trace(go.Scatter(x=data.index, y=data['MACD'], name='MACD'), row=3, col=1)
-            st.plotly_chart(fig, use_container_width=True)
-    else:
-        st.write("הקובץ קיים אך חסרים נתונים.")
-else:
-    st.info("לחץ על 'הפעל סריקה' כדי להתחיל, או שלא נמצאו מניות בתנאי הסף.")
+        for idx, file in enumerate(all_files):
+            tickers = pd.read_csv(file, header=None).iloc[:, 0].dropna().astype(str).str.strip().unique()
+            for ticker in tickers:
+                try:
+                    stock = yf.Ticker(ticker)
+                    hist = stock.history(period="5d")
+                    if not hist.empty and hist['Volume'].mean() > 50000:
+                        df = stock.history(period="6mo")
+                        score, vr, rw = calculate_wyckoff(stock, df)
+                        if score >= min_score:
+                            master_results.append({
+                                "Ticker": ticker, "Score": score, "Price": round(float(df['Close'].iloc[-1]), 2), 
+                                "VR": vr, "RW%": rw
+                            })
+                except: continue
+            bar.progress((idx + 1) / len(all_files))
+        
+        st.session_state['master_df'] = pd.DataFrame(master_results)
+        st.rerun()
+
+    if 'master_df' in st.session_state:
+        df_display = st.session_state['master_df'].sort_values("Score", ascending=False)
+        st.dataframe(df_display, use_container_width=True)
+        
+        to_add = st.selectbox("בחר מניה להוספה לתיק:", df_display['Ticker'].unique())
+        if st.button("הוסף לתיק ההשקעות 💼"):
+            row = df_display[df_display['Ticker'] == to_add].iloc[0]
+            pd.DataFrame({'Ticker': [row['Ticker']], 'Date': [datetime.now().strftime('%Y-%m-%d')], 'EntryPrice': [row['Price']]}).to_csv(PORTFOLIO_FILE, mode='a', header=False, index=False)
+            st.success(f"{to_add} נוספה!")
+
+with tab2:
+    if os.path.exists(PORTFOLIO_FILE):
+        st.dataframe(pd.read_csv(PORTFOLIO_FILE), use_container_width=True)
+        if st.button("נקה תיק 🗑️"):
+            os.remove(PORTFOLIO_FILE)
+            st.rerun()
