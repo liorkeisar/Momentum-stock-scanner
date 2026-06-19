@@ -103,3 +103,29 @@ with tab2:
             st.rerun()
     else: 
         st.info("התיק ריק.")
+        for i, ticker in enumerate(tickers):
+            bar.progress((i + 1) / len(tickers))
+            try:
+                stock = yf.Ticker(ticker)
+                # בדיקת היסטוריה קצרה כדי לוודא שהמניה חיה
+                hist = stock.history(period="5d") 
+                
+                # תנאי סף לסחירות:
+                # 1. המניה חייבת נתונים (לא ריקה)
+                # 2. נפח מסחר ממוצע של לפחות 50,000 (מסנן מניות זבל)
+                # 3. מחיר סגירה חייב להיות גדול מ-0 (מניה שנמחקה לרוב תציג 0 או None)
+                if not hist.empty and hist['Volume'].mean() > 50000 and hist['Close'].iloc[-1] > 0:
+                    
+                    # עכשיו נריץ את הניתוח המלא רק למניות שעברו את הבדיקה
+                    df = stock.history(period="6mo")
+                    score, vr, rw = calculate_wyckoff_score(df)
+                    
+                    results.append({
+                        "Ticker": ticker, 
+                        "Score": score, 
+                        "Price": round(float(df['Close'].iloc[-1]), 2), 
+                        "VR": vr,
+                        "RW%": rw
+                    })
+            except Exception:
+                continue
