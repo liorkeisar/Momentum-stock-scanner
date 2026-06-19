@@ -30,10 +30,10 @@ def load_selected_list(filename):
     target = next((c for c in cols if c in df.columns), df.columns[0])
     return df[target].dropna().astype(str).unique().tolist()
 
-# --- מנוע הניתוח המקצועי ---
+# --- מנוע הניתוח המקצועי (מתוקן) ---
 def calculate_wyckoff_and_risk(df):
-    """חישוב מדדי וייקוף (VR, RW) וניהול סיכונים (ATR)"""
-    if df is None or len(df) < 30: return 0, 0, 0, 0
+    """חישוב מדדי וייקוף וניהול סיכונים עם הגנה מ-NaN"""
+    if df is None or len(df) < 30: return None
     
     # 1. ATR - ניהול סיכון
     hl = df['High'] - df['Low']
@@ -41,31 +41,29 @@ def calculate_wyckoff_and_risk(df):
     l_pc = (df['Low'] - df['Close'].shift()).abs()
     atr = pd.concat([hl, h_pc, l_pc], axis=1).max(axis=1).rolling(14).mean().iloc[-1]
     
-    # 2. Wyckoff Metrics (מתוקן)
+    # 2. Wyckoff Metrics
     recent = df.tail(20)
     up_vol = recent[recent['Close'] >= recent['Close'].shift(1)]['Volume'].mean()
     down_vol = recent[recent['Close'] < recent['Close'].shift(1)]['Volume'].mean()
     
-    # חישוב VR: אם אין ווליום בירידות, ה-VR נחשב חיובי מאוד (ביקוש חזק)
-    vr = (up_vol / down_vol) if (down_vol is not None and down_vol > 0) else 5.0 
+    if pd.isna(up_vol) or pd.isna(down_vol) or down_vol == 0: return None
+    
+    vr = up_vol / down_vol
     rw = (recent['High'].max() - recent['Low'].min()) / recent['Close'].iloc[-1] * 100
     
-    # 3. מערכת ניקוד מוסדית (Score)
-    score = 0
-    if vr > 1.5: score += 50
-    elif vr > 1.1: score += 25
+    # 3. ניקוד
+    score = min((40 if vr > 1.2 else 0) + (40 if rw < 7 else 0) + (20 if rw < 4 else 0), 100)
     
-    if rw < 5: score += 50
-    elif rw < 10: score += 25
+    if np.isnan(atr) or np.isnan(score): return None
     
-    return min(score, 100), vr, rw, atr
+    return score, round(vr, 2), round(rw, 2), round(atr, 2)
 
 # --- ממשק משתמש ---
 tab1, tab2 = st.tabs(["📊 סורק וייקוף", "💼 תיק השקעות"])
 
 with tab1:
     available_lists = get_available_lists()
-    if not available_lists: st.error("לא נמצאו קבצי CSV בתיקייה")
+    if not available_lists: st.error("לא נמצאו קבצי CSV")
     else:
         selected_file = st.sidebar.selectbox("בחר רשימה:", available_lists)
         min_score = st.sidebar.slider("ציון מינימלי:", 0, 100, 40)
@@ -80,19 +78,19 @@ with tab1:
                 try:
                     time.sleep(0.05)
                     df = yf.Ticker(ticker).history(period="6mo", interval="1d")
+                    # הגנה: חייב להיות ווליום תקין ונתונים
                     if not df.empty and df['Volume'].iloc[-1] > 200000:
-                        score, vr, rw, atr = calculate_wyckoff_and_risk(df)
-                        if score >= min_score:
-                            price = float(df['Close'].iloc[-1])
-                            results.append({
-                                "Ticker": ticker, "Score": score, "Price": round(price, 2),
-                                "VR": round(vr, 2), "RW%": round(rw, 2),
-                                "StopLoss": round(price - (2 * atr), 2),
-                                "Target": round(price + (6 * atr), 2),
-                                "Status": "🚀 Buy Zone" if score >= 75 else "📈 Accumulating"
-                            })
-                    else:
-                        st.sidebar.warning(f"מניה {ticker} נפסלה (נזילות נמוכה)")
+                        res = calculate_wyckoff_and_risk(df)
+                        if res:
+                            score, vr, rw, atr = res
+                            if score >= min_score:
+                                price = float(df['Close'].iloc[-1])
+                                results.append({
+                                    "Ticker": ticker, "Score": score, "Price": round(price, 2),
+                                    "VR": vr, "RW%": rw,
+                                    "StopLoss": round(price - (2 * atr), 2),
+                                    "Target": round(price + (6 * atr), 2)
+                                })
                 except: continue
             
             st.session_state['results_df'] = pd.DataFrame(results) if results else pd.DataFrame()
@@ -107,17 +105,14 @@ with tab1:
                 price = df[df['Ticker'] == to_add]['Price'].values[0]
                 df_port = get_portfolio_df()
                 pd.concat([df_port, pd.DataFrame({'Ticker': [to_add], 'Date': [datetime.now().strftime('%Y-%m-%d')], 'EntryPrice': [price]})]).to_csv(PORTFOLIO_FILE, index=False)
-                st.success("נוסף בהצלחה!")
+                st.success("נוסף!")
 
 with tab2:
     portfolio = get_portfolio_df()
     if not portfolio.empty:
-        view_df = portfolio.copy()
-        view_df['CurrentPrice'] = [round(yf.Ticker(t).history(period="1d")['Close'].iloc[-1], 2) for t in view_df['Ticker']]
-        view_df['Perf%'] = round(((view_df['CurrentPrice'] - view_df['EntryPrice']) / view_df['EntryPrice']) * 100, 2)
-        st.dataframe(view_df, use_container_width=True)
-        
-        to_manage = st.selectbox("בחר מניה לניהול:", view_df['Ticker'].unique().tolist())
+        # הצגה נקייה ללא None
+        st.dataframe(portfolio, use_container_width=True)
+        to_manage = st.selectbox("בחר מניה לניהול:", portfolio['Ticker'].unique().tolist())
         if st.button("מחק מניה 🗑️"):
             portfolio[portfolio['Ticker'] != to_manage].to_csv(PORTFOLIO_FILE, index=False)
             st.rerun()
