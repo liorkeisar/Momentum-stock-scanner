@@ -17,19 +17,21 @@ SCAN_RESULTS_FILE = 'scan_results.csv'
 def get_data(ticker):
     return yf.Ticker(ticker).history(period="6mo")
 
+def get_market_status():
+    """בודק האם השוק הכללי נמצא במגמה חיובית מעל MA200"""
+    spy = yf.Ticker("SPY").history(period="1y")
+    spy['MA200'] = spy['Close'].rolling(window=200).mean()
+    return spy['Close'].iloc[-1] > spy['MA200'].iloc[-1]
+
 def get_indicators(df):
     df = df.copy()
-    # זיהוי "סכין נופלת" - שינוי יומי
     df['Daily_Change'] = df['Close'].pct_change()
-    
     df['MA20'] = df['Close'].rolling(window=20).mean()
     df['STD'] = df['Close'].rolling(window=20).std()
     df['Upper'] = df['MA20'] + (df['STD'] * 2)
     df['Lower'] = df['MA20'] - (df['STD'] * 2)
     df['Squeeze'] = (df['Upper'] - df['Lower']) / df['Close']
     df['OBV'] = (np.sign(df['Close'].diff()) * df['Volume']).fillna(0).cumsum()
-    
-    # חישוב RVOL
     df['AvgVol'] = df['Volume'].rolling(window=20).mean()
     df['RVOL'] = df['Volume'] / df['AvgVol']
     
@@ -40,9 +42,7 @@ def get_indicators(df):
     return df.dropna()
 
 def calculate_score(df):
-    # מסנן "סכין נופלת": אם המניה ירדה מעל 5% ביום האחרון, נפסול אותה (-1)
     if df['Daily_Change'].iloc[-1] < -0.05: return -1
-    
     score = 0
     if df['Squeeze'].iloc[-1] < 0.10: score += 2
     elif df['Squeeze'].iloc[-1] < 0.15: score += 1
@@ -53,6 +53,11 @@ def calculate_score(df):
 
 # --- ממשק משתמש ---
 st.title("◈ KEISAR: סורק מוסדי מקצועי")
+
+# בדיקת מצב שוק
+if not get_market_status():
+    st.warning("⚠️ אזהרת מערכת: השוק (SPY) מתחת ל-MA200. מומלץ לנקוט משנה זהירות!")
+
 tab1, tab2, tab3 = st.tabs(["📊 סורק", "💼 תיק השקעות", "🎓 מדריך אסטרטגי"])
 
 with tab1:
@@ -72,13 +77,8 @@ with tab1:
                 if len(df) > 50:
                     score = calculate_score(df)
                     if score >= 0:
-                        master_list.append({
-                            "Ticker": ticker, "Score": score, 
-                            "Price": round(float(df['Close'].iloc[-1]), 2), 
-                            "RVOL": round(float(df['RVOL'].iloc[-1]), 2)
-                        })
+                        master_list.append({"Ticker": ticker, "Score": score, "Price": round(float(df['Close'].iloc[-1]), 2), "RVOL": round(float(df['RVOL'].iloc[-1]), 2)})
             except: continue
-        
         pd.DataFrame(master_list).sort_values(by="Score", ascending=False).to_csv(SCAN_RESULTS_FILE, index=False)
         st.rerun()
 
@@ -86,7 +86,6 @@ with tab1:
         df_res = pd.read_csv(SCAN_RESULTS_FILE)
         st.dataframe(df_res, use_container_width=True)
         selected = st.selectbox("בחר מניה לניתוח:", df_res['Ticker'].unique())
-        
         if st.button("הצג ניתוח"):
             data = get_indicators(get_data(selected))
             fig = make_subplots(rows=3, cols=1, shared_xaxes=True, row_heights=[0.5, 0.25, 0.25])
@@ -94,7 +93,6 @@ with tab1:
             fig.add_trace(go.Scatter(x=data.index, y=data['RVOL'], name='RVOL', line=dict(color='orange')), row=2, col=1)
             fig.add_trace(go.Scatter(x=data.index, y=data['MACD'], name='MACD'), row=3, col=1)
             st.plotly_chart(fig, use_container_width=True)
-            
             if st.button("הוסף לתיק"):
                 price = float(data['Close'].iloc[-1])
                 new_entry = pd.DataFrame({'Ticker': [selected], 'Entry_Price': [price], 'Date': [datetime.now().strftime("%Y-%m-%d")]})
@@ -116,14 +114,16 @@ with tab2:
 
 with tab3:
     st.header("🎓 מדריך אסטרטגי: צייד התפרצויות (ASST)")
-    st.markdown("---")
-    st.markdown("### 1. עקרון ה-Squeeze (התכנסות)")
-    st.markdown("כאשר רצועות בולינגר מתכווצות, זהו סימן שאנרגיה נצברת. ")
+    st.markdown("""
     
-    st.markdown("### 2. ה-Trigger המוסדי (RVOL)")
-    st.markdown("RVOL גבוה מ-1.5 מעיד על כניסת כסף מוסדי בזמן פריצה. ")
+    ### 1. עקרון ה-Squeeze (התכנסות)
+    מייצג שיווי משקל בין קונים למוכרים. כשהרצועות צמודות, השוק נמצא ב"שקט שלפני הסערה".
+
+    ### 2. ה-Trigger המוסדי (RVOL)
     
-    st.markdown("### 3. אסטרטגיית עבודה")
-    st.markdown("* **סינון:** התמקדות במניות עם ציון 4-5 בלבד.")
-    st.markdown("* **מסנן בטיחות:** הסורק מדלג אוטומטית על 'סכינים נופלות' (ירידה > 5% ביום).")
-    st.markdown("* **ניהול:** הוסף לתיק ומדוד תשואה לפי מחיר קנייה היסטורי.")
+    זהו המדד הקריטי ביותר. פריצה ללא RVOL היא לרוב פריצת שווא.
+
+    ### 3. דוגמה לעסקה
+    * **מצב:** מניה ב-100$, Squeeze = 0.08. פריצה ל-102$ עם **RVOL = 2.2**.
+    * **ניהול סיכונים:** סטופ לוס ב-97$ (מתחת לרצועת הבולינגר). יעד רווח ב-117$ (יחס 1:3).
+    """)
