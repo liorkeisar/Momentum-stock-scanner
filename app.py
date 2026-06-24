@@ -34,6 +34,10 @@ def get_indicators(df):
     df['AvgVol'] = df['Volume'].rolling(window=20).mean()
     df['RVOL'] = df['Volume'] / df['AvgVol']
     
+    # חישוב ATR לניהול סיכונים
+    high_low = df['High'] - df['Low']
+    df['ATR'] = high_low.rolling(window=14).mean()
+    
     exp1 = df['Close'].ewm(span=12, adjust=False).mean()
     exp2 = df['Close'].ewm(span=26, adjust=False).mean()
     df['MACD'] = exp1 - exp2
@@ -94,7 +98,6 @@ with tab1:
 
     if os.path.exists(SCAN_RESULTS_FILE):
         df_res = pd.read_csv(SCAN_RESULTS_FILE)
-        # סימון מניות עם RVOL גבוה בצבע ירוק בטבלה
         def style_rvol(row):
             color = 'background-color: #d4edda' if row['RVOL'] > 1.5 else ''
             return [color] * len(row)
@@ -104,17 +107,29 @@ with tab1:
         selected = st.selectbox("בחר מניה לניתוח:", df_res['Ticker'].unique())
         if st.button("הצג ניתוח"):
             data = get_indicators(get_data(selected))
+            last_price = float(data['Close'].iloc[-1])
+            atr = float(data['ATR'].iloc[-1])
+            
+            # חישוב רמות ניהול סיכונים
+            sl = round(last_price - (1.5 * atr), 2)
+            tp = round(last_price + (3.0 * atr), 2)
+            
+            st.metric(label="מחיר נוכחי", value=f"${last_price:.2f}")
+            col1, col2 = st.columns(2)
+            col1.metric("Stop Loss (1.5*ATR)", f"${sl}")
+            col2.metric("Take Profit (3*ATR)", f"${tp}")
+            
             fig = make_subplots(rows=3, cols=1, shared_xaxes=True, row_heights=[0.5, 0.25, 0.25])
             fig.add_trace(go.Candlestick(x=data.index, open=data['Open'], high=data['High'], low=data['Low'], close=data['Close'], name='Price'), row=1, col=1)
             fig.add_trace(go.Scatter(x=data.index, y=data['RVOL'], name='RVOL', line=dict(color='orange')), row=2, col=1)
             fig.add_trace(go.Scatter(x=data.index, y=data['MACD'], name='MACD'), row=3, col=1)
             st.plotly_chart(fig, use_container_width=True)
+            
             if st.button("הוסף לתיק"):
-                price = float(data['Close'].iloc[-1])
-                new_entry = pd.DataFrame({'Ticker': [selected], 'Entry_Price': [price], 'Date': [datetime.now().strftime("%Y-%m-%d")]})
+                new_entry = pd.DataFrame({'Ticker': [selected], 'Entry_Price': [last_price], 'Date': [datetime.now().strftime("%Y-%m-%d")]})
                 mode = 'a' if os.path.exists(PORTFOLIO_FILE) else 'w'
                 new_entry.to_csv(PORTFOLIO_FILE, mode=mode, header=not os.path.exists(PORTFOLIO_FILE), index=False)
-                st.success(f"{selected} נוספה לתיק!")
+                st.success(f"{selected} נוספה לתיק עם יעדים מוגדרים!")
 
 with tab2:
     if os.path.exists(PORTFOLIO_FILE):
@@ -133,12 +148,8 @@ with tab2:
 with tab3:
     st.header("🎓 מדריך אסטרטגי: צייד התפרצויות (ASST)")
     st.markdown("""
-    ### 1. עקרון ה-Squeeze (התכנסות)
-    מייצג שיווי משקל. כשהרצועות צמודות, השוק נמצא ב"שקט שלפני הסערה".
-    ### 2. ה-Trigger המוסדי (RVOL > 1.5)
-    המדד הקריטי ביותר. פריצה ללא RVOL היא לרוב פריצת שווא.
-    ### 3. דוגמה לעסקה
-    * **מצב:** Squeeze < 0.10. 
-    * **Trigger:** RVOL > 1.5.
-    * **ניהול סיכונים:** סטופ לוס מתחת לרצועת הבולינגר. יעד רווח ביחס סיכוי/סיכון של 1:3.
+    ### 1. ניהול סיכונים חכם (ATR)
+    הסקריפט מחשב אוטומטית Stop Loss ו-Take Profit לפי התנודתיות של המניה. 
+    * **1.5 * ATR:** הסטופ לוס הדינמי שלנו.
+    * **3.0 * ATR:** יעד הרווח (יחס סיכוי/סיכון של 1:2).
     """)
