@@ -111,9 +111,8 @@ with tab1:
             reward = tp - last_price
             rr_ratio = round(reward / risk, 2)
             
-            # עיצוב ויזואלי של כרטיסיות נתונים
+            # --- דשבורד ויזואלי מסודר משמאל לימין ---
             st.subheader(f"📊 ניתוח טכני: {selected}")
-            
             col1, col2, col3, col4 = st.columns(4)
             col1.metric("מחיר נוכחי", f"${last_price:.2f}")
             col2.metric("Stop Loss", f"${sl}", f"{round(((sl-last_price)/last_price)*100, 2)}%", delta_color="inverse")
@@ -125,7 +124,7 @@ with tab1:
             fig.add_trace(go.Candlestick(x=data.index, open=data['Open'], high=data['High'], low=data['Low'], close=data['Close'], name='Price'), row=1, col=1)
             fig.add_trace(go.Scatter(x=data.index, y=data['RVOL'], name='RVOL', line=dict(color='orange')), row=2, col=1)
             fig.add_trace(go.Scatter(x=data.index, y=data['MACD'], name='MACD'), row=3, col=1)
-            fig.update_layout(height=600, margin=dict(l=20, r=20, t=30, b=20))
+            fig.update_layout(height=500, margin=dict(l=20, r=20, t=30, b=20))
             st.plotly_chart(fig, use_container_width=True)
             
             if st.button("הוסף לתיק"):
