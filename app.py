@@ -41,14 +41,27 @@ def get_indicators(df):
     return df.dropna()
 
 def calculate_score(df):
+    # סינון: מניות מתוחות (יותר מ-6% מהממוצע) או זינוק חד מדי (8% ב-3 ימים)
     dist_from_ma = (df['Close'].iloc[-1] - df['MA20'].iloc[-1]) / df['MA20'].iloc[-1]
-    if df['Daily_Change'].tail(3).sum() > 0.10 or abs(dist_from_ma) > 0.08:
+    if df['Daily_Change'].tail(3).sum() > 0.08 or abs(dist_from_ma) > 0.06:
         return -1
+    
+    # בדיקת "משך דחיסה" (חייבת להיות בדחיסה לפחות 4 ימים מתוך ה-5 האחרונים)
+    is_squeezing = df['Squeeze'] < df['Squeeze'].rolling(20).mean()
+    if is_squeezing.rolling(5).sum().iloc[-1] < 4:
+        return -1
+    
     score = 0
+    # בונוס על דחיסה (Squeeze)
     min_squeeze = df['Squeeze'].rolling(20).min().iloc[-1]
-    if df['Squeeze'].iloc[-1] <= min_squeeze * 1.2: score += 4
+    if df['Squeeze'].iloc[-1] <= min_squeeze * 1.1: score += 4
+    
+    # בונוס על איסוף מוסדי (OBV Slope)
     if df['OBV'].diff(5).mean() > 0: score += 2
-    if 1.0 < df['RVOL'].iloc[-1] < 1.5: score += 1
+    
+    # בונוס על RVOL שמעיד על עניין מבוקר
+    if 1.0 < df['RVOL'].iloc[-1] < 1.4: score += 1
+        
     return score
 
 # --- ממשק משתמש ---
@@ -87,7 +100,7 @@ with tab1:
         st.subheader("דירוג מניות לסריקה")
         st.dataframe(
             df_res,
-            column_config={"Score": st.column_config.ProgressColumn("Score", help="ניקוד המניה", format="%d", min_value=0, max_value=7)},
+            column_config={"Score": st.column_config.ProgressColumn("Score", help="ניקוד המניה (0-7)", format="%d", min_value=0, max_value=7)},
             use_container_width=True
         )
         
@@ -101,8 +114,11 @@ with tab1:
             data = get_indicators(get_data(ticker))
             last_price, atr = float(data['Close'].iloc[-1]), float(data['ATR'].iloc[-1])
             sl, tp = round(last_price - (1.5 * atr), 2), round(last_price + (3.0 * atr), 2)
+            rr_ratio = round((tp - last_price) / (last_price - sl), 2)
             
             st.subheader(f"📊 ניתוח טכני: {ticker}")
+            st.markdown(f"**מחיר:** ${last_price:.2f} | **SL:** ${sl:.2f} | **TP:** ${tp:.2f} | **R/R:** 1:{rr_ratio:.2f}")
+            
             fig = make_subplots(rows=3, cols=1, shared_xaxes=True, row_heights=[0.5, 0.25, 0.25])
             fig.add_trace(go.Candlestick(x=data.index, open=data['Open'], high=data['High'], low=data['Low'], close=data['Close'], name='Price'), row=1, col=1)
             fig.add_trace(go.Scatter(x=data.index, y=data['RVOL'], name='RVOL', line=dict(color='orange')), row=2, col=1)
@@ -130,5 +146,9 @@ with tab2:
     else: st.info("התיק ריק.")
 
 with tab3:
-    st.header("🎓 מדריך אסטרטגי")
-    st.markdown("הסורק מזהה דחיסת תנודתיות (Squeeze) עם איסוף מוסדי, תוך סינון מניות מתוחות.")
+    st.header("🎓 מדריך אסטרטגי: צייד התפרצויות (ASST)")
+    st.markdown("""
+    המערכת מחפשת כעת **דחיסה ארוכה (לפחות 4 מתוך 5 ימים)** ללא מתיחות יתר.
+    * 
+    * 
+    """)
