@@ -111,7 +111,7 @@ with tab1:
             reward = tp - last_price
             rr_ratio = round(reward / risk, 2)
             
-            # --- דשבורד ויזואלי מסודר משמאל לימין ---
+            # --- דשבורד ויזואלי: מדדים בשורה אחת משמאל לימין ---
             st.subheader(f"📊 ניתוח טכני: {selected}")
             col1, col2, col3, col4 = st.columns(4)
             col1.metric("מחיר נוכחי", f"${last_price:.2f}")
