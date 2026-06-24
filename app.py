@@ -5,83 +5,166 @@ import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 import os
 import numpy as np
+from datetime import datetime
 
-# הגדרות
+# הגדרות כלליות
 st.set_page_config(page_title="KEISAR Pro Hunter", layout="wide")
 PORTFOLIO_FILE = 'portfolio.csv'
 SCAN_RESULTS_FILE = 'scan_results.csv'
 
-# --- פונקציות ליבה ---
-def get_indicators(ticker):
-    df = yf.Ticker(ticker).history(period="6mo")
-    if len(df) < 20: return None
+# --- פונקציות חישוב ---
+@st.cache_data(ttl=3600)
+def get_data(ticker):
+    return yf.Ticker(ticker).history(period="6mo")
+
+def get_market_status():
+    spy = yf.Ticker("SPY").history(period="1y")
+    spy['MA200'] = spy['Close'].rolling(window=200).mean()
+    return spy['Close'].iloc[-1] > spy['MA200'].iloc[-1]
+
+def get_indicators(df):
+    df = df.copy()
+    df['Daily_Change'] = df['Close'].pct_change()
     df['MA20'] = df['Close'].rolling(window=20).mean()
     df['STD'] = df['Close'].rolling(window=20).std()
     df['Upper'] = df['MA20'] + (df['STD'] * 2)
     df['Lower'] = df['MA20'] - (df['STD'] * 2)
     df['Squeeze'] = (df['Upper'] - df['Lower']) / df['Close']
-    df['RVOL'] = df['Volume'] / df['Volume'].rolling(window=20).mean()
-    df['ATR'] = (df['High'] - df['Low']).rolling(window=14).mean()
+    df['OBV'] = (np.sign(df['Close'].diff()) * df['Volume']).fillna(0).cumsum()
+    df['AvgVol'] = df['Volume'].rolling(window=20).mean()
+    df['RVOL'] = df['Volume'] / df['AvgVol']
+    high_low = df['High'] - df['Low']
+    df['ATR'] = high_low.rolling(window=14).mean()
+    exp1 = df['Close'].ewm(span=12, adjust=False).mean()
+    exp2 = df['Close'].ewm(span=26, adjust=False).mean()
+    df['MACD'] = exp1 - exp2
+    df['Signal'] = df['MACD'].ewm(span=9, adjust=False).mean()
     return df.dropna()
 
 def calculate_score(df):
+    if df['Daily_Change'].iloc[-1] < -0.05: return -1
     score = 0
     if df['Squeeze'].iloc[-1] < 0.10: score += 2
+    elif df['Squeeze'].iloc[-1] < 0.15: score += 1
     if df['Close'].iloc[-1] > df['MA20'].iloc[-1]: score += 1
+    if df['OBV'].iloc[-1] > df['OBV'].iloc[-10]: score += 1
     if df['RVOL'].iloc[-1] > 1.5: score += 1
     return score
 
-# --- ממשק ---
-st.title("◈ KEISAR: סורק מוסדי")
-tab1, tab2 = st.tabs(["📊 סורק", "💼 תיק"])
+# --- ממשק משתמש ---
+st.title("◈ KEISAR: סורק מוסדי מקצועי")
+if not get_market_status():
+    st.warning("⚠️ אזהרת מערכת: השוק (SPY) מתחת ל-MA200.")
+
+tab1, tab2, tab3 = st.tabs(["📊 סורק", "💼 תיק השקעות", "🎓 מדריך אסטרטגי"])
 
 with tab1:
-    all_files = sorted([f for f in os.listdir('.') if f.endswith('.csv') and 'portfolio' not in f and 'scan' not in f])
-    selected_files = st.sidebar.multiselect("בחר רשימות:", all_files)
+    st.sidebar.header("⚙️ הגדרות סריקה")
+    all_files = [f for f in os.listdir('.') if f.endswith('.csv') and 'portfolio' not in f and 'scan_results' not in f]
+    selected_files = st.sidebar.multiselect("בחר קבצי רשימות:", all_files, default=all_files)
 
     if st.button("🚀 הפעל סריקה"):
         master_list = []
+        alerts = []
+        all_tickers = []
         for file in selected_files:
-            for ticker in pd.read_csv(file, header=None).iloc[:, 0].dropna().unique():
-                try:
-                    df = get_indicators(ticker)
-                    if df is not None:
-                        master_list.append({"Ticker": ticker, "Score": calculate_score(df), "Price": round(float(df['Close'].iloc[-1]), 2), "RVOL": round(float(df['RVOL'].iloc[-1]), 2)})
-                except: continue
+            all_tickers.extend(pd.read_csv(file, header=None).iloc[:, 0].dropna().unique())
+        
+        progress_bar = st.progress(0)
+        for i, ticker in enumerate(all_tickers):
+            try:
+                df = get_indicators(get_data(ticker))
+                if len(df) > 50:
+                    score = calculate_score(df)
+                    if score >= 0:
+                        master_list.append({"Ticker": ticker, "Score": score, "Price": round(float(df['Close'].iloc[-1]), 2), "RVOL": round(float(df['RVOL'].iloc[-1]), 2)})
+                        if score >= 4 and df['RVOL'].iloc[-1] > 1.5:
+                            alerts.append(f"🔥 איתות חם: {ticker} בציון {score} ו-RVOL {round(float(df['RVOL'].iloc[-1]), 2)}!")
+            except: continue
+            progress_bar.progress((i + 1) / len(all_tickers))
+        
         pd.DataFrame(master_list).sort_values(by="Score", ascending=False).to_csv(SCAN_RESULTS_FILE, index=False)
+        st.session_state['alerts'] = alerts
         st.rerun()
+
+    if 'alerts' in st.session_state and st.session_state['alerts']:
+        st.error("🚨 מרכז התראות בזמן אמת:")
+        for alert in st.session_state['alerts']:
+            st.write(alert)
 
     if os.path.exists(SCAN_RESULTS_FILE):
         df_res = pd.read_csv(SCAN_RESULTS_FILE)
-        df_res['Signal'] = df_res['Score'].apply(lambda x: '✅ HIGH MOMENTUM' if x >= 3 else '')
-        st.dataframe(df_res, use_container_width=True)
-        
-        ticker = st.selectbox("בחר מניה לניתוח:", df_res['Ticker'].unique())
-        if st.button("הצג גרף וניתוח"):
-            df = get_indicators(ticker)
-            last_p, atr = float(df['Close'].iloc[-1]), float(df['ATR'].iloc[-1])
-            sl, tp = round(last_p - 1.5*atr, 2), round(last_p + 2.5*atr, 2)
-            rr = round((tp - last_p) / (last_p - sl), 2)
-            sl_pct, tp_pct = round(((last_p - sl)/last_p)*100, 2), round(((tp - last_p)/last_p)*100, 2)
+        selected = st.selectbox("בחר מניה לניתוח:", df_res['Ticker'].unique())
+        if st.button("הצג ניתוח"):
+            st.session_state['selected_ticker'] = selected
+            st.rerun()
             
-            # תצוגת נתוני סיכון-סיכוי
-            st.metric("יחס R/R", f"1:{rr}")
-            col1, col2 = st.columns(2)
-            col1.metric("Stop Loss", f"${sl} ({sl_pct}%)")
-            col2.metric("Take Profit", f"${tp} ({tp_pct}%)")
+        if 'selected_ticker' in st.session_state:
+            ticker = st.session_state['selected_ticker']
+            data = get_indicators(get_data(ticker))
+            last_price = float(data['Close'].iloc[-1])
+            atr = float(data['ATR'].iloc[-1])
+            sl = round(last_price - (1.5 * atr), 2)
+            tp = round(last_price + (3.0 * atr), 2)
+            risk = last_price - sl
+            reward = tp - last_price
+            rr_ratio = round(reward / risk, 2)
             
-            # גרף
-            fig = make_subplots(rows=2, cols=1, shared_xaxes=True, row_heights=[0.7, 0.3])
-            fig.add_trace(go.Candlestick(x=df.index, open=df['Open'], high=df['High'], low=df['Low'], close=df['Close']), row=1, col=1)
-            fig.add_trace(go.Bar(x=df.index, y=df['RVOL'], name='RVOL'), row=2, col=1)
-            fig.update_layout(height=500, xaxis_rangeslider_visible=False)
+            st.subheader(f"📊 ניתוח טכני: {ticker}")
+            st.markdown("""
+            <div style="display: flex; justify-content: space-between; align-items: center; background-color: #f8f9fa; padding: 15px; border-radius: 10px;">
+                <div style="text-align: center;"><b>מחיר</b><br>${:.2f}</div>
+                <div style="text-align: center; color: red;"><b>SL</b><br>${:.2f}</div>
+                <div style="text-align: center; color: green;"><b>TP</b><br>${:.2f}</div>
+                <div style="text-align: center;"><b>R/R</b><br>1 : {:.2f}</div>
+            </div>
+            """.format(last_price, sl, tp, rr_ratio), unsafe_allow_html=True)
+            
+            st.markdown("---")
+            fig = make_subplots(rows=3, cols=1, shared_xaxes=True, row_heights=[0.5, 0.25, 0.25])
+            fig.add_trace(go.Candlestick(x=data.index, open=data['Open'], high=data['High'], low=data['Low'], close=data['Close'], name='Price'), row=1, col=1)
+            fig.add_trace(go.Scatter(x=data.index, y=data['RVOL'], name='RVOL', line=dict(color='orange')), row=2, col=1)
+            fig.add_trace(go.Scatter(x=data.index, y=data['MACD'], name='MACD'), row=3, col=1)
+            fig.update_layout(height=500, margin=dict(l=20, r=20, t=30, b=20))
             st.plotly_chart(fig, use_container_width=True)
-
+            
             if st.button("הוסף לתיק"):
-                pd.DataFrame({'Ticker': [ticker], 'Entry': [last_p], 'SL': [sl], 'TP': [tp]}).to_csv(PORTFOLIO_FILE, mode='a', header=not os.path.exists(PORTFOLIO_FILE), index=False)
-                st.success("נוסף!")
+                new_entry = pd.DataFrame({
+                    'Ticker': [ticker], 
+                    'Entry': [last_price], 
+                    'SL': [sl], 
+                    'TP': [tp],
+                    'Date': [datetime.now().strftime("%Y-%m-%d")]
+                })
+                mode = 'a' if os.path.exists(PORTFOLIO_FILE) else 'w'
+                new_entry.to_csv(PORTFOLIO_FILE, mode=mode, header=not os.path.exists(PORTFOLIO_FILE), index=False)
+                st.success(f"{ticker} נוספה לתיק!")
+                st.rerun()
 
 with tab2:
     if os.path.exists(PORTFOLIO_FILE):
-        st.table(pd.read_csv(PORTFOLIO_FILE))
-        if st.button("🗑️ נקה תיק"): os.remove(PORTFOLIO_FILE); st.rerun()
+        df_port = pd.read_csv(PORTFOLIO_FILE)
+        st.subheader("💼 התיק הפעיל שלך")
+        
+        for i, row in df_port.iterrows():
+            col1, col2 = st.columns([0.8, 0.2])
+            curr_p = float(get_data(row['Ticker'])['Close'].iloc[-1])
+            ret = ((curr_p - row['Entry']) / row['Entry']) * 100
+            
+            col1.write(f"**{row['Ticker']}** | כניסה: ${row['Entry']} | **נוכחי: ${curr_p:.2f}** | תשואה: {ret:.2f}%")
+            col1.caption(f"יעדים: SL ${row['SL']} | TP ${row['TP']}")
+            
+            if col2.button("🗑️ הסר", key=f"del_{i}"):
+                df_port.drop(i, inplace=True)
+                df_port.to_csv(PORTFOLIO_FILE, index=False)
+                st.rerun()
+    else:
+        st.info("התיק עדיין ריק.")
+
+with tab3:
+    st.header("🎓 מדריך אסטרטגי: צייד התפרצויות (ASST)")
+    st.markdown("""
+    ### ניהול סיכונים חכם
+    * **R/R Ratio:** יחס הסיכוי מול הסיכון. שאיפה ל-1.5 ומעלה.
+    * **ATR:** כלי התנודתיות שקובע היכן הסטופ שלך צריך להיות.
+    """)
