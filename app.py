@@ -26,7 +26,6 @@ def get_market_status():
 
 def get_indicators(df):
     df = df.copy()
-    df['Daily_Change'] = df['Close'].pct_change()
     df['MA20'] = df['Close'].rolling(window=20).mean()
     df['STD'] = df['Close'].rolling(window=20).std()
     df['Upper'] = df['MA20'] + (df['STD'] * 2)
@@ -42,10 +41,8 @@ def get_indicators(df):
     return df.dropna()
 
 def calculate_score(df):
-    if df['Daily_Change'].iloc[-1] < -0.05: return -1
     score = 0
     if df['Squeeze'].iloc[-1] < 0.10: score += 2
-    elif df['Squeeze'].iloc[-1] < 0.15: score += 1
     if df['Close'].iloc[-1] > df['MA20'].iloc[-1]: score += 1
     if df['OBV'].iloc[-1] > df['OBV'].iloc[-10]: score += 1
     if df['RVOL'].iloc[-1] > 1.5: score += 1
@@ -56,31 +53,26 @@ st.title("◈ KEISAR: סורק מוסדי מקצועי")
 if not get_market_status():
     st.warning("⚠️ אזהרת מערכת: השוק (SPY) מתחת ל-MA200.")
 
-tab1, tab2, tab3 = st.tabs(["📊 סורק", "💼 תיק השקעות", "🎓 מדריך אסטרטגי"])
+tab1, tab2 = st.tabs(["📊 סורק", "💼 תיק השקעות"])
 
 with tab1:
     st.sidebar.header("⚙️ הגדרות סריקה")
-    # מיון קבצים בסדר עולה
     all_files = sorted([f for f in os.listdir('.') if f.endswith('.csv') and 'portfolio' not in f and 'scan_results' not in f])
     selected_files = st.sidebar.multiselect("בחר קבצי רשימות:", all_files)
 
     if st.button("🚀 הפעל סריקה"):
         master_list = []
-        alerts = []
         all_tickers = []
         for file in selected_files:
             all_tickers.extend(pd.read_csv(file, header=None).iloc[:, 0].dropna().unique())
         
-        progress_bar = st.progress(0)
-        for i, ticker in enumerate(all_tickers):
+        for ticker in all_tickers:
             try:
                 df = get_indicators(get_data(ticker))
                 if len(df) > 20:
                     score = calculate_score(df)
-                    if score >= 0:
-                        master_list.append({"Ticker": ticker, "Score": score, "Price": round(float(df['Close'].iloc[-1]), 2), "RVOL": round(float(df['RVOL'].iloc[-1]), 2)})
+                    master_list.append({"Ticker": ticker, "Score": score, "Price": round(float(df['Close'].iloc[-1]), 2), "RVOL": round(float(df['RVOL'].iloc[-1]), 2)})
             except: continue
-            progress_bar.progress((i + 1) / len(all_tickers))
         
         if master_list:
             pd.DataFrame(master_list).sort_values(by="Score", ascending=False).to_csv(SCAN_RESULTS_FILE, index=False)
@@ -88,25 +80,20 @@ with tab1:
 
     if os.path.exists(SCAN_RESULTS_FILE):
         df_res = pd.read_csv(SCAN_RESULTS_FILE)
-        st.dataframe(df_res, use_container_width=True)
-        selected = st.selectbox("בחר מניה לניתוח:", df_res['Ticker'].unique())
+        # הוספת סימון למניות מנצחות
+        df_res['Signal'] = df_res['Score'].apply(lambda x: '✅ HIGH MOMENTUM' if x >= 4 else '')
         
+        st.dataframe(df_res, use_container_width=True)
+        
+        selected = st.selectbox("בחר מניה לניתוח:", df_res['Ticker'].unique())
         if st.button("הצג ניתוח"):
-            st.session_state['selected_ticker'] = selected
-            st.rerun()
-            
-        if 'selected_ticker' in st.session_state:
-            ticker = st.session_state['selected_ticker']
-            data = get_indicators(get_data(ticker))
+            data = get_indicators(get_data(selected))
             last_price = float(data['Close'].iloc[-1])
             atr = float(data['ATR'].iloc[-1])
-            sl, tp = round(last_price - (1.5 * atr), 2), round(last_price + (3.0 * atr), 2)
-            
-            st.subheader(f"📊 ניתוח טכני: {ticker}")
-            st.write(f"מחיר: ${last_price:.2f} | SL: ${sl:.2f} | TP: ${tp:.2f}")
-            
+            sl, tp = round(last_price - (1.5 * atr), 2), round(last_price + (2.5 * atr), 2)
+            st.write(f"### {selected} | מחיר: ${last_price:.2f} | SL: ${sl:.2f} | TP: ${tp:.2f}")
             if st.button("הוסף לתיק"):
-                pd.DataFrame({'Ticker': [ticker], 'Entry': [last_price], 'SL': [sl], 'TP': [tp]}).to_csv(PORTFOLIO_FILE, mode='a', header=not os.path.exists(PORTFOLIO_FILE), index=False)
+                pd.DataFrame({'Ticker': [selected], 'Entry': [last_price], 'SL': [sl], 'TP': [tp]}).to_csv(PORTFOLIO_FILE, mode='a', header=not os.path.exists(PORTFOLIO_FILE), index=False)
                 st.success("נוסף לתיק!")
 
 with tab2:
@@ -121,7 +108,3 @@ with tab2:
                     df_port.drop(i).to_csv(PORTFOLIO_FILE, index=False)
                     st.rerun()
         except: os.remove(PORTFOLIO_FILE); st.rerun()
-
-with tab3:
-    st.header("🎓 מדריך אסטרטגי")
-    st.write("השתמש בסורק כדי למצוא מניות עם ציון גבוה (Squeeze נמוך ו-RVOL גבוה).")
