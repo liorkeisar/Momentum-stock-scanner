@@ -85,7 +85,7 @@ with tab1:
             atr = float(data['ATR'].iloc[-1])
             sl = round(last_price - (1.5 * atr), 2)
             tp = round(last_price + (3.0 * atr), 2)
-            rr = round((tp - last_price) / (last_price - sl), 2)
+            rr = round((tp - last_price) / (last_price - sl), 2) if (last_price - sl) != 0 else 0
             
             st.markdown(f"### 📊 ניתוח: {ticker}")
             st.markdown(f"""
@@ -107,15 +107,23 @@ with tab1:
 with tab2:
     if os.path.exists(PORTFOLIO_FILE):
         df_port = pd.read_csv(PORTFOLIO_FILE)
-        for i, row in df_port.iterrows():
-            col1, col2 = st.columns([0.8, 0.2])
-            curr_p = float(get_data(row['Ticker'])['Close'].iloc[-1])
-            ret = ((curr_p - row['Entry']) / row['Entry']) * 100
-            col1.write(f"**{row['Ticker']}** | כניסה: ${row['Entry']} | נוכחי: ${curr_p:.2f} | תשואה: {ret:.2f}%")
-            col1.caption(f"יעדים: SL ${row['SL']} | TP ${row['TP']}")
-            if col2.button("🗑️ הסר", key=f"del_{i}"):
-                df_port.drop(i, inplace=True)
-                df_port.to_csv(PORTFOLIO_FILE, index=False)
-                st.rerun()
+        # בדיקת תקינות עמודות
+        required_cols = ['Ticker', 'Entry', 'SL', 'TP']
+        if all(col in df_port.columns for col in required_cols):
+            for i, row in df_port.iterrows():
+                col1, col2 = st.columns([0.8, 0.2])
+                try:
+                    curr_p = float(get_data(row['Ticker'])['Close'].iloc[-1])
+                    ret = ((curr_p - row['Entry']) / row['Entry']) * 100
+                    col1.write(f"**{row['Ticker']}** | כניסה: ${row['Entry']} | נוכחי: ${curr_p:.2f} | תשואה: {ret:.2f}%")
+                    col1.caption(f"יעדים: SL ${row['SL']} | TP ${row['TP']}")
+                except: col1.write(f"שגיאה בטעינת {row['Ticker']}")
+                
+                if col2.button("🗑️ הסר", key=f"del_{i}"):
+                    df_port.drop(i, inplace=True)
+                    df_port.to_csv(PORTFOLIO_FILE, index=False)
+                    st.rerun()
+        else:
+            st.warning("פורמט התיק ישן. אנא מחק את portfolio.csv והוסף מניות מחדש.")
     else:
         st.info("התיק ריק.")
