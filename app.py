@@ -34,29 +34,37 @@ def get_indicators(df):
     df['AvgVol'] = df['Volume'].rolling(window=20).mean()
     df['RVOL'] = df['Volume'] / df['AvgVol']
     df['ATR'] = (df['High'] - df['Low']).rolling(window=14).mean()
+    # חישוב RSI
+    delta = df['Close'].diff()
+    gain = (delta.where(delta > 0, 0)).rolling(window=14).mean()
+    loss = (-delta.where(delta < 0, 0)).rolling(window=14).mean()
+    rs = gain / loss
+    df['RSI'] = 100 - (100 / (1 + rs))
+    
     exp1 = df['Close'].ewm(span=12, adjust=False).mean()
     exp2 = df['Close'].ewm(span=26, adjust=False).mean()
     df['MACD'] = exp1 - exp2
-    df['Signal'] = df['MACD'].ewm(span=9, adjust=False).mean()
     return df.dropna()
 
 def calculate_score(df):
-    # 1. סינון מתיחות (Overextended)
+    # סינונים מחמירים
     dist_from_ma = (df['Close'].iloc[-1] - df['MA20'].iloc[-1]) / df['MA20'].iloc[-1]
-    if df['Daily_Change'].tail(3).sum() > 0.08 or abs(dist_from_ma) > 0.06:
+    
+    # 1. סינון מתיחות, עלייה מהירה ו-RSI
+    if df['Daily_Change'].tail(3).sum() > 0.08 or abs(dist_from_ma) > 0.04 or df['RSI'].iloc[-1] > 70:
         return -1
     
-    # 2. סינון דחיסה מחמיר (Squeeze Severity & Duration)
+    # 2. סינון דחיסה (5 ימים רצופים וקירבה למינימום תנודתיות)
     min_squeeze = df['Squeeze'].rolling(20).min().iloc[-1]
-    if df['Squeeze'].iloc[-1] > min_squeeze * 1.05: # חייבת להיות קרובה מאוד לשפל התנודתיות
+    if df['Squeeze'].iloc[-1] > min_squeeze * 1.05:
         return -1
     
     is_squeezing = df['Squeeze'] < df['Squeeze'].rolling(20).mean()
-    if is_squeezing.rolling(5).sum().iloc[-1] < 5: # חייבת להיות בדחיסה 5 ימים מלאים
+    if is_squeezing.rolling(5).sum().iloc[-1] < 5:
         return -1
     
-    # 3. חישוב ניקוד
-    score = 4 # בסיס על זה שהיא עברה את הסינונים המחמירים
+    # 3. ניקוד
+    score = 4 
     if df['OBV'].diff(5).mean() > 0: score += 2
     if 1.0 < df['RVOL'].iloc[-1] < 1.4: score += 1
         
@@ -66,10 +74,9 @@ def calculate_score(df):
 st.title("◈ KEISAR: סורק התפרצויות מקצועי")
 if not get_market_status(): st.warning("⚠️ אזהרת מערכת: השוק (SPY) מתחת ל-MA200.")
 
-tab1, tab2, tab3 = st.tabs(["📊 סורק", "💼 תיק השקעות", "🎓 מדריך אסטרטגי"])
+tab1, tab2, tab3, tab4 = st.tabs(["📊 סורק", "💼 תיק השקעות", "🎓 מדריך אסטרטגי", "🔍 זן מניה"])
 
 with tab1:
-    st.sidebar.header("⚙️ הגדרות סריקה")
     all_files = [f for f in os.listdir('.') if f.endswith('.csv') and 'portfolio' not in f and 'scan_results' not in f]
     selected_files = st.sidebar.multiselect("בחר קבצי רשימות:", all_files, default=all_files)
 
@@ -83,10 +90,9 @@ with tab1:
         for i, ticker in enumerate(all_tickers):
             try:
                 df = get_indicators(get_data(ticker))
-                if len(df) > 50:
-                    score = calculate_score(df)
-                    if score >= 0:
-                        master_list.append({"Ticker": ticker, "Score": score, "Price": round(float(df['Close'].iloc[-1]), 2)})
+                score = calculate_score(df)
+                if score >= 0:
+                    master_list.append({"Ticker": ticker, "Score": score, "Price": round(float(df['Close'].iloc[-1]), 2)})
             except: continue
             progress.progress((i + 1) / len(all_tickers))
         
@@ -95,38 +101,17 @@ with tab1:
 
     if os.path.exists(SCAN_RESULTS_FILE):
         df_res = pd.read_csv(SCAN_RESULTS_FILE)
-        st.subheader("דירוג מניות לסריקה")
-        st.dataframe(
-            df_res,
-            column_config={"Score": st.column_config.ProgressColumn("Score", help="ניקוד המניה (0-7)", format="%d", min_value=0, max_value=7)},
-            use_container_width=True
-        )
-        
-        selected = st.selectbox("בחר מניה לניתוח:", df_res['Ticker'].unique())
-        if st.button("הצג ניתוח"):
-            st.session_state['selected_ticker'] = selected
-            st.rerun()
-            
-        if 'selected_ticker' in st.session_state:
-            ticker = st.session_state['selected_ticker']
-            data = get_indicators(get_data(ticker))
-            last_price, atr = float(data['Close'].iloc[-1]), float(data['ATR'].iloc[-1])
-            sl, tp = round(last_price - (1.5 * atr), 2), round(last_price + (3.0 * atr), 2)
-            rr_ratio = round((tp - last_price) / (last_price - sl), 2)
-            
-            st.subheader(f"📊 ניתוח טכני: {ticker}")
-            st.markdown(f"**מחיר:** ${last_price:.2f} | **SL:** ${sl:.2f} | **TP:** ${tp:.2f} | **R/R:** 1:{rr_ratio:.2f}")
-            
-            fig = make_subplots(rows=3, cols=1, shared_xaxes=True, row_heights=[0.5, 0.25, 0.25])
-            fig.add_trace(go.Candlestick(x=data.index, open=data['Open'], high=data['High'], low=data['Low'], close=data['Close'], name='Price'), row=1, col=1)
-            fig.add_trace(go.Scatter(x=data.index, y=data['RVOL'], name='RVOL', line=dict(color='orange')), row=2, col=1)
-            fig.add_trace(go.Scatter(x=data.index, y=data['MACD'], name='MACD'), row=3, col=1)
-            st.plotly_chart(fig, use_container_width=True)
-            
-            if st.button("הוסף לתיק"):
-                pd.DataFrame({'Ticker': [ticker], 'Entry': [last_price], 'SL': [sl], 'TP': [tp], 'Date': [datetime.now().strftime("%Y-%m-%d")]}).to_csv(PORTFOLIO_FILE, mode='a', header=not os.path.exists(PORTFOLIO_FILE), index=False)
-                st.success(f"{ticker} נוספה לתיק!")
-                st.rerun()
+        st.dataframe(df_res, column_config={"Score": st.column_config.ProgressColumn("Score", format="%d", min_value=0, max_value=7)}, use_container_width=True)
+
+with tab4:
+    ticker_input = st.text_input("הזן סימול מניה (למשל: AAPL):").upper()
+    if st.button("בדוק מניה"):
+        df = get_indicators(get_data(ticker_input))
+        score = calculate_score(df)
+        status_color = "green" if score >= 4 else "orange" if score >= 0 else "red"
+        st.markdown(f"### ציון: <span style='color:{status_color}'>{score}/7</span>", unsafe_allow_html=True)
+        if score >= 0: st.success("המניה עומדת בקריטריונים!")
+        else: st.error("המניה נפסלה (מתוחה מדי או ללא דחיסה מספקת).")
 
 with tab2:
     if os.path.exists(PORTFOLIO_FILE):
@@ -136,17 +121,8 @@ with tab2:
             col1, col2 = st.columns([0.8, 0.2])
             curr_p = float(get_data(row['Ticker'])['Close'].iloc[-1])
             ret = ((curr_p - row['Entry']) / row['Entry']) * 100
-            col1.write(f"**{row['Ticker']}** | תשואה: {ret:.2f}% | נוכחי: ${curr_p:.2f}")
+            col1.write(f"**{row['Ticker']}** | תשואה: {ret:.2f}%")
             if col2.button("🗑️ הסר", key=f"del_{i}"):
                 df_port.drop(i, inplace=True)
                 df_port.to_csv(PORTFOLIO_FILE, index=False)
                 st.rerun()
-    else: st.info("התיק ריק.")
-
-with tab3:
-    st.header("🎓 מדריך אסטרטגי: צייד התפרצויות (ASST)")
-    st.markdown("""
-    המערכת מחפשת כעת **דחיסה ארוכה (5 ימים)** וקרובה לשפל תנודתיות.
-    
-    
-    """)
