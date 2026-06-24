@@ -64,7 +64,7 @@ with tab1:
 
     if st.button("🚀 הפעל סריקה"):
         master_list = []
-        alerts = [] # רשימת התראות פנימית
+        alerts = []
         
         all_tickers = []
         for file in selected_files:
@@ -78,22 +78,67 @@ with tab1:
                     score = calculate_score(df)
                     if score >= 0:
                         master_list.append({"Ticker": ticker, "Score": score, "Price": round(float(df['Close'].iloc[-1]), 2), "RVOL": round(float(df['RVOL'].iloc[-1]), 2)})
-                        # לוגיקת התראה פנימית
-                        if score == 5 and df['RVOL'].iloc[-1] > 1.5:
-                            alerts.append(f"🔥 איתות חם: {ticker} בציון 5 ו-RVOL גבוה!")
+                        if score >= 4 and df['RVOL'].iloc[-1] > 1.5:
+                            alerts.append(f"🔥 איתות חם: {ticker} בציון {score} ו-RVOL {round(float(df['RVOL'].iloc[-1]), 2)}!")
             except: continue
             progress_bar.progress((i + 1) / len(all_tickers))
         
         pd.DataFrame(master_list).sort_values(by="Score", ascending=False).to_csv(SCAN_RESULTS_FILE, index=False)
-        st.session_state['alerts'] = alerts # שמירת התראות בזיכרון הממשק
+        st.session_state['alerts'] = alerts
         st.rerun()
 
-    # הצגת התראות אם קיימות
     if 'alerts' in st.session_state and st.session_state['alerts']:
         st.error("🚨 מרכז התראות בזמן אמת:")
         for alert in st.session_state['alerts']:
             st.write(alert)
 
     if os.path.exists(SCAN_RESULTS_FILE):
-        st.dataframe(pd.read_csv(SCAN_RESULTS_FILE), use_container_width=True)
-        # ... (שאר הקוד לניתוח והוספה לתיק נשאר זהה) ...
+        df_res = pd.read_csv(SCAN_RESULTS_FILE)
+        # סימון מניות עם RVOL גבוה בצבע ירוק בטבלה
+        def style_rvol(row):
+            color = 'background-color: #d4edda' if row['RVOL'] > 1.5 else ''
+            return [color] * len(row)
+        
+        st.dataframe(df_res.style.apply(style_rvol, axis=1), use_container_width=True)
+        
+        selected = st.selectbox("בחר מניה לניתוח:", df_res['Ticker'].unique())
+        if st.button("הצג ניתוח"):
+            data = get_indicators(get_data(selected))
+            fig = make_subplots(rows=3, cols=1, shared_xaxes=True, row_heights=[0.5, 0.25, 0.25])
+            fig.add_trace(go.Candlestick(x=data.index, open=data['Open'], high=data['High'], low=data['Low'], close=data['Close'], name='Price'), row=1, col=1)
+            fig.add_trace(go.Scatter(x=data.index, y=data['RVOL'], name='RVOL', line=dict(color='orange')), row=2, col=1)
+            fig.add_trace(go.Scatter(x=data.index, y=data['MACD'], name='MACD'), row=3, col=1)
+            st.plotly_chart(fig, use_container_width=True)
+            if st.button("הוסף לתיק"):
+                price = float(data['Close'].iloc[-1])
+                new_entry = pd.DataFrame({'Ticker': [selected], 'Entry_Price': [price], 'Date': [datetime.now().strftime("%Y-%m-%d")]})
+                mode = 'a' if os.path.exists(PORTFOLIO_FILE) else 'w'
+                new_entry.to_csv(PORTFOLIO_FILE, mode=mode, header=not os.path.exists(PORTFOLIO_FILE), index=False)
+                st.success(f"{selected} נוספה לתיק!")
+
+with tab2:
+    if os.path.exists(PORTFOLIO_FILE):
+        df_port = pd.read_csv(PORTFOLIO_FILE)
+        portfolio_data = []
+        for _, row in df_port.iterrows():
+            try:
+                curr_p = float(get_data(row['Ticker'])['Close'].iloc[-1])
+                ret = ((curr_p - row['Entry_Price']) / row['Entry_Price']) * 100
+                portfolio_data.append({**row.to_dict(), 'Current': round(curr_p, 2), 'Return_%': round(ret, 2)})
+            except: continue
+        st.dataframe(pd.DataFrame(portfolio_data), use_container_width=True)
+    else:
+        st.info("התיק ריק.")
+
+with tab3:
+    st.header("🎓 מדריך אסטרטגי: צייד התפרצויות (ASST)")
+    st.markdown("""
+    ### 1. עקרון ה-Squeeze (התכנסות)
+    מייצג שיווי משקל. כשהרצועות צמודות, השוק נמצא ב"שקט שלפני הסערה".
+    ### 2. ה-Trigger המוסדי (RVOL > 1.5)
+    המדד הקריטי ביותר. פריצה ללא RVOL היא לרוב פריצת שווא.
+    ### 3. דוגמה לעסקה
+    * **מצב:** Squeeze < 0.10. 
+    * **Trigger:** RVOL > 1.5.
+    * **ניהול סיכונים:** סטופ לוס מתחת לרצועת הבולינגר. יעד רווח ביחס סיכוי/סיכון של 1:3.
+    """)
