@@ -33,11 +33,8 @@ def get_indicators(df):
     df['OBV'] = (np.sign(df['Close'].diff()) * df['Volume']).fillna(0).cumsum()
     df['AvgVol'] = df['Volume'].rolling(window=20).mean()
     df['RVOL'] = df['Volume'] / df['AvgVol']
-    
-    # חישוב ATR לניהול סיכונים
     high_low = df['High'] - df['Low']
     df['ATR'] = high_low.rolling(window=14).mean()
-    
     exp1 = df['Close'].ewm(span=12, adjust=False).mean()
     exp2 = df['Close'].ewm(span=26, adjust=False).mean()
     df['MACD'] = exp1 - exp2
@@ -69,7 +66,6 @@ with tab1:
     if st.button("🚀 הפעל סריקה"):
         master_list = []
         alerts = []
-        
         all_tickers = []
         for file in selected_files:
             all_tickers.extend(pd.read_csv(file, header=None).iloc[:, 0].dropna().unique())
@@ -101,7 +97,6 @@ with tab1:
         def style_rvol(row):
             color = 'background-color: #d4edda' if row['RVOL'] > 1.5 else ''
             return [color] * len(row)
-        
         st.dataframe(df_res.style.apply(style_rvol, axis=1), use_container_width=True)
         
         selected = st.selectbox("בחר מניה לניתוח:", df_res['Ticker'].unique())
@@ -110,14 +105,19 @@ with tab1:
             last_price = float(data['Close'].iloc[-1])
             atr = float(data['ATR'].iloc[-1])
             
-            # חישוב רמות ניהול סיכונים
             sl = round(last_price - (1.5 * atr), 2)
             tp = round(last_price + (3.0 * atr), 2)
             
+            # חישוב יחס סיכוי סיכון
+            risk = last_price - sl
+            reward = tp - last_price
+            rr_ratio = round(reward / risk, 2)
+            
             st.metric(label="מחיר נוכחי", value=f"${last_price:.2f}")
-            col1, col2 = st.columns(2)
-            col1.metric("Stop Loss (1.5*ATR)", f"${sl}")
-            col2.metric("Take Profit (3*ATR)", f"${tp}")
+            col1, col2, col3 = st.columns(3)
+            col1.metric("Stop Loss", f"${sl}", delta=f"{round(((sl-last_price)/last_price)*100, 2)}%")
+            col2.metric("Take Profit", f"${tp}", delta=f"{round(((tp-last_price)/last_price)*100, 2)}%")
+            col3.metric("R/R Ratio", f"1 : {rr_ratio}")
             
             fig = make_subplots(rows=3, cols=1, shared_xaxes=True, row_heights=[0.5, 0.25, 0.25])
             fig.add_trace(go.Candlestick(x=data.index, open=data['Open'], high=data['High'], low=data['Low'], close=data['Close'], name='Price'), row=1, col=1)
@@ -129,7 +129,7 @@ with tab1:
                 new_entry = pd.DataFrame({'Ticker': [selected], 'Entry_Price': [last_price], 'Date': [datetime.now().strftime("%Y-%m-%d")]})
                 mode = 'a' if os.path.exists(PORTFOLIO_FILE) else 'w'
                 new_entry.to_csv(PORTFOLIO_FILE, mode=mode, header=not os.path.exists(PORTFOLIO_FILE), index=False)
-                st.success(f"{selected} נוספה לתיק עם יעדים מוגדרים!")
+                st.success(f"{selected} נוספה לתיק!")
 
 with tab2:
     if os.path.exists(PORTFOLIO_FILE):
@@ -148,8 +148,7 @@ with tab2:
 with tab3:
     st.header("🎓 מדריך אסטרטגי: צייד התפרצויות (ASST)")
     st.markdown("""
-    ### 1. ניהול סיכונים חכם (ATR)
-    הסקריפט מחשב אוטומטית Stop Loss ו-Take Profit לפי התנודתיות של המניה. 
-    * **1.5 * ATR:** הסטופ לוס הדינמי שלנו.
-    * **3.0 * ATR:** יעד הרווח (יחס סיכוי/סיכון של 1:2).
+    ### ניהול סיכונים חכם
+    * **R/R Ratio:** יחס הסיכוי מול הסיכון. אנחנו שואפים תמיד ליחס הגבוה מ-1.5 כדי שהעסקה תהיה כדאית סטטיסטית.
+    * **Delta %:** מראה כמה אחוזים המניה צריכה לעלות/לרדת כדי לפגוע ביעדים שלך.
     """)
