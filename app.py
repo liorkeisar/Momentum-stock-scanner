@@ -111,15 +111,21 @@ with tab1:
             reward = tp - last_price
             rr_ratio = round(reward / risk, 2)
             
-            # --- דשבורד ויזואלי: מדדים בשורה אחת משמאל לימין ---
+            # --- דשבורד ויזואלי מאולץ לשורה אחת ---
             st.subheader(f"📊 ניתוח טכני: {selected}")
-            col1, col2, col3, col4 = st.columns(4)
-            col1.metric("מחיר נוכחי", f"${last_price:.2f}")
-            col2.metric("Stop Loss", f"${sl}", f"{round(((sl-last_price)/last_price)*100, 2)}%", delta_color="inverse")
-            col3.metric("Take Profit", f"${tp}", f"+{round(((tp-last_price)/last_price)*100, 2)}%")
-            col4.metric("R/R Ratio", f"1 : {rr_ratio}")
+            
+            # שימוש ב-HTML/Markdown בתוך העמודות כדי לכפות סידור רוחבי ללא התחשבות בגודל המסך
+            st.markdown("""
+            <div style="display: flex; justify-content: space-between; align-items: center; background-color: #f8f9fa; padding: 15px; border-radius: 10px;">
+                <div style="text-align: center;"><b>מחיר</b><br>${:.2f}</div>
+                <div style="text-align: center; color: red;"><b>SL</b><br>${:.2f}</div>
+                <div style="text-align: center; color: green;"><b>TP</b><br>${:.2f}</div>
+                <div style="text-align: center;"><b>R/R</b><br>1 : {:.2f}</div>
+            </div>
+            """.format(last_price, sl, tp, rr_ratio), unsafe_allow_html=True)
             
             st.markdown("---")
+            
             fig = make_subplots(rows=3, cols=1, shared_xaxes=True, row_heights=[0.5, 0.25, 0.25])
             fig.add_trace(go.Candlestick(x=data.index, open=data['Open'], high=data['High'], low=data['Low'], close=data['Close'], name='Price'), row=1, col=1)
             fig.add_trace(go.Scatter(x=data.index, y=data['RVOL'], name='RVOL', line=dict(color='orange')), row=2, col=1)
