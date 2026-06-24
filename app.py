@@ -33,8 +33,7 @@ def get_indicators(df):
     df['OBV'] = (np.sign(df['Close'].diff()) * df['Volume']).fillna(0).cumsum()
     df['AvgVol'] = df['Volume'].rolling(window=20).mean()
     df['RVOL'] = df['Volume'] / df['AvgVol']
-    high_low = df['High'] - df['Low']
-    df['ATR'] = high_low.rolling(window=14).mean()
+    df['ATR'] = (df['High'] - df['Low']).rolling(window=14).mean()
     exp1 = df['Close'].ewm(span=12, adjust=False).mean()
     exp2 = df['Close'].ewm(span=26, adjust=False).mean()
     df['MACD'] = exp1 - exp2
@@ -42,17 +41,26 @@ def get_indicators(df):
     return df.dropna()
 
 def calculate_score(df):
-    if df['Daily_Change'].iloc[-1] < -0.05: return -1
+    # סינון מניות "מתוחות": אם עלתה מעל 10% ב-3 ימים או רחוקה מהממוצע - נפסלת
+    dist_from_ma = (df['Close'].iloc[-1] - df['MA20'].iloc[-1]) / df['MA20'].iloc[-1]
+    if df['Daily_Change'].tail(3).sum() > 0.10 or abs(dist_from_ma) > 0.08:
+        return -1
+    
     score = 0
-    if df['Squeeze'].iloc[-1] < 0.10: score += 2
-    elif df['Squeeze'].iloc[-1] < 0.15: score += 1
-    if df['Close'].iloc[-1] > df['MA20'].iloc[-1]: score += 1
-    if df['OBV'].iloc[-1] > df['OBV'].iloc[-10]: score += 1
-    if df['RVOL'].iloc[-1] > 1.5: score += 1
+    # Squeeze מנורמל: מחפשים את הדחיסה הכי צרה ב-20 יום האחרונים
+    min_squeeze = df['Squeeze'].rolling(20).min().iloc[-1]
+    if df['Squeeze'].iloc[-1] <= min_squeeze * 1.2: score += 4
+    
+    # OBV Slope: כסף חכם נכנס בחמשת הימים האחרונים
+    if df['OBV'].diff(5).mean() > 0: score += 2
+    
+    # RVOL מתון (איסוף שקט)
+    if 1.0 < df['RVOL'].iloc[-1] < 1.5: score += 1
+    
     return score
 
 # --- ממשק משתמש ---
-st.title("◈ KEISAR: סורק מוסדי מקצועי")
+st.title("◈ KEISAR: סורק התפרצויות מקצועי")
 if not get_market_status():
     st.warning("⚠️ אזהרת מערכת: השוק (SPY) מתחת ל-MA200.")
 
@@ -64,9 +72,7 @@ with tab1:
     selected_files = st.sidebar.multiselect("בחר קבצי רשימות:", all_files, default=all_files)
 
     if st.button("🚀 הפעל סריקה"):
-        master_list = []
-        alerts = []
-        all_tickers = []
+        master_list, alerts, all_tickers = [], [], []
         for file in selected_files:
             all_tickers.extend(pd.read_csv(file, header=None).iloc[:, 0].dropna().unique())
         
@@ -76,21 +82,13 @@ with tab1:
                 df = get_indicators(get_data(ticker))
                 if len(df) > 50:
                     score = calculate_score(df)
-                    if score >= 0:
-                        master_list.append({"Ticker": ticker, "Score": score, "Price": round(float(df['Close'].iloc[-1]), 2), "RVOL": round(float(df['RVOL'].iloc[-1]), 2)})
-                        if score >= 4 and df['RVOL'].iloc[-1] > 1.5:
-                            alerts.append(f"🔥 איתות חם: {ticker} בציון {score} ו-RVOL {round(float(df['RVOL'].iloc[-1]), 2)}!")
+                    if score >= 5: # רף גבוה לסלקציה
+                        master_list.append({"Ticker": ticker, "Score": score, "Price": round(float(df['Close'].iloc[-1]), 2)})
             except: continue
             progress_bar.progress((i + 1) / len(all_tickers))
         
         pd.DataFrame(master_list).sort_values(by="Score", ascending=False).to_csv(SCAN_RESULTS_FILE, index=False)
-        st.session_state['alerts'] = alerts
         st.rerun()
-
-    if 'alerts' in st.session_state and st.session_state['alerts']:
-        st.error("🚨 מרכז התראות בזמן אמת:")
-        for alert in st.session_state['alerts']:
-            st.write(alert)
 
     if os.path.exists(SCAN_RESULTS_FILE):
         df_res = pd.read_csv(SCAN_RESULTS_FILE)
@@ -102,25 +100,19 @@ with tab1:
         if 'selected_ticker' in st.session_state:
             ticker = st.session_state['selected_ticker']
             data = get_indicators(get_data(ticker))
-            last_price = float(data['Close'].iloc[-1])
-            atr = float(data['ATR'].iloc[-1])
-            sl = round(last_price - (1.5 * atr), 2)
-            tp = round(last_price + (3.0 * atr), 2)
-            risk = last_price - sl
-            reward = tp - last_price
-            rr_ratio = round(reward / risk, 2)
+            last_price, atr = float(data['Close'].iloc[-1]), float(data['ATR'].iloc[-1])
+            sl, tp = round(last_price - (1.5 * atr), 2), round(last_price + (3.0 * atr), 2)
+            rr_ratio = round((tp - last_price) / (last_price - sl), 2)
             
             st.subheader(f"📊 ניתוח טכני: {ticker}")
-            st.markdown("""
+            st.markdown(f"""
             <div style="display: flex; justify-content: space-between; align-items: center; background-color: #f8f9fa; padding: 15px; border-radius: 10px;">
-                <div style="text-align: center;"><b>מחיר</b><br>${:.2f}</div>
-                <div style="text-align: center; color: red;"><b>SL</b><br>${:.2f}</div>
-                <div style="text-align: center; color: green;"><b>TP</b><br>${:.2f}</div>
-                <div style="text-align: center;"><b>R/R</b><br>1 : {:.2f}</div>
-            </div>
-            """.format(last_price, sl, tp, rr_ratio), unsafe_allow_html=True)
+                <div style="text-align: center;"><b>מחיר</b><br>${last_price:.2f}</div>
+                <div style="text-align: center; color: red;"><b>SL</b><br>${sl:.2f}</div>
+                <div style="text-align: center; color: green;"><b>TP</b><br>${tp:.2f}</div>
+                <div style="text-align: center;"><b>R/R</b><br>1 : {rr_ratio:.2f}</div>
+            </div>""", unsafe_allow_html=True)
             
-            st.markdown("---")
             fig = make_subplots(rows=3, cols=1, shared_xaxes=True, row_heights=[0.5, 0.25, 0.25])
             fig.add_trace(go.Candlestick(x=data.index, open=data['Open'], high=data['High'], low=data['Low'], close=data['Close'], name='Price'), row=1, col=1)
             fig.add_trace(go.Scatter(x=data.index, y=data['RVOL'], name='RVOL', line=dict(color='orange')), row=2, col=1)
@@ -129,15 +121,7 @@ with tab1:
             st.plotly_chart(fig, use_container_width=True)
             
             if st.button("הוסף לתיק"):
-                new_entry = pd.DataFrame({
-                    'Ticker': [ticker], 
-                    'Entry': [last_price], 
-                    'SL': [sl], 
-                    'TP': [tp],
-                    'Date': [datetime.now().strftime("%Y-%m-%d")]
-                })
-                mode = 'a' if os.path.exists(PORTFOLIO_FILE) else 'w'
-                new_entry.to_csv(PORTFOLIO_FILE, mode=mode, header=not os.path.exists(PORTFOLIO_FILE), index=False)
+                pd.DataFrame({'Ticker': [ticker], 'Entry': [last_price], 'SL': [sl], 'TP': [tp], 'Date': [datetime.now().strftime("%Y-%m-%d")]}).to_csv(PORTFOLIO_FILE, mode='a', header=not os.path.exists(PORTFOLIO_FILE), index=False)
                 st.success(f"{ticker} נוספה לתיק!")
                 st.rerun()
 
@@ -145,26 +129,24 @@ with tab2:
     if os.path.exists(PORTFOLIO_FILE):
         df_port = pd.read_csv(PORTFOLIO_FILE)
         st.subheader("💼 התיק הפעיל שלך")
-        
         for i, row in df_port.iterrows():
             col1, col2 = st.columns([0.8, 0.2])
             curr_p = float(get_data(row['Ticker'])['Close'].iloc[-1])
             ret = ((curr_p - row['Entry']) / row['Entry']) * 100
-            
             col1.write(f"**{row['Ticker']}** | כניסה: ${row['Entry']} | **נוכחי: ${curr_p:.2f}** | תשואה: {ret:.2f}%")
             col1.caption(f"יעדים: SL ${row['SL']} | TP ${row['TP']}")
-            
             if col2.button("🗑️ הסר", key=f"del_{i}"):
                 df_port.drop(i, inplace=True)
                 df_port.to_csv(PORTFOLIO_FILE, index=False)
                 st.rerun()
-    else:
-        st.info("התיק עדיין ריק.")
+    else: st.info("התיק ריק.")
 
 with tab3:
     st.header("🎓 מדריך אסטרטגי: צייד התפרצויות (ASST)")
     st.markdown("""
-    ### ניהול סיכונים חכם
-    * **R/R Ratio:** יחס הסיכוי מול הסיכון. שאיפה ל-1.5 ומעלה.
-    * **ATR:** כלי התנודתיות שקובע היכן הסטופ שלך צריך להיות.
+    אסטרטגיה זו מזהה מניות לפני התפרצות ע"י:
+    1. **נרמול Squeeze:** זיהוי התכנסות תנודתיות שיא.
+    2. **OBV Slope:** זיהוי איסוף מוסדי בשקט.
+    3. **סינון מתיחות:** פסילה אוטומטית של מניות שעלו חזק מדי או התרחקו מהממוצע.
     """)
+    st.image("https://www.tradingview.com/static/images/breadcrumbs/indicators/bollinger-bands.png", caption="דוגמה להתכנסות רצועות (Squeeze)")
