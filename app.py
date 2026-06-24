@@ -107,22 +107,25 @@ with tab1:
             
             sl = round(last_price - (1.5 * atr), 2)
             tp = round(last_price + (3.0 * atr), 2)
-            
-            # חישוב יחס סיכוי סיכון
             risk = last_price - sl
             reward = tp - last_price
             rr_ratio = round(reward / risk, 2)
             
-            st.metric(label="מחיר נוכחי", value=f"${last_price:.2f}")
-            col1, col2, col3 = st.columns(3)
-            col1.metric("Stop Loss", f"${sl}", delta=f"{round(((sl-last_price)/last_price)*100, 2)}%")
-            col2.metric("Take Profit", f"${tp}", delta=f"{round(((tp-last_price)/last_price)*100, 2)}%")
-            col3.metric("R/R Ratio", f"1 : {rr_ratio}")
+            # עיצוב ויזואלי של כרטיסיות נתונים
+            st.subheader(f"📊 ניתוח טכני: {selected}")
             
+            col1, col2, col3, col4 = st.columns(4)
+            col1.metric("מחיר נוכחי", f"${last_price:.2f}")
+            col2.metric("Stop Loss", f"${sl}", f"{round(((sl-last_price)/last_price)*100, 2)}%", delta_color="inverse")
+            col3.metric("Take Profit", f"${tp}", f"+{round(((tp-last_price)/last_price)*100, 2)}%")
+            col4.metric("R/R Ratio", f"1 : {rr_ratio}")
+            
+            st.markdown("---")
             fig = make_subplots(rows=3, cols=1, shared_xaxes=True, row_heights=[0.5, 0.25, 0.25])
             fig.add_trace(go.Candlestick(x=data.index, open=data['Open'], high=data['High'], low=data['Low'], close=data['Close'], name='Price'), row=1, col=1)
             fig.add_trace(go.Scatter(x=data.index, y=data['RVOL'], name='RVOL', line=dict(color='orange')), row=2, col=1)
             fig.add_trace(go.Scatter(x=data.index, y=data['MACD'], name='MACD'), row=3, col=1)
+            fig.update_layout(height=600, margin=dict(l=20, r=20, t=30, b=20))
             st.plotly_chart(fig, use_container_width=True)
             
             if st.button("הוסף לתיק"):
@@ -149,6 +152,6 @@ with tab3:
     st.header("🎓 מדריך אסטרטגי: צייד התפרצויות (ASST)")
     st.markdown("""
     ### ניהול סיכונים חכם
-    * **R/R Ratio:** יחס הסיכוי מול הסיכון. אנחנו שואפים תמיד ליחס הגבוה מ-1.5 כדי שהעסקה תהיה כדאית סטטיסטית.
-    * **Delta %:** מראה כמה אחוזים המניה צריכה לעלות/לרדת כדי לפגוע ביעדים שלך.
+    * **R/R Ratio:** יחס הסיכוי מול הסיכון. שאיפה ל-1.5 ומעלה.
+    * **ATR:** כלי התנודתיות שקובע היכן הסטופ שלך צריך להיות.
     """)
