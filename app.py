@@ -41,25 +41,23 @@ def get_indicators(df):
     return df.dropna()
 
 def calculate_score(df):
-    # סינון: מניות מתוחות (יותר מ-6% מהממוצע) או זינוק חד מדי (8% ב-3 ימים)
+    # 1. סינון מתיחות (Overextended)
     dist_from_ma = (df['Close'].iloc[-1] - df['MA20'].iloc[-1]) / df['MA20'].iloc[-1]
     if df['Daily_Change'].tail(3).sum() > 0.08 or abs(dist_from_ma) > 0.06:
         return -1
     
-    # בדיקת "משך דחיסה" (חייבת להיות בדחיסה לפחות 4 ימים מתוך ה-5 האחרונים)
-    is_squeezing = df['Squeeze'] < df['Squeeze'].rolling(20).mean()
-    if is_squeezing.rolling(5).sum().iloc[-1] < 4:
+    # 2. סינון דחיסה מחמיר (Squeeze Severity & Duration)
+    min_squeeze = df['Squeeze'].rolling(20).min().iloc[-1]
+    if df['Squeeze'].iloc[-1] > min_squeeze * 1.05: # חייבת להיות קרובה מאוד לשפל התנודתיות
         return -1
     
-    score = 0
-    # בונוס על דחיסה (Squeeze)
-    min_squeeze = df['Squeeze'].rolling(20).min().iloc[-1]
-    if df['Squeeze'].iloc[-1] <= min_squeeze * 1.1: score += 4
+    is_squeezing = df['Squeeze'] < df['Squeeze'].rolling(20).mean()
+    if is_squeezing.rolling(5).sum().iloc[-1] < 5: # חייבת להיות בדחיסה 5 ימים מלאים
+        return -1
     
-    # בונוס על איסוף מוסדי (OBV Slope)
+    # 3. חישוב ניקוד
+    score = 4 # בסיס על זה שהיא עברה את הסינונים המחמירים
     if df['OBV'].diff(5).mean() > 0: score += 2
-    
-    # בונוס על RVOL שמעיד על עניין מבוקר
     if 1.0 < df['RVOL'].iloc[-1] < 1.4: score += 1
         
     return score
@@ -148,7 +146,7 @@ with tab2:
 with tab3:
     st.header("🎓 מדריך אסטרטגי: צייד התפרצויות (ASST)")
     st.markdown("""
-    המערכת מחפשת כעת **דחיסה ארוכה (לפחות 4 מתוך 5 ימים)** ללא מתיחות יתר.
-    * 
-    * 
+    המערכת מחפשת כעת **דחיסה ארוכה (5 ימים)** וקרובה לשפל תנודתיות.
+    
+    
     """)
