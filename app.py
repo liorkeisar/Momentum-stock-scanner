@@ -17,11 +17,6 @@ SCAN_RESULTS_FILE = 'scan_results.csv'
 def get_data(ticker):
     return yf.Ticker(ticker).history(period="6mo")
 
-def get_market_status():
-    spy = yf.Ticker("SPY").history(period="1y")
-    spy['MA200'] = spy['Close'].rolling(window=200).mean()
-    return spy['Close'].iloc[-1] > spy['MA200'].iloc[-1]
-
 def get_indicators(df):
     df = df.copy()
     df['Daily_Change'] = df['Close'].pct_change()
@@ -33,12 +28,10 @@ def get_indicators(df):
     df['OBV'] = (np.sign(df['Close'].diff()) * df['Volume']).fillna(0).cumsum()
     df['AvgVol'] = df['Volume'].rolling(window=20).mean()
     df['RVOL'] = df['Volume'] / df['AvgVol']
-    high_low = df['High'] - df['Low']
-    df['ATR'] = high_low.rolling(window=14).mean()
+    df['ATR'] = (df['High'] - df['Low']).rolling(window=14).mean()
     exp1 = df['Close'].ewm(span=12, adjust=False).mean()
     exp2 = df['Close'].ewm(span=26, adjust=False).mean()
     df['MACD'] = exp1 - exp2
-    df['Signal'] = df['MACD'].ewm(span=9, adjust=False).mean()
     return df.dropna()
 
 def calculate_score(df):
@@ -53,47 +46,33 @@ def calculate_score(df):
 
 # --- ממשק משתמש ---
 st.title("◈ KEISAR: סורק מוסדי מקצועי")
-if not get_market_status():
-    st.warning("⚠️ אזהרת מערכת: השוק (SPY) מתחת ל-MA200.")
-
 tab1, tab2, tab3 = st.tabs(["📊 סורק", "💼 תיק השקעות", "🎓 מדריך אסטרטגי"])
 
 with tab1:
     st.sidebar.header("⚙️ הגדרות סריקה")
-    all_files = [f for f in os.listdir('.') if f.endswith('.csv') and 'portfolio' not in f and 'scan_results' not in f]
-    selected_files = st.sidebar.multiselect("בחר קבצי רשימות:", all_files, default=all_files)
+    all_files = sorted([f for f in os.listdir('.') if f.endswith('.csv') and 'portfolio' not in f and 'scan_results' not in f])
+    selected_files = st.sidebar.multiselect("בחר קבצי רשימות:", all_files)
 
     if st.button("🚀 הפעל סריקה"):
         master_list = []
-        alerts = []
         all_tickers = []
         for file in selected_files:
             all_tickers.extend(pd.read_csv(file, header=None).iloc[:, 0].dropna().unique())
         
-        progress_bar = st.progress(0)
-        for i, ticker in enumerate(all_tickers):
+        for ticker in all_tickers:
             try:
                 df = get_indicators(get_data(ticker))
-                if len(df) > 50:
-                    score = calculate_score(df)
-                    if score >= 0:
-                        master_list.append({"Ticker": ticker, "Score": score, "Price": round(float(df['Close'].iloc[-1]), 2), "RVOL": round(float(df['RVOL'].iloc[-1]), 2)})
-                        if score >= 4 and df['RVOL'].iloc[-1] > 1.5:
-                            alerts.append(f"🔥 איתות חם: {ticker} בציון {score} ו-RVOL {round(float(df['RVOL'].iloc[-1]), 2)}!")
+                score = calculate_score(df)
+                if score >= 0:
+                    master_list.append({"Ticker": ticker, "Score": score, "Price": round(float(df['Close'].iloc[-1]), 2), "RVOL": round(float(df['RVOL'].iloc[-1]), 2)})
             except: continue
-            progress_bar.progress((i + 1) / len(all_tickers))
-        
         pd.DataFrame(master_list).sort_values(by="Score", ascending=False).to_csv(SCAN_RESULTS_FILE, index=False)
-        st.session_state['alerts'] = alerts
         st.rerun()
-
-    if 'alerts' in st.session_state and st.session_state['alerts']:
-        st.error("🚨 מרכז התראות בזמן אמת:")
-        for alert in st.session_state['alerts']:
-            st.write(alert)
 
     if os.path.exists(SCAN_RESULTS_FILE):
         df_res = pd.read_csv(SCAN_RESULTS_FILE)
+        st.dataframe(df_res, use_container_width=True)
+        
         selected = st.selectbox("בחר מניה לניתוח:", df_res['Ticker'].unique())
         if st.button("הצג ניתוח"):
             st.session_state['selected_ticker'] = selected
@@ -106,58 +85,37 @@ with tab1:
             atr = float(data['ATR'].iloc[-1])
             sl = round(last_price - (1.5 * atr), 2)
             tp = round(last_price + (3.0 * atr), 2)
-            risk = last_price - sl
-            reward = tp - last_price
-            rr_ratio = round(reward / risk, 2)
+            rr = round((tp - last_price) / (last_price - sl), 2)
             
-            st.subheader(f"📊 ניתוח טכני: {ticker}")
-            st.markdown("""
-            <div style="display: flex; justify-content: space-between; align-items: center; background-color: #f8f9fa; padding: 15px; border-radius: 10px;">
-                <div style="text-align: center;"><b>מחיר</b><br>${:.2f}</div>
-                <div style="text-align: center; color: red;"><b>SL</b><br>${:.2f}</div>
-                <div style="text-align: center; color: green;"><b>TP</b><br>${:.2f}</div>
-                <div style="text-align: center;"><b>R/R</b><br>1 : {:.2f}</div>
+            st.markdown(f"### 📊 ניתוח: {ticker}")
+            st.markdown(f"""
+            <div style="display: flex; justify-content: space-between; background: #f0f2f6; padding: 15px; border-radius: 10px;">
+                <div><b>מחיר:</b> ${last_price:.2f}</div>
+                <div style="color:red"><b>SL:</b> ${sl}</div>
+                <div style="color:green"><b>TP:</b> ${tp}</div>
+                <div><b>R/R:</b> 1:{rr}</div>
             </div>
-            """.format(last_price, sl, tp, rr_ratio), unsafe_allow_html=True)
-            
-            st.markdown("---")
-            fig = make_subplots(rows=3, cols=1, shared_xaxes=True, row_heights=[0.5, 0.25, 0.25])
-            fig.add_trace(go.Candlestick(x=data.index, open=data['Open'], high=data['High'], low=data['Low'], close=data['Close'], name='Price'), row=1, col=1)
-            fig.add_trace(go.Scatter(x=data.index, y=data['RVOL'], name='RVOL', line=dict(color='orange')), row=2, col=1)
-            fig.add_trace(go.Scatter(x=data.index, y=data['MACD'], name='MACD'), row=3, col=1)
-            fig.update_layout(height=500, margin=dict(l=20, r=20, t=30, b=20))
-            st.plotly_chart(fig, use_container_width=True)
+            """, unsafe_allow_html=True)
             
             if st.button("הוסף לתיק"):
-                new_entry = pd.DataFrame({'Ticker': [ticker], 'Entry_Price': [last_price], 'Date': [datetime.now().strftime("%Y-%m-%d")]})
+                new_entry = pd.DataFrame({'Ticker': [ticker], 'Entry': [last_price], 'SL': [sl], 'TP': [tp]})
                 mode = 'a' if os.path.exists(PORTFOLIO_FILE) else 'w'
                 new_entry.to_csv(PORTFOLIO_FILE, mode=mode, header=not os.path.exists(PORTFOLIO_FILE), index=False)
-                st.success(f"{ticker} נוספה לתיק!")
+                st.success("נוסף לתיק!")
                 st.rerun()
 
 with tab2:
     if os.path.exists(PORTFOLIO_FILE):
         df_port = pd.read_csv(PORTFOLIO_FILE)
-        st.subheader("💼 התיק הפעיל שלך")
-        
-        # הצגת המניות עם כפתור הסרה
         for i, row in df_port.iterrows():
             col1, col2 = st.columns([0.8, 0.2])
             curr_p = float(get_data(row['Ticker'])['Close'].iloc[-1])
-            ret = ((curr_p - row['Entry_Price']) / row['Entry_Price']) * 100
-            col1.write(f"**{row['Ticker']}** | כניסה: ${row['Entry_Price']} | נוכחי: ${curr_p:.2f} | **תשואה: {ret:.2f}%**")
-            
+            ret = ((curr_p - row['Entry']) / row['Entry']) * 100
+            col1.write(f"**{row['Ticker']}** | כניסה: ${row['Entry']} | נוכחי: ${curr_p:.2f} | תשואה: {ret:.2f}%")
+            col1.caption(f"יעדים: SL ${row['SL']} | TP ${row['TP']}")
             if col2.button("🗑️ הסר", key=f"del_{i}"):
                 df_port.drop(i, inplace=True)
                 df_port.to_csv(PORTFOLIO_FILE, index=False)
                 st.rerun()
     else:
-        st.info("התיק עדיין ריק.")
-
-with tab3:
-    st.header("🎓 מדריך אסטרטגי: צייד התפרצויות (ASST)")
-    st.markdown("""
-    ### ניהול סיכונים חכם
-    * **R/R Ratio:** יחס הסיכוי מול הסיכון. שאיפה ל-1.5 ומעלה.
-    * **ATR:** כלי התנודתיות שקובע היכן הסטופ שלך צריך להיות.
-    """)
+        st.info("התיק ריק.")
