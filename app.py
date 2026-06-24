@@ -101,20 +101,21 @@ with tab1:
         
         selected = st.selectbox("בחר מניה לניתוח:", df_res['Ticker'].unique())
         if st.button("הצג ניתוח"):
-            data = get_indicators(get_data(selected))
+            st.session_state['selected_ticker'] = selected
+            st.rerun()
+            
+        if 'selected_ticker' in st.session_state:
+            ticker = st.session_state['selected_ticker']
+            data = get_indicators(get_data(ticker))
             last_price = float(data['Close'].iloc[-1])
             atr = float(data['ATR'].iloc[-1])
-            
             sl = round(last_price - (1.5 * atr), 2)
             tp = round(last_price + (3.0 * atr), 2)
             risk = last_price - sl
             reward = tp - last_price
             rr_ratio = round(reward / risk, 2)
             
-            # --- דשבורד ויזואלי מאולץ לשורה אחת ---
-            st.subheader(f"📊 ניתוח טכני: {selected}")
-            
-            # שימוש ב-HTML/Markdown בתוך העמודות כדי לכפות סידור רוחבי ללא התחשבות בגודל המסך
+            st.subheader(f"📊 ניתוח טכני: {ticker}")
             st.markdown("""
             <div style="display: flex; justify-content: space-between; align-items: center; background-color: #f8f9fa; padding: 15px; border-radius: 10px;">
                 <div style="text-align: center;"><b>מחיר</b><br>${:.2f}</div>
@@ -125,7 +126,6 @@ with tab1:
             """.format(last_price, sl, tp, rr_ratio), unsafe_allow_html=True)
             
             st.markdown("---")
-            
             fig = make_subplots(rows=3, cols=1, shared_xaxes=True, row_heights=[0.5, 0.25, 0.25])
             fig.add_trace(go.Candlestick(x=data.index, open=data['Open'], high=data['High'], low=data['Low'], close=data['Close'], name='Price'), row=1, col=1)
             fig.add_trace(go.Scatter(x=data.index, y=data['RVOL'], name='RVOL', line=dict(color='orange')), row=2, col=1)
@@ -134,10 +134,11 @@ with tab1:
             st.plotly_chart(fig, use_container_width=True)
             
             if st.button("הוסף לתיק"):
-                new_entry = pd.DataFrame({'Ticker': [selected], 'Entry_Price': [last_price], 'Date': [datetime.now().strftime("%Y-%m-%d")]})
+                new_entry = pd.DataFrame({'Ticker': [ticker], 'Entry_Price': [last_price], 'Date': [datetime.now().strftime("%Y-%m-%d")]})
                 mode = 'a' if os.path.exists(PORTFOLIO_FILE) else 'w'
                 new_entry.to_csv(PORTFOLIO_FILE, mode=mode, header=not os.path.exists(PORTFOLIO_FILE), index=False)
-                st.success(f"{selected} נוספה לתיק!")
+                st.success(f"{ticker} נוספה לתיק בהצלחה!")
+                st.rerun()
 
 with tab2:
     if os.path.exists(PORTFOLIO_FILE):
@@ -151,7 +152,7 @@ with tab2:
             except: continue
         st.dataframe(pd.DataFrame(portfolio_data), use_container_width=True)
     else:
-        st.info("התיק ריק.")
+        st.info("התיק עדיין ריק.")
 
 with tab3:
     st.header("🎓 מדריך אסטרטגי: צייד התפרצויות (ASST)")
