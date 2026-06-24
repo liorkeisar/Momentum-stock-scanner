@@ -94,11 +94,6 @@ with tab1:
 
     if os.path.exists(SCAN_RESULTS_FILE):
         df_res = pd.read_csv(SCAN_RESULTS_FILE)
-        def style_rvol(row):
-            color = 'background-color: #d4edda' if row['RVOL'] > 1.5 else ''
-            return [color] * len(row)
-        st.dataframe(df_res.style.apply(style_rvol, axis=1), use_container_width=True)
-        
         selected = st.selectbox("בחר מניה לניתוח:", df_res['Ticker'].unique())
         if st.button("הצג ניתוח"):
             st.session_state['selected_ticker'] = selected
@@ -137,20 +132,25 @@ with tab1:
                 new_entry = pd.DataFrame({'Ticker': [ticker], 'Entry_Price': [last_price], 'Date': [datetime.now().strftime("%Y-%m-%d")]})
                 mode = 'a' if os.path.exists(PORTFOLIO_FILE) else 'w'
                 new_entry.to_csv(PORTFOLIO_FILE, mode=mode, header=not os.path.exists(PORTFOLIO_FILE), index=False)
-                st.success(f"{ticker} נוספה לתיק בהצלחה!")
+                st.success(f"{ticker} נוספה לתיק!")
                 st.rerun()
 
 with tab2:
     if os.path.exists(PORTFOLIO_FILE):
         df_port = pd.read_csv(PORTFOLIO_FILE)
-        portfolio_data = []
-        for _, row in df_port.iterrows():
-            try:
-                curr_p = float(get_data(row['Ticker'])['Close'].iloc[-1])
-                ret = ((curr_p - row['Entry_Price']) / row['Entry_Price']) * 100
-                portfolio_data.append({**row.to_dict(), 'Current': round(curr_p, 2), 'Return_%': round(ret, 2)})
-            except: continue
-        st.dataframe(pd.DataFrame(portfolio_data), use_container_width=True)
+        st.subheader("💼 התיק הפעיל שלך")
+        
+        # הצגת המניות עם כפתור הסרה
+        for i, row in df_port.iterrows():
+            col1, col2 = st.columns([0.8, 0.2])
+            curr_p = float(get_data(row['Ticker'])['Close'].iloc[-1])
+            ret = ((curr_p - row['Entry_Price']) / row['Entry_Price']) * 100
+            col1.write(f"**{row['Ticker']}** | כניסה: ${row['Entry_Price']} | נוכחי: ${curr_p:.2f} | **תשואה: {ret:.2f}%**")
+            
+            if col2.button("🗑️ הסר", key=f"del_{i}"):
+                df_port.drop(i, inplace=True)
+                df_port.to_csv(PORTFOLIO_FILE, index=False)
+                st.rerun()
     else:
         st.info("התיק עדיין ריק.")
 
