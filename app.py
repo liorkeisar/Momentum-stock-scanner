@@ -41,26 +41,34 @@ def get_indicators(df):
     return df.dropna()
 
 def calculate_score(df):
+    # סינון: מניות שזינקו בחדות (10% ב-3 ימים) או מרוחקות מהממוצע - נפסלות
     dist_from_ma = (df['Close'].iloc[-1] - df['MA20'].iloc[-1]) / df['MA20'].iloc[-1]
     if df['Daily_Change'].tail(3).sum() > 0.10 or abs(dist_from_ma) > 0.08:
         return -1
     
     score = 0
+    # Squeeze מנורמל - מחפשים את הדחיסה הכי צרה לאחרונה
     min_squeeze = df['Squeeze'].rolling(20).min().iloc[-1]
     if df['Squeeze'].iloc[-1] <= min_squeeze * 1.2: score += 4
+    
+    # OBV Slope: כסף חכם נכנס
     if df['OBV'].diff(5).mean() > 0: score += 2
+    
+    # RVOL מתון (איסוף שקט)
     if 1.0 < df['RVOL'].iloc[-1] < 1.5: score += 1
+    
     return score
 
 # --- ממשק משתמש ---
 st.title("◈ KEISAR: סורק התפרצויות מקצועי")
-if not get_market_status(): st.warning("⚠️ השוק (SPY) מתחת ל-MA200.")
+if not get_market_status(): st.warning("⚠️ אזהרת מערכת: השוק (SPY) מתחת ל-MA200.")
 
 tab1, tab2, tab3 = st.tabs(["📊 סורק", "💼 תיק השקעות", "🎓 מדריך אסטרטגי"])
 
 with tab1:
+    st.sidebar.header("⚙️ הגדרות סריקה")
     all_files = [f for f in os.listdir('.') if f.endswith('.csv') and 'portfolio' not in f and 'scan_results' not in f]
-    selected_files = st.sidebar.multiselect("בחר רשימות:", all_files, default=all_files)
+    selected_files = st.sidebar.multiselect("בחר קבצי רשימות:", all_files, default=all_files)
 
     if st.button("🚀 הפעל סריקה"):
         master_list = []
@@ -68,7 +76,8 @@ with tab1:
         for file in selected_files:
             all_tickers.extend(pd.read_csv(file, header=None).iloc[:, 0].dropna().unique())
         
-        for ticker in all_tickers:
+        progress_bar = st.progress(0)
+        for i, ticker in enumerate(all_tickers):
             try:
                 df = get_indicators(get_data(ticker))
                 if len(df) > 50:
@@ -76,16 +85,16 @@ with tab1:
                     if score >= 0:
                         master_list.append({"Ticker": ticker, "Score": score, "Price": round(float(df['Close'].iloc[-1]), 2)})
             except: continue
+            progress_bar.progress((i + 1) / len(all_tickers))
         
         pd.DataFrame(master_list).sort_values(by="Score", ascending=False).to_csv(SCAN_RESULTS_FILE, index=False)
         st.rerun()
 
     if os.path.exists(SCAN_RESULTS_FILE):
         df_res = pd.read_csv(SCAN_RESULTS_FILE)
-        
-        # תצוגת הדירוג עם צבעים
         st.subheader("דירוג מניות לסריקה")
-        st.dataframe(df_res.style.background_gradient(subset=['Score'], cmap='RdYlGn', vmin=0, vmax=7), use_container_width=True)
+        styled_df = df_res.style.background_gradient(subset=['Score'], cmap='RdYlGn', vmin=0, vmax=7)
+        st.table(styled_df)
         
         selected = st.selectbox("בחר מניה לניתוח:", df_res['Ticker'].unique())
         if st.button("הצג ניתוח"):
@@ -97,25 +106,40 @@ with tab1:
             data = get_indicators(get_data(ticker))
             last_price, atr = float(data['Close'].iloc[-1]), float(data['ATR'].iloc[-1])
             sl, tp = round(last_price - (1.5 * atr), 2), round(last_price + (3.0 * atr), 2)
+            rr_ratio = round((tp - last_price) / (last_price - sl), 2)
+            
+            st.subheader(f"📊 ניתוח טכני: {ticker}")
+            st.markdown(f"""
+            <div style="background-color: #f8f9fa; padding: 15px; border-radius: 10px;">
+                <b>מחיר:</b> ${last_price:.2f} | <b>SL:</b> ${sl:.2f} | <b>TP:</b> ${tp:.2f} | <b>R/R:</b> 1 : {rr_ratio:.2f}
+            </div>""", unsafe_allow_html=True)
             
             fig = make_subplots(rows=3, cols=1, shared_xaxes=True, row_heights=[0.5, 0.25, 0.25])
             fig.add_trace(go.Candlestick(x=data.index, open=data['Open'], high=data['High'], low=data['Low'], close=data['Close'], name='Price'), row=1, col=1)
             fig.add_trace(go.Scatter(x=data.index, y=data['RVOL'], name='RVOL', line=dict(color='orange')), row=2, col=1)
             fig.add_trace(go.Scatter(x=data.index, y=data['MACD'], name='MACD'), row=3, col=1)
             st.plotly_chart(fig, use_container_width=True)
+            
+            if st.button("הוסף לתיק"):
+                pd.DataFrame({'Ticker': [ticker], 'Entry': [last_price], 'SL': [sl], 'TP': [tp], 'Date': [datetime.now().strftime("%Y-%m-%d")]}).to_csv(PORTFOLIO_FILE, mode='a', header=not os.path.exists(PORTFOLIO_FILE), index=False)
+                st.success(f"{ticker} נוספה לתיק!")
+                st.rerun()
 
 with tab2:
     if os.path.exists(PORTFOLIO_FILE):
         df_port = pd.read_csv(PORTFOLIO_FILE)
+        st.subheader("💼 התיק הפעיל שלך")
         for i, row in df_port.iterrows():
             col1, col2 = st.columns([0.8, 0.2])
             curr_p = float(get_data(row['Ticker'])['Close'].iloc[-1])
-            col1.write(f"**{row['Ticker']}** | תשואה: {((curr_p - row['Entry']) / row['Entry']) * 100:.2f}%")
+            ret = ((curr_p - row['Entry']) / row['Entry']) * 100
+            col1.write(f"**{row['Ticker']}** | תשואה: {ret:.2f}% | נוכחי: ${curr_p:.2f}")
             if col2.button("🗑️ הסר", key=f"del_{i}"):
                 df_port.drop(i, inplace=True)
                 df_port.to_csv(PORTFOLIO_FILE, index=False)
                 st.rerun()
+    else: st.info("התיק ריק.")
 
 with tab3:
-    st.header("🎓 מדריך אסטרטגי")
-    st.markdown("הסורק מדרג מניות לפי איכות הפוטנציאל שלהן (צבע ירוק = הציון הטוב ביותר).")
+    st.header("🎓 מדריך אסטרטגי: צייד התפרצויות (ASST)")
+    st.markdown("אסטרטגיית 'ASST' מחפשת התכנסות תנודתיות בשילוב איסוף מוסדי, ללא רדיפה אחרי מניות מתוחות.")
