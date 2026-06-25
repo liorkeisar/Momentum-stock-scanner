@@ -10,7 +10,7 @@ st.set_page_config(page_title="KEISAR Pro Hunter", layout="wide")
 PORTFOLIO_FILE = 'portfolio.csv'
 SCAN_RESULTS_FILE = 'scan_results.csv'
 
-# --- פונקציות ליבה ---
+# --- 1. פונקציות ליבה ---
 @st.cache_data(ttl=3600)
 def get_data(ticker):
     try: return yf.Ticker(ticker).history(period="6mo")
@@ -74,7 +74,7 @@ def add_to_portfolio(ticker, price):
         new_data.to_csv(PORTFOLIO_FILE, index=False)
     return True, "נוספה בהצלחה"
 
-# --- ממשק משתמש ---
+# --- 2. ממשק משתמש ---
 st.title("◈ KEISAR Pro Hunter: מערכת סריקה מלאה")
 tab1, tab2, tab3, tab4 = st.tabs(["📊 סורק", "💼 תיק השקעות", "🎓 אסטרטגיה", "🔍 זן מניה"])
 
@@ -84,7 +84,7 @@ with tab1:
     
     if st.button("🚀 הפעל סריקה מלאה"):
         master = []
-        scanned_tickers = set() # למניעת כפילויות במהלך הסריקה
+        scanned_tickers = set()
         progress_bar = st.progress(0)
         with st.spinner("סורק מניות..."):
             for i, file in enumerate(selected):
@@ -99,18 +99,22 @@ with tab1:
                         scanned_tickers.add(t)
                 progress_bar.progress((i + 1) / len(selected))
         
-        pd.DataFrame(master).sort_values(by="Score", ascending=False).to_csv(SCAN_RESULTS_FILE, index=False)
-        st.rerun()
+        if master:
+            pd.DataFrame(master).sort_values(by="Score", ascending=False).to_csv(SCAN_RESULTS_FILE, index=False)
+            st.rerun()
+        else:
+            st.warning("לא נמצאו מניות שעומדות בתנאי האסטרטגיה.")
     
     if os.path.exists(SCAN_RESULTS_FILE):
         df_res = pd.read_csv(SCAN_RESULTS_FILE)
-        st.dataframe(df_res, use_container_width=True)
-        sel = st.selectbox("בחר מניה לביצוע פעולה:", df_res['Ticker'].unique() if not df_res.empty else [])
-        if sel and st.button("➕ הוסף את המניה שנבחרה לתיק"):
-            price = df_res[df_res['Ticker'] == sel]['Price'].iloc[0]
-            succ, msg = add_to_portfolio(sel, price)
-            if succ: st.success(msg)
-            else: st.warning(msg)
+        if not df_res.empty:
+            st.dataframe(df_res, use_container_width=True)
+            sel = st.selectbox("בחר מניה לביצוע פעולה:", df_res['Ticker'].unique())
+            if sel and st.button("➕ הוסף את המניה שנבחרה לתיק"):
+                price = df_res[df_res['Ticker'] == sel]['Price'].iloc[0]
+                succ, msg = add_to_portfolio(sel, price)
+                if succ: st.success(msg)
+                else: st.warning(msg)
 
 with tab2:
     if os.path.exists(PORTFOLIO_FILE):
