@@ -10,7 +10,7 @@ st.set_page_config(page_title="KEISAR Pro Hunter", layout="wide")
 PORTFOLIO_FILE = 'portfolio.csv'
 SCAN_RESULTS_FILE = 'scan_results.csv'
 
-# --- פונקציות ליבה ---
+# --- 1. פונקציות ליבה ---
 @st.cache_data(ttl=3600)
 def get_data(ticker):
     try: return yf.Ticker(ticker).history(period="6mo")
@@ -74,29 +74,27 @@ def add_to_portfolio(ticker, price):
         new_data.to_csv(PORTFOLIO_FILE, index=False)
     return True, "נוספה בהצלחה"
 
-# --- ממשק משתמש ---
+# --- 2. ממשק משתמש ---
 st.title("◈ KEISAR Pro Hunter: מערכת סריקה מלאה")
 tab1, tab2, tab3, tab4 = st.tabs(["📊 סורק", "💼 תיק השקעות", "🎓 אסטרטגיה", "🔍 זן מניה"])
 
 with tab1:
+    # זיהוי אוטומטי של כל קבצי ה-CSV בתיקייה (למעט קבצי המערכת)
     all_csv = [f for f in os.listdir('.') if f.endswith('.csv') and f not in [PORTFOLIO_FILE, SCAN_RESULTS_FILE]]
     selected = st.multiselect("בחר רשימות לסריקה:", all_csv, default=all_csv)
     
     if st.button("🚀 הפעל סריקה מלאה"):
         master = []
-        scanned_tickers = set() # למניעת כפילויות במהלך הסריקה
         progress_bar = st.progress(0)
         with st.spinner("סורק מניות..."):
             for i, file in enumerate(selected):
                 tickers = pd.read_csv(file, header=None).iloc[:, 0].dropna().unique()
                 for t in tickers:
-                    if t not in scanned_tickers:
-                        if get_market_cap(t) > 350_000_000:
-                            df = get_indicators(get_data(t))
-                            score = calculate_score(df)
-                            if score >= 0:
-                                master.append({"Ticker": t, "Score": score, "Price": round(float(df['Close'].iloc[-1]), 2)})
-                        scanned_tickers.add(t)
+                    if get_market_cap(t) > 350_000_000:
+                        df = get_indicators(get_data(t))
+                        score = calculate_score(df)
+                        if score >= 0:
+                            master.append({"Ticker": t, "Score": score, "Price": round(float(df['Close'].iloc[-1]), 2)})
                 progress_bar.progress((i + 1) / len(selected))
         
         pd.DataFrame(master).sort_values(by="Score", ascending=False).to_csv(SCAN_RESULTS_FILE, index=False)
@@ -106,7 +104,7 @@ with tab1:
         df_res = pd.read_csv(SCAN_RESULTS_FILE)
         st.dataframe(df_res, use_container_width=True)
         sel = st.selectbox("בחר מניה לביצוע פעולה:", df_res['Ticker'].unique() if not df_res.empty else [])
-        if sel and st.button("➕ הוסף את המניה שנבחרה לתיק"):
+        if sel and st.button("➕ הוסף לתיק"):
             price = df_res[df_res['Ticker'] == sel]['Price'].iloc[0]
             succ, msg = add_to_portfolio(sel, price)
             if succ: st.success(msg)
