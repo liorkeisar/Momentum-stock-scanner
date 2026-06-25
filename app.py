@@ -1,68 +1,62 @@
 import streamlit as st
 import yfinance as yf
 import pandas as pd
-import plotly.graph_objects as go
-from plotly.subplots import make_subplots
 import os
 
-st.set_page_config(page_title="KEISAR Bottom Hunter & Value", layout="wide")
+# הגדרות עמוד
+st.set_page_config(page_title="KEISAR Scanner", layout="wide")
 SCAN_RESULTS_FILE = 'scan_results.csv'
-PORTFOLIO_FILE = 'portfolio.csv'
 
+# עיצוב כותרת קטנה יותר
+st.markdown("### ◈ KEISAR Scanner")
+
+# פונקציית סינון (ללא שינוי בלוגיקה)
 def get_indicators(ticker):
     try:
         stock = yf.Ticker(ticker)
         info = stock.info
-        
-        # סינון איכות
         if info.get('marketCap', 0) < 300_000_000: return None
         if info.get('averageVolume', 0) < 200_000: return None
         
-        # --- סינון שווי הוגן ---
-        # אם מחיר היעד של האנליסטים גבוה ב-30% מהמחיר הנוכחי
         target_price = info.get('targetMeanPrice')
         current_price = info.get('currentPrice')
-        if target_price and current_price:
-            if current_price > (target_price * 0.70): return None # סינון: רק מניות עם פוטנציאל עלייה של 30%+
+        if target_price and current_price and current_price > (target_price * 0.70): return None
         
         df = stock.history(period="1y")
         if df is None or len(df) < 252: return None
         
-        # סינון שפל שנתי (30% מהשפל)
         yearly_low = df['Close'].min()
         if current_price > (yearly_low * 1.30): return None
+        return True
+    except: return None
 
-        df['MA20'] = df['Close'].rolling(window=20).mean()
-        df['STD'] = df['Close'].rolling(window=20).std()
-        df['Squeeze'] = ((df['MA20'] + (df['STD'] * 2)) - (df['MA20'] - (df['STD'] * 2))) / df['Close']
-        df['RVOL'] = df['Volume'] / df['Volume'].rolling(window=20).mean()
-        df['ATR'] = (df['High'] - df['Low']).rolling(window=14).mean()
-        return df.dropna()
-    except Exception: return None
-
-# --- ממשק ---
-st.title("◈ KEISAR: סורק שפל וערך (Value & Bottom Hunter)")
-tab1, tab2 = st.tabs(["📊 סורק", "💼 תיק"])
-
-with tab1:
+# תפריט צד להגדרות
+with st.sidebar:
+    st.header("הגדרות סריקה")
     all_files = sorted([f for f in os.listdir('.') if f.endswith('.csv') and 'portfolio' not in f and 'scan' not in f])
-    selected_files = st.sidebar.multiselect("בחר רשימות:", all_files)
+    selected_files = st.multiselect("בחר רשימות:", all_files)
+    run_btn = st.button("🚀 הפעל סריקה")
 
-    if st.button("🚀 הפעל סריקה"):
+# לוגיקת סריקה
+if run_btn:
+    if not selected_files:
+        st.error("בחר רשימה מהתפריט.")
+    else:
+        all_tickers = list(set([t for f in selected_files for t in pd.read_csv(f, header=None).iloc[:, 0].dropna()]))
+        my_bar = st.progress(0, text="מתחיל סריקה...")
         master_list = []
-        with st.spinner('מחפש מניות בשפל שנסחרות בדיסקאונט...'):
-            for file in selected_files:
-                tickers = pd.read_csv(file, header=None).iloc[:, 0].dropna().unique()
-                for ticker in tickers:
-                    df = get_indicators(ticker)
-                    if df is not None:
-                        master_list.append({"Ticker": ticker, "Price": round(float(df['Close'].iloc[-1]), 2)})
         
+        for i, ticker in enumerate(all_tickers):
+            if get_indicators(ticker):
+                master_list.append({"Ticker": ticker})
+            my_bar.progress((i + 1) / len(all_tickers), text=f"סורק: {ticker}")
+            
         if master_list:
             pd.DataFrame(master_list).to_csv(SCAN_RESULTS_FILE, index=False)
             st.rerun()
         else:
-            st.error("לא נמצאו מניות שעומדות בכל הקריטריונים (שפל + שווי הוגן + שווי שוק).")
+            st.warning("לא נמצאו מניות.")
 
-    if os.path.exists(SCAN_RESULTS_FILE):
-        st.dataframe(pd.read_csv(SCAN_RESULTS_FILE), use_container_width=True)
+# הצגת תוצאות
+if os.path.exists(SCAN_RESULTS_FILE):
+    st.dataframe(pd.read_csv(SCAN_RESULTS_FILE), use_container_width=True)
