@@ -20,6 +20,7 @@ def get_data(ticker):
 
 def get_market_cap(ticker):
     try:
+        # בדיקת שווי שוק
         info = yf.Ticker(ticker).info
         return info.get('marketCap', 0)
     except:
@@ -67,21 +68,31 @@ def calculate_score(df):
 def calculate_trade_levels(df):
     price = float(df['Close'].iloc[-1])
     atr = float(df['ATR'].iloc[-1])
-    # ניהול סיכונים: יחס של 1:2
     sl = round(price - (2 * atr), 2)
     tp = round(price + (4 * atr), 2)
     return price, sl, tp
 
+def add_to_portfolio(ticker, price):
+    if os.path.exists(PORTFOLIO_FILE):
+        port = pd.read_csv(PORTFOLIO_FILE)
+        if ticker in port['Ticker'].values:
+            return False
+        df_new = pd.DataFrame({'Ticker': [ticker], 'Entry': [price], 'Date': [datetime.now().strftime("%Y-%m-%d")]})
+        df_new.to_csv(PORTFOLIO_FILE, mode='a', header=False, index=False)
+    else:
+        pd.DataFrame({'Ticker': [ticker], 'Entry': [price], 'Date': [datetime.now().strftime("%Y-%m-%d")]}).to_csv(PORTFOLIO_FILE, index=False)
+    return True
+
 # --- 2. ממשק משתמש ---
-st.title("◈ KEISAR Pro Hunter: מערכת ניתוח מתקדמת")
-tab1, tab2, tab3, tab4 = st.tabs(["📊 סורק", "💼 תיק השקעות", "🎓 מדריך אסטרטגי", "🔍 זן מניה"])
+st.title("◈ KEISAR Pro Hunter: מערכת ניתוח")
+tab1, tab2, tab3, tab4 = st.tabs(["📊 סורק", "💼 תיק השקעות", "🎓 אסטרטגיה", "🔍 זן מניה"])
 
 with tab1:
     all_files = [f for f in os.listdir('.') if f.endswith('.csv') and 'portfolio' not in f and 'scan_results' not in f]
     selected_files = st.multiselect("בחר רשימות לסריקה:", all_files)
     if st.button("🚀 הפעל סריקה"):
         master_list = []
-        with st.spinner("סורק שוק..."):
+        with st.spinner("סורק מניות..."):
             for file in selected_files:
                 tickers = pd.read_csv(file, header=None).iloc[:, 0].dropna().unique()
                 for t in tickers:
@@ -96,6 +107,12 @@ with tab1:
     if os.path.exists(SCAN_RESULTS_FILE):
         df_res = pd.read_csv(SCAN_RESULTS_FILE)
         st.dataframe(df_res, use_container_width=True)
+        sel = st.selectbox("בחר מניה לביצוע פעולה:", df_res['Ticker'].unique() if not df_res.empty else [])
+        if sel:
+            if st.button(f"➕ הוסף את {sel} לתיק"):
+                price = df_res[df_res['Ticker'] == sel]['Price'].iloc[0]
+                if add_to_portfolio(sel, price): st.success(f"{sel} נוספה לתיק!")
+                else: st.warning("המניה כבר קיימת בתיק.")
 
 with tab4:
     ticker = st.text_input("הזן מניה לניתוח מהיר:").upper()
@@ -104,25 +121,16 @@ with tab4:
         score = calculate_score(df)
         if score >= 0:
             price, sl, tp = calculate_trade_levels(df)
-            st.metric("ציון אסטרטגי", f"{score}/7")
-            st.info(f"🎯 **ניהול עסקה מומלץ:**\n\nכניסה: **${price}** | יעד (TP): **${tp}** | עצירת הפסד (SL): **${sl}**")
-            
+            st.metric("ציון", f"{score}/7")
+            st.info(f"🎯 **יעדי עסקה:** כניסה: ${price} | יעד (TP): ${tp} | סטופ (SL): ${sl}")
             if st.button("➕ הוסף לתיק"):
-                if os.path.exists(PORTFOLIO_FILE):
-                    port = pd.read_csv(PORTFOLIO_FILE)
-                    if ticker in port['Ticker'].values:
-                        st.warning("המניה כבר קיימת בתיק!")
-                    else:
-                        pd.DataFrame({'Ticker': [ticker], 'Entry': [price], 'Date': [datetime.now().strftime("%Y-%m-%d")]}).to_csv(PORTFOLIO_FILE, mode='a', header=False, index=False)
-                        st.success("נוספה לתיק!")
-                else:
-                    pd.DataFrame({'Ticker': [ticker], 'Entry': [price], 'Date': [datetime.now().strftime("%Y-%m-%d")]}).to_csv(PORTFOLIO_FILE, index=False)
-                    st.success("נוספה לתיק!")
+                if add_to_portfolio(ticker, price): st.success("המניה נוספה בהצלחה!")
+                else: st.warning("המניה כבר קיימת בתיק.")
+        else: st.error("המניה לא עומדת בתנאי האסטרטגיה או שווי שוק נמוך מ-350M$")
 
 with tab3:
-    st.header("🎓 אסטרטגיית צייד התפרצויות")
-    st.write("המערכת מסננת מניות בעלות שווי שוק מעל 350M$ שנמצאות בתהליך דחיסה טכנית.")
+    st.header("🎓 אסטרטגיית צייד התפרצויות (ASST)")
+    st.markdown("- **סינון שווי שוק:** רק מעל 350 מיליון דולר.\n- **דחיסה:** 5 ימי תנודתיות נמוכה.\n- **ניהול סיכונים:** יחס סיכוי-סיכון מובנה של 1:2.")
 
 with tab2:
-    if os.path.exists(PORTFOLIO_FILE):
-        st.table(pd.read_csv(PORTFOLIO_FILE))
+    if os.path.exists(PORTFOLIO_FILE): st.table(pd.read_csv(PORTFOLIO_FILE))
