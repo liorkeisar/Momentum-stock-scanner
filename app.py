@@ -5,17 +5,16 @@ import numpy as np
 import os
 from datetime import datetime
 
-# --- הגדרות ---
+# --- הגדרות עמוד ---
 st.set_page_config(page_title="KEISAR Stock Wave", layout="wide")
 PORTFOLIO_FILE = 'portfolio.csv'
 SCAN_RESULTS_FILE = 'scan_results.csv'
 
-# --- 1. מנוע נתונים ואינדיקטורים ---
+# --- 1. פונקציות ליבה ---
 @st.cache_data(ttl=3600)
 def get_data(ticker):
     try:
-        df = yf.Ticker(ticker).history(period="6mo")
-        return df if not df.empty else pd.DataFrame()
+        return yf.Ticker(ticker).history(period="6mo")
     except:
         return pd.DataFrame()
 
@@ -40,48 +39,54 @@ def get_indicators(df):
     df['RSI'] = 100 - (100 / (1 + rs))
     return df.fillna(0)
 
-# --- 2. לוגיקת ניקוד לימודית ---
 def calculate_score(df):
     if df is None or len(df) < 20: 
-        return -1, "❌ נתונים חסרים: דרושים מינימום 20 ימי מסחר."
+        return -1, "❌ נתונים חסרים (פחות מ-20 ימי מסחר)"
     
     # פילטר נזילות מוסדית
     avg_vol = df['Volume'].mean()
     if avg_vol < 500000:
-        return -1, f"❌ פסילה (נזילות): מחזור ממוצע של {int(avg_vol/1000)}K מניות אינו מספיק לאמינות טכנית."
-        
+        return -1, f"❌ פסילה (נזילות): מחזור ממוצע של {int(avg_vol/1000)}K מניות נמוך מדי."
+    
     reasons = []
     
     # בדיקות פסילה אסטרטגיות
     if df['Daily_Change'].tail(3).sum() > 0.08:
-        return -1, "❌ פסילה (מומנטום יתר): עלייה של מעל 8% ב-3 ימים מעידה שהמהלך כבר החל. סכנת תיקון."
+        return -1, "❌ פסילה: עלייה חדה מדי ב-3 ימים אחרונים (סכנת תיקון)."
     
     dist_from_ma = (df['Close'].iloc[-1] - df['MA20'].iloc[-1]) / df['MA20'].iloc[-1]
     if abs(dist_from_ma) > 0.04:
-        return -1, f"❌ פסילה (מרחק מהממוצע): המניה רחוקה {abs(dist_from_ma)*100:.1f}% מה-MA20."
+        return -1, f"❌ פסילה: מחיר רחוק מהממוצע ב-{abs(dist_from_ma)*100:.1f}%."
     
     if df['RSI'].iloc[-1] > 70:
-        return -1, "❌ פסילה (RSI): מניה במצב קניית יתר (מעל 70), סיכון גבוה לכניסה."
+        return -1, "❌ פסילה: מצב קניית יתר (RSI > 70)."
     
-    # חישוב ציון והסברים לימודיים
+    # חישוב ציון והסברים
     score = 4 
-    reasons.append("✅ דחיסה (Squeeze): תנודתיות נמוכה, הכנה לפני התפרצות טכנית.")
+    reasons.append("✅ דחיסה (Squeeze) תקינה")
     
     if df['OBV'].diff(5).mean() > 0:
         score += 2
-        reasons.append("✅ צבירה מוסדית (OBV): נפח מסחר בעליות גבוה מירידות, עדות לאיסוף ע\"י כסף חכם.")
+        reasons.append("✅ מומנטום חיובי (OBV)")
     else:
-        reasons.append("⚠️ ללא צבירה: מדד ה-OBV שלילי. חסר אישור מוסדי למהלך עליות.")
+        reasons.append("⚠️ ללא צבירת מוסדיים (OBV)")
         
     if 1.0 < df['RVOL'].iloc[-1] < 1.4:
         score += 1
-        reasons.append("✅ ווליום יחסי (RVOL): נפח מסחר בריא ומאוזן, תומך בפריצה תקינה.")
+        reasons.append("✅ ווליום יחסי (RVOL) תקין")
     else:
-        reasons.append("⚠️ ווליום לא אידיאלי: תנועה ללא נפח מסחר עקבי עלולה להיות פריצת שווא.")
+        reasons.append("⚠️ ווליום לא אידיאלי")
         
     return score, " | ".join(reasons)
 
-# --- 3. ממשק משתמש ---
+def calculate_trade_levels(df):
+    price = float(df['Close'].iloc[-1])
+    atr = float(df['ATR'].iloc[-1])
+    sl = round(price - (1.5 * atr), 2)
+    tp = round(price + (3.0 * atr), 2)
+    return sl, tp
+
+# --- 2. ממשק משתמש ---
 st.title("◈ KEISAR Stock Wave: מערכת ניתוח")
 tab1, tab2, tab3, tab4 = st.tabs(["📊 סורק", "💼 תיק השקעות", "🎓 מדריך אסטרטגי", "🔍 זן מניה"])
 
@@ -98,31 +103,48 @@ with tab1:
                 score, reason = calculate_score(df)
                 if score >= 0:
                     master_list.append({"Ticker": t, "Score": score, "Price": round(float(df['Close'].iloc[-1]), 2), "Details": reason})
-        if master_list:
-            pd.DataFrame(master_list).sort_values(by="Score", ascending=False).to_csv(SCAN_RESULTS_FILE, index=False)
-        else:
-            if os.path.exists(SCAN_RESULTS_FILE): os.remove(SCAN_RESULTS_FILE)
+        pd.DataFrame(master_list).sort_values(by="Score", ascending=False).to_csv(SCAN_RESULTS_FILE, index=False)
         st.rerun()
     
     if os.path.exists(SCAN_RESULTS_FILE):
-        st.dataframe(pd.read_csv(SCAN_RESULTS_FILE), use_container_width=True)
+        df_res = pd.read_csv(SCAN_RESULTS_FILE)
+        for _, row in df_res.iterrows():
+            col1, col2 = st.columns([4, 1])
+            col1.write(f"**{row['Ticker']}** | ציון: {row['Score']} | מחיר: {row['Price']} | {row['Details']}")
+            if col2.button("➕ הוסף", key=f"add_scan_{row['Ticker']}"):
+                pd.DataFrame({'Ticker': [row['Ticker']], 'Entry': [row['Price']], 'Date': [datetime.now().strftime("%Y-%m-%d")]}).to_csv(PORTFOLIO_FILE, mode='a', header=not os.path.exists(PORTFOLIO_FILE), index=False)
+                st.success("נוספה לתיק!")
+
+with tab2:
+    if os.path.exists(PORTFOLIO_FILE):
+        df_p = pd.read_csv(PORTFOLIO_FILE)
+        for _, row in df_p.iterrows():
+            col1, col2 = st.columns([4, 1])
+            col1.write(f"💼 {row['Ticker']} | כניסה: ${row['Entry']} | בתאריך: {row['Date']}")
+            if col2.button("❌ הסר", key=f"del_{row['Ticker']}"):
+                df_p = df_p[df_p['Ticker'] != row['Ticker']]
+                df_p.to_csv(PORTFOLIO_FILE, index=False)
+                st.rerun()
+    else: st.info("התיק ריק.")
 
 with tab4:
     ticker = st.text_input("הזן מניה לניתוח מהיר:").upper()
     if st.button("בדוק מניה"):
         df = get_indicators(get_data(ticker))
         score, reason = calculate_score(df)
+        st.metric("ציון", f"{score}/7" if score >= 0 else "נפסל")
         if score >= 0:
-            st.metric("ציון סופי", f"{score}/7")
-            for point in reason.split(" | "): st.write(point)
-        else:
-            st.error(reason)
+            st.write(reason)
+            sl, tp = calculate_trade_levels(df)
+            st.write(f"🎯 **יעדי עסקה:** Stop Loss: ${sl} | Take Profit: ${tp}")
+            if st.button("➕ הוסף לתיק", key="add_fast"):
+                pd.DataFrame({'Ticker': [ticker], 'Entry': [float(df['Close'].iloc[-1])], 'Date': [datetime.now().strftime("%Y-%m-%d")]}).to_csv(PORTFOLIO_FILE, mode='a', header=not os.path.exists(PORTFOLIO_FILE), index=False)
+                st.success("נוספה!")
+        else: st.error(reason)
 
 with tab3:
     st.header("🎓 אסטרטגיית צייד התפרצויות (ASST)")
-    st.markdown("המערכת מזהה נקודות איזון טכניות שבהן מניה צוברת אנרגיה. אנו מחפשים את **השילוב** של דחיסה טכנית עם אישור מהכסף הגדול (OBV).")
-    
-
-with tab2:
-    if os.path.exists(PORTFOLIO_FILE): st.table(pd.read_csv(PORTFOLIO_FILE))
-    else: st.info("התיק ריק.")
+    st.markdown("""
+    המערכת מחפשת דחיסה (Squeeze) המצביעה על אנרגיה טכנית צבורה לפני מהלך.
+    **כללי הברזל:** 1. דחיסה, 2. מומנטום חיובי, 3. אישור ווליום.
+    """)
