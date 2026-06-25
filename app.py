@@ -3,101 +3,100 @@ import yfinance as yf
 import pandas as pd
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
-import sqlite3
-import numpy as np
-from datetime import datetime
 import os
+import numpy as np
 
-# --- אתחול מסד נתונים ---
-def init_db():
-    conn = sqlite3.connect('keisar_pro.db')
-    c = conn.cursor()
-    c.execute('''CREATE TABLE IF NOT EXISTS portfolio 
-                 (ticker TEXT, entry REAL, sl REAL, tp REAL, date TEXT)''')
-    conn.commit()
-    conn.close()
+# הגדרות כלליות
+st.set_page_config(page_title="KEISAR Pro Hunter", layout="wide")
+PORTFOLIO_FILE = 'portfolio.csv'
+SCAN_RESULTS_FILE = 'scan_results.csv'
 
-init_db()
-
-# --- פונקציות חישוב ---
-@st.cache_data(ttl=3600)
-def get_data(ticker):
-    try:
-        df = yf.Ticker(ticker).history(period="6mo")
-        return df if not df.empty else None
-    except:
-        return None
-
+# פונקציות חישוב טכני
 def get_indicators(df):
     df = df.copy()
-    # ממוצעים ואינדיקטורים
     df['MA20'] = df['Close'].rolling(window=20).mean()
-    # VWAP (Institutional Benchmark)
-    df['VWAP'] = (df['Volume'] * (df['High'] + df['Low'] + df['Close']) / 3).cumsum() / df['Volume'].cumsum()
-    df['RVOL'] = df['Volume'] / df['Volume'].rolling(window=20).mean()
-    high_low = df['High'] - df['Low']
-    df['ATR'] = high_low.rolling(window=14).mean()
-    return df.dropna()
+    df['STD'] = df['Close'].rolling(window=20).std()
+    df['Upper'] = df['MA20'] + (df['STD'] * 2)
+    df['Lower'] = df['MA20'] - (df['STD'] * 2)
+    df['OBV'] = (np.sign(df['Close'].diff()) * df['Volume']).fillna(0).cumsum()
+    exp1 = df['Close'].ewm(span=12, adjust=False).mean()
+    exp2 = df['Close'].ewm(span=26, adjust=False).mean()
+    df['MACD'] = exp1 - exp2
+    df['Signal'] = df['MACD'].ewm(span=9, adjust=False).mean()
+    return df
 
-# --- ממשק משתמש ---
-st.set_page_config(page_title="KEISAR Pro Hunter", layout="wide")
+# ממשק משתמש
+st.sidebar.header("⚙️ הגדרות סריקה")
+all_files = [f for f in os.listdir('.') if f.endswith('.csv') and 'portfolio' not in f and 'scan_results' not in f]
+selected_files = st.sidebar.multiselect("בחר תיקיות לסריקה:", all_files, default=all_files)
+
+if st.sidebar.button("🗑️ מחק סריקה קודמת"):
+    if os.path.exists(SCAN_RESULTS_FILE):
+        os.remove(SCAN_RESULTS_FILE)
+        st.rerun()
+
 st.title("◈ KEISAR: סורק מוסדי מקצועי")
-
 tab1, tab2, tab3 = st.tabs(["📊 סורק", "💼 תיק השקעות", "🎓 מדריך אסטרטגי"])
 
 with tab1:
-    ticker_input = st.text_input("הזן סימול (למשל: AAPL, NVDA, TSLA):")
-    if ticker_input:
-        df = get_indicators(get_data(ticker_input))
-        if df is not None:
-            last_price = float(df['Close'].iloc[-1])
-            atr = float(df['ATR'].iloc[-1])
-            
-            c1, c2, c3 = st.columns(3)
-            c1.metric("מחיר נוכחי", f"${last_price:.2f}")
-            c2.metric("RVOL", f"{df['RVOL'].iloc[-1]:.2f}")
-            c3.metric("ATR", f"${atr:.2f}")
-            
-            fig = go.Figure()
-            fig.add_trace(go.Candlestick(x=df.index, open=df['Open'], high=df['High'], low=df['Low'], close=df['Close'], name='מחיר'))
-            fig.add_trace(go.Scatter(x=df.index, y=df['VWAP'], name='VWAP', line=dict(color='blue', width=1)))
-            st.plotly_chart(fig, use_container_width=True)
-            
-            if st.button("הוסף לתיק המוסדי"):
-                conn = sqlite3.connect('keisar_pro.db')
-                conn.execute("INSERT INTO portfolio VALUES (?, ?, ?, ?, ?)", 
-                             (ticker_input.upper(), last_price, last_price-(1.5*atr), last_price+(3*atr), datetime.now().strftime("%Y-%m-%d")))
-                conn.commit()
-                conn.close()
-                st.success(f"{ticker_input.upper()} נוספה לתיק!")
+    if st.button("🚀 הפעל סריקה"):
+        master_list = []
+        progress_bar = st.progress(0)
+        for i, file in enumerate(selected_files):
+            tickers = pd.read_csv(file, header=None).iloc[:, 0].dropna().unique()
+            for ticker in tickers:
+                try:
+                    df = yf.Ticker(ticker).history(period="6mo")
+                    if len(df) > 50:
+                        df = get_indicators(df)
+                        squeeze = (df['Upper'].iloc[-1] - df['Lower'].iloc[-1]) / df['Close'].iloc[-1]
+                        if squeeze < 0.15:
+                            master_list.append({"Ticker": ticker, "Price": round(float(df['Close'].iloc[-1]), 2), "Squeeze": round(squeeze, 3)})
+                except: continue
+            progress_bar.progress((i + 1) / len(selected_files))
+        
+        # שמירה בטוחה
+        if master_list:
+            pd.DataFrame(master_list).to_csv(SCAN_RESULTS_FILE, index=False)
+        else:
+            if os.path.exists(SCAN_RESULTS_FILE): os.remove(SCAN_RESULTS_FILE)
+        st.rerun()
+
+    # הצגה בטוחה בלבד
+    if os.path.exists(SCAN_RESULTS_FILE) and os.path.getsize(SCAN_RESULTS_FILE) > 5:
+        df_res = pd.read_csv(SCAN_RESULTS_FILE)
+        st.dataframe(df_res, use_container_width=True)
+        if 'Ticker' in df_res.columns:
+            selected = st.selectbox("בחר מניה לניתוח:", df_res['Ticker'].unique())
+            if st.button("הצג גרפים"):
+                data = get_indicators(yf.Ticker(selected).history(period="6mo"))
+                fig = make_subplots(rows=3, cols=1, shared_xaxes=True, row_heights=[0.5, 0.25, 0.25])
+                fig.add_trace(go.Candlestick(x=data.index, open=data['Open'], high=data['High'], low=data['Low'], close=data['Close'], name='Price'), row=1, col=1)
+                fig.add_trace(go.Scatter(x=data.index, y=data['Upper'], line=dict(color='gray', width=1), name='Upper'), row=1, col=1)
+                fig.add_trace(go.Scatter(x=data.index, y=data['Lower'], line=dict(color='gray', width=1), name='Lower'), row=1, col=1)
+                fig.add_trace(go.Scatter(x=data.index, y=data['OBV'], name='OBV', line=dict(color='blue')), row=2, col=1)
+                fig.add_trace(go.Scatter(x=data.index, y=data['MACD'], name='MACD'), row=3, col=1)
+                st.plotly_chart(fig, use_container_width=True)
+                if st.button("הוסף לתיק"):
+                    pd.DataFrame({'Ticker': [selected]}).to_csv(PORTFOLIO_FILE, mode='a', header=False, index=False)
+                    st.success(f"{selected} נוספה!")
 
 with tab2:
-    st.subheader("💼 התיק הפעיל")
-    conn = sqlite3.connect('keisar_pro.db')
-    df_port = pd.read_sql_query("SELECT * FROM portfolio", conn)
-    conn.close()
-    
-    if not df_port.empty:
-        for _, row in df_port.iterrows():
-            curr_df = get_data(row['ticker'])
-            if curr_df is not None:
-                curr_p = float(curr_df['Close'].iloc[-1])
-                pnl = ((curr_p - row['entry']) / row['entry']) * 100
-                
-                with st.container(border=True):
-                    c1, c2, c3 = st.columns([0.4, 0.3, 0.3])
-                    c1.metric(row['ticker'], f"${curr_p:.2f}", f"{pnl:.2f}%")
-                    c2.write(f"**כניסה:** ${row['entry']:.2f}")
-                    c2.write(f"**SL:** ${row['sl']:.2f} | **TP:** ${row['tp']:.2f}")
-                    if c3.button("סגור פוזיציה", key=row['ticker']):
-                        conn = sqlite3.connect('keisar_pro.db')
-                        conn.execute("DELETE FROM portfolio WHERE ticker = ?", (row['ticker'],))
-                        conn.commit()
-                        conn.close()
-                        st.rerun()
-    else:
-        st.info("התיק ריק.")
+    if os.path.exists(PORTFOLIO_FILE):
+        st.dataframe(pd.read_csv(PORTFOLIO_FILE, names=['Ticker']))
 
 with tab3:
-    st.header("🎓 מדריך: עבודה מוסדית")
-    st.write("ה-VWAP הוא כלי מרכזי המציג את המחיר הממוצע המשוקלל בנפח. סוחרים מוסדיים משתמשים בו כדי לזהות היכן הכסף הגדול נכנס לעסקה.")
+    st.header("🎓 מדריך אסטרטגי: צייד התפרצויות (ASST Style)")
+    st.markdown("עקרון העבודה: זיהוי דחיסה טכנית המלווה בצבירת ווליום (OBV).")
+    c1, c2 = st.columns(2)
+    with c1:
+        st.checkbox("Squeeze נמוך מ-0.15 (התכנסות)")
+        st.checkbox("OBV עולה/יציב בגרף שבועי")
+    with c2:
+        st.checkbox("מחיר מעל ממוצע נע 20")
+        st.checkbox("היסטוגרמת MACD חיובית")
+    
+    st.write("---")
+    st.markdown("**הבנת המנגנונים:**")
+    st.write("1. **התכנסות (Bollinger Squeeze):** מייצגת אנרגיה שנאגרת לפני פריצה.")
+    st.write("2. **צבירת סחורה (OBV):** עדות לפעילות מוסדית תומכת מתחת לפני השטח.")
