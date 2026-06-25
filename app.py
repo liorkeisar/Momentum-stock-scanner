@@ -40,11 +40,16 @@ def get_indicators(df):
     df['RSI'] = 100 - (100 / (1 + rs))
     return df.fillna(0)
 
-# --- 2. לוגיקת ניקוד והסברים ---
+# --- 2. לוגיקת ניקוד עם פילטר נזילות ---
 def calculate_score(df):
     if df is None or len(df) < 20: 
         return -1, "❌ נתונים חסרים (פחות מ-20 ימי מסחר)"
     
+    # פילטר נזילות - מונע "מניות זבל"
+    avg_vol = df['Volume'].mean()
+    if avg_vol < 500000:
+        return -1, f"❌ פסילה: מחזור נמוך ({int(avg_vol/1000)}K מניות בממוצע)"
+        
     reasons = []
     
     # בדיקות פסילה
@@ -115,7 +120,7 @@ with tab4:
 
 with tab3:
     st.header("🎓 אסטרטגיית צייד התפרצויות")
-    st.write("המערכת מזהה דחיסה טכנית מלווה בצבירת מוסדיים.")
+    st.write("המערכת מזהה דחיסה טכנית מלווה בצבירת מוסדיים (פילטר נזילות: 500K מניות/יום).")
 
 with tab2:
     if os.path.exists(PORTFOLIO_FILE): st.table(pd.read_csv(PORTFOLIO_FILE))
