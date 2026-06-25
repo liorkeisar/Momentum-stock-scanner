@@ -85,7 +85,8 @@ with tab1:
                 try:
                     tickers = pd.read_csv(file, header=None).iloc[:, 0].dropna().unique()
                     for t in tickers:
-                        if get_market_cap(t) > 350_000_000:
+                        # שונה ל-300,000,000
+                        if get_market_cap(t) > 300_000_000:
                             df = get_indicators(get_data(t))
                             score = calculate_score(df)
                             if score >= 0:
@@ -133,7 +134,7 @@ with tab4:
 
 with tab3:
     st.header("🎓 אסטרטגיית צייד התפרצויות")
-    st.write("המערכת מסננת מניות בעלות שווי שוק מעל 350M$ שנמצאות בתהליך דחיסה טכנית.")
+    st.write("המערכת מסננת מניות בעלות שווי שוק מעל 300M$ שנמצאות בתהליך דחיסה טכנית.")
 
 with tab2:
     if os.path.exists(PORTFOLIO_FILE):
