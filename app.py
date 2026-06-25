@@ -64,7 +64,6 @@ with tab1:
 
     if os.path.exists(SCAN_RESULTS_FILE):
         df_res = pd.read_csv(SCAN_RESULTS_FILE)
-        # תנאי מוחמר: רק ציון 3+ וגם RVOL > 1.5
         df_res['Signal'] = df_res.apply(lambda row: '✅ HIGH MOMENTUM' if row['Score'] >= 3 and row['RVOL'] > 1.5 else '', axis=1)
         st.dataframe(df_res, use_container_width=True)
         
@@ -93,6 +92,13 @@ with tab1:
 with tab2:
     if os.path.exists(PORTFOLIO_FILE):
         try:
-            st.table(pd.read_csv(PORTFOLIO_FILE))
+            df_port = pd.read_csv(PORTFOLIO_FILE)
+            for i, row in df_port.iterrows():
+                df_data = get_indicators(row['Ticker'])
+                if df_data is not None:
+                    curr_p, ma20 = float(df_data['Close'].iloc[-1]), float(df_data['MA20'].iloc[-1])
+                    if curr_p < ma20: st.error(f"⚠️ אזהרת יציאה: {row['Ticker']} נסחרת מתחת ל-MA20!")
+                    else: st.success(f"✅ {row['Ticker']} במומנטום חיובי.")
+            st.table(df_port)
             if st.button("🗑️ נקה תיק"): os.remove(PORTFOLIO_FILE); st.rerun()
         except: os.remove(PORTFOLIO_FILE); st.rerun()
