@@ -6,7 +6,7 @@ import os
 from datetime import datetime
 
 # --- הגדרות ---
-st.set_page_config(page_title="KEISAR Pro Hunter", layout="wide")
+st.set_page_config(page_title="KEISAR Stock Wave", layout="wide")
 PORTFOLIO_FILE = 'portfolio.csv'
 SCAN_RESULTS_FILE = 'scan_results.csv'
 
@@ -40,49 +40,49 @@ def get_indicators(df):
     df['RSI'] = 100 - (100 / (1 + rs))
     return df.fillna(0)
 
-# --- 2. לוגיקת ניקוד עם פילטר נזילות ---
+# --- 2. לוגיקת ניקוד לימודית ---
 def calculate_score(df):
     if df is None or len(df) < 20: 
-        return -1, "❌ נתונים חסרים (פחות מ-20 ימי מסחר)"
+        return -1, "❌ נתונים חסרים: דרושים מינימום 20 ימי מסחר."
     
-    # פילטר נזילות - מונע "מניות זבל"
+    # פילטר נזילות מוסדית
     avg_vol = df['Volume'].mean()
     if avg_vol < 500000:
-        return -1, f"❌ פסילה: מחזור נמוך ({int(avg_vol/1000)}K מניות בממוצע)"
+        return -1, f"❌ פסילה (נזילות): מחזור ממוצע של {int(avg_vol/1000)}K מניות אינו מספיק לאמינות טכנית."
         
     reasons = []
     
-    # בדיקות פסילה
+    # בדיקות פסילה אסטרטגיות
     if df['Daily_Change'].tail(3).sum() > 0.08:
-        return -1, "❌ פסילה: עלייה חדה מדי (מעל 8% ב-3 ימים)"
+        return -1, "❌ פסילה (מומנטום יתר): עלייה של מעל 8% ב-3 ימים מעידה שהמהלך כבר החל. סכנת תיקון."
     
     dist_from_ma = (df['Close'].iloc[-1] - df['MA20'].iloc[-1]) / df['MA20'].iloc[-1]
     if abs(dist_from_ma) > 0.04:
-        return -1, f"❌ פסילה: מחיר רחוק מהממוצע ({abs(dist_from_ma)*100:.1f}%)"
+        return -1, f"❌ פסילה (מרחק מהממוצע): המניה רחוקה {abs(dist_from_ma)*100:.1f}% מה-MA20."
     
     if df['RSI'].iloc[-1] > 70:
-        return -1, "❌ פסילה: מניה במצב קניית יתר (RSI > 70)"
+        return -1, "❌ פסילה (RSI): מניה במצב קניית יתר (מעל 70), סיכון גבוה לכניסה."
     
-    # חישוב ציון
+    # חישוב ציון והסברים לימודיים
     score = 4 
-    reasons.append("✅ דחיסה (Squeeze) תקינה")
+    reasons.append("✅ דחיסה (Squeeze): תנודתיות נמוכה, הכנה לפני התפרצות טכנית.")
     
     if df['OBV'].diff(5).mean() > 0:
         score += 2
-        reasons.append("✅ מומנטום חיובי (OBV צומח)")
+        reasons.append("✅ צבירה מוסדית (OBV): נפח מסחר בעליות גבוה מירידות, עדות לאיסוף ע\"י כסף חכם.")
     else:
-        reasons.append("⚠️ ללא צבירת מוסדיים (OBV שלילי)")
+        reasons.append("⚠️ ללא צבירה: מדד ה-OBV שלילי. חסר אישור מוסדי למהלך עליות.")
         
     if 1.0 < df['RVOL'].iloc[-1] < 1.4:
         score += 1
-        reasons.append("✅ ווליום יחסי (RVOL) תקין")
+        reasons.append("✅ ווליום יחסי (RVOL): נפח מסחר בריא ומאוזן, תומך בפריצה תקינה.")
     else:
-        reasons.append("⚠️ ווליום לא אידיאלי")
+        reasons.append("⚠️ ווליום לא אידיאלי: תנועה ללא נפח מסחר עקבי עלולה להיות פריצת שווא.")
         
     return score, " | ".join(reasons)
 
 # --- 3. ממשק משתמש ---
-st.title("◈ KEISAR Pro Hunter: מערכת ניתוח")
+st.title("◈ KEISAR Stock Wave: מערכת ניתוח")
 tab1, tab2, tab3, tab4 = st.tabs(["📊 סורק", "💼 תיק השקעות", "🎓 מדריך אסטרטגי", "🔍 זן מניה"])
 
 with tab1:
@@ -119,8 +119,9 @@ with tab4:
             st.error(reason)
 
 with tab3:
-    st.header("🎓 אסטרטגיית צייד התפרצויות")
-    st.write("המערכת מזהה דחיסה טכנית מלווה בצבירת מוסדיים (פילטר נזילות: 500K מניות/יום).")
+    st.header("🎓 אסטרטגיית צייד התפרצויות (ASST)")
+    st.markdown("המערכת מזהה נקודות איזון טכניות שבהן מניה צוברת אנרגיה. אנו מחפשים את **השילוב** של דחיסה טכנית עם אישור מהכסף הגדול (OBV).")
+    
 
 with tab2:
     if os.path.exists(PORTFOLIO_FILE): st.table(pd.read_csv(PORTFOLIO_FILE))
