@@ -120,10 +120,10 @@ with tab2:
     if os.path.exists(PORTFOLIO_FILE):
         df_port = pd.read_csv(PORTFOLIO_FILE)
         def highlight_rr(val):
-            color = 'lightgreen' if val >= 2 else 'lightcoral'
-            return f'background-color: {color}'
+            return 'background-color: lightgreen' if val >= 2 else 'background-color: lightcoral'
         st.subheader("תיק עסקאות פעיל")
-        st.dataframe(df_port.style.applymap(highlight_rr, subset=['R:R']), use_container_width=True)
+        # שימוש ב-.map התואם לגרסאות 2026
+        st.dataframe(df_port.style.map(highlight_rr, subset=['R:R']), use_container_width=True)
     else:
         st.info("התיק ריק.")
 
@@ -144,4 +144,4 @@ with tab4:
                 if succ: st.success(msg)
                 else: st.warning(msg)
         else:
-            st.error("לא עומדת בתנאי האסטרטגיה או שווי שוק נמוך מ-350M$.")
+            st.error("לא עומדת בתנאי האסטרטגיה או שווי שוק נמוך מ-300M$.")
