@@ -1,126 +1,86 @@
 import streamlit as st
 import yfinance as yf
 import pandas as pd
+import plotly.graph_objects as go
+from plotly.subplots import make_subplots
 import os
 import numpy as np
-from datetime import datetime
 
-# --- הגדרות עמוד ---
+# הגדרות
 st.set_page_config(page_title="KEISAR Pro Hunter", layout="wide")
 PORTFOLIO_FILE = 'portfolio.csv'
 SCAN_RESULTS_FILE = 'scan_results.csv'
 
-# --- 1. פונקציות ליבה ---
-@st.cache_data(ttl=3600)
-def get_data(ticker):
-    try:
-        return yf.Ticker(ticker).history(period="6mo")
-    except:
-        return pd.DataFrame()
-
-def get_indicators(df):
-    if df.empty or len(df) < 30: return None
-    df = df.copy()
-    df['Daily_Change'] = df['Close'].pct_change()
+# --- פונקציות ליבה ---
+def get_indicators(ticker):
+    df = yf.Ticker(ticker).history(period="6mo")
+    if len(df) < 20: return None
     df['MA20'] = df['Close'].rolling(window=20).mean()
     df['STD'] = df['Close'].rolling(window=20).std()
-    df['Upper'] = df['MA20'] + (df['STD'] * 2)
-    df['Lower'] = df['MA20'] - (df['STD'] * 2)
-    df['Squeeze'] = (df['Upper'] - df['Lower']) / df['Close']
-    df['OBV'] = (np.sign(df['Close'].diff()) * df['Volume']).fillna(0).cumsum()
-    df['AvgVol'] = df['Volume'].rolling(window=20).mean()
-    df['RVOL'] = df['Volume'] / df['AvgVol']
+    df['Squeeze'] = ((df['MA20'] + (df['STD'] * 2)) - (df['MA20'] - (df['STD'] * 2))) / df['Close']
+    df['RVOL'] = df['Volume'] / df['Volume'].rolling(window=20).mean()
     df['ATR'] = (df['High'] - df['Low']).rolling(window=14).mean()
-    
-    delta = df['Close'].diff()
-    gain = (delta.where(delta > 0, 0)).rolling(window=14).mean()
-    loss = (-delta.where(delta < 0, 0)).rolling(window=14).mean()
-    rs = gain / loss.replace(0, np.nan)
-    df['RSI'] = 100 - (100 / (1 + rs))
-    return df.fillna(0)
+    return df.dropna()
 
 def calculate_score(df):
-    if df is None: return -1
-    try:
-        # פילטרים בסיסיים
-        if df['RSI'].iloc[-1] > 70: return -1
-        
-        # זיהוי פריצה טרייה (סגירה מעל הרצועה העליונה ביומיים האחרונים)
-        recent_breakout = (df['Close'].iloc[-1] > df['Upper'].iloc[-1]) or \
-                          (df['Close'].iloc[-2] > df['Upper'].iloc[-2])
-        
-        # וידוא דחיסה לפני הפריצה (Squeeze)
-        is_squeezing = df['Squeeze'] < df['Squeeze'].rolling(20).mean()
-        if not (is_squeezing.rolling(5).sum().iloc[-1] >= 3 and recent_breakout):
-            return -1 
-            
-        score = 4
-        # בונוס על עוצמת פריצה ונפח מסחר
-        if df['RVOL'].iloc[-1] > 1.2: score += 2
-        if df['OBV'].diff(1).iloc[-1] > 0: score += 1
-        return score
-    except: return -1
+    score = 0
+    if df['Squeeze'].iloc[-1] < 0.10: score += 2
+    if df['Close'].iloc[-1] > df['MA20'].iloc[-1]: score += 1
+    if df['RVOL'].iloc[-1] > 1.5: score += 1
+    return score
 
-def calculate_trade_levels(df):
-    price = float(df['Close'].iloc[-1])
-    atr = float(df['ATR'].iloc[-1])
-    sl = round(price - (1.5 * atr), 2)
-    tp = round(price + (3.0 * atr), 2)
-    return sl, tp
-
-# --- 2. ממשק משתמש ---
-st.title("◈ KEISAR Pro Hunter: מערכת ניתוח פריצות")
-tab1, tab2, tab3, tab4 = st.tabs(["📊 סורק", "💼 תיק השקעות", "🎓 מדריך אסטרטגי", "🔍 זן מניה"])
+# --- ממשק ---
+st.title("◈ KEISAR: סורק מוסדי")
+tab1, tab2 = st.tabs(["📊 סורק", "💼 תיק"])
 
 with tab1:
-    all_files = [f for f in os.listdir('.') if f.endswith('.csv') and 'portfolio' not in f and 'scan_results' not in f]
-    selected_files = st.multiselect("בחר רשימות לסריקה:", all_files)
+    all_files = sorted([f for f in os.listdir('.') if f.endswith('.csv') and 'portfolio' not in f and 'scan' not in f])
+    selected_files = st.sidebar.multiselect("בחר רשימות:", all_files)
+
     if st.button("🚀 הפעל סריקה"):
         master_list = []
         for file in selected_files:
-            tickers = pd.read_csv(file, header=None).iloc[:, 0].dropna().unique()
-            for t in tickers:
-                df = get_indicators(get_data(t))
-                score = calculate_score(df)
-                if score >= 0:
-                    master_list.append({"Ticker": t, "Score": score, "Price": round(float(df['Close'].iloc[-1]), 2)})
-        pd.DataFrame(master_list).sort_values(by="Score", ascending=False).to_csv(SCAN_RESULTS_FILE, index=False)
-        st.rerun()
-    
+            for ticker in pd.read_csv(file, header=None).iloc[:, 0].dropna().unique():
+                try:
+                    df = get_indicators(ticker)
+                    if df is not None:
+                        master_list.append({"Ticker": ticker, "Score": calculate_score(df), "Price": round(float(df['Close'].iloc[-1]), 2), "RVOL": round(float(df['RVOL'].iloc[-1]), 2)})
+                except: continue
+        if master_list:
+            pd.DataFrame(master_list).sort_values(by="Score", ascending=False).to_csv(SCAN_RESULTS_FILE, index=False)
+            st.rerun()
+
     if os.path.exists(SCAN_RESULTS_FILE):
         df_res = pd.read_csv(SCAN_RESULTS_FILE)
+        # סימון ירוק מותנה בציון גבוה AND RVOL גבוה
+        df_res['Signal'] = df_res.apply(lambda row: '✅ HIGH MOMENTUM' if row['Score'] >= 3 and row['RVOL'] > 1.5 else '', axis=1)
         st.dataframe(df_res, use_container_width=True)
-        sel = st.selectbox("בחר מניה לניתוח:", df_res['Ticker'].unique() if not df_res.empty else [])
-        if sel and st.button("➕ הוסף לתיק", key="add_1"):
-            price = float(get_data(sel)['Close'].iloc[-1])
-            pd.DataFrame({'Ticker': [sel], 'Entry': [price], 'Date': [datetime.now().strftime("%Y-%m-%d")]}).to_csv(PORTFOLIO_FILE, mode='a', header=not os.path.exists(PORTFOLIO_FILE), index=False)
-            st.success(f"{sel} נוספה לתיק!")
+        
+        ticker = st.selectbox("בחר מניה לניתוח:", df_res['Ticker'].unique())
+        if st.button("הצג גרף וניתוח"):
+            df = get_indicators(ticker)
+            last_p, atr = float(df['Close'].iloc[-1]), float(df['ATR'].iloc[-1])
+            sl, tp = round(last_p - 1.5*atr, 2), round(last_p + 2.5*atr, 2)
+            rr = round((tp - last_p) / (last_p - sl), 2)
+            
+            st.metric("יחס R/R", f"1:{rr}")
+            col1, col2 = st.columns(2)
+            col1.metric("Stop Loss", f"${sl}")
+            col2.metric("Take Profit", f"${tp}")
+            
+            fig = make_subplots(rows=2, cols=1, shared_xaxes=True, row_heights=[0.7, 0.3])
+            fig.add_trace(go.Candlestick(x=df.index, open=df['Open'], high=df['High'], low=df['Low'], close=df['Close']), row=1, col=1)
+            fig.add_trace(go.Bar(x=df.index, y=df['RVOL'], name='RVOL'), row=2, col=1)
+            fig.update_layout(height=500, xaxis_rangeslider_visible=False)
+            st.plotly_chart(fig, use_container_width=True)
 
-with tab4:
-    ticker = st.text_input("הזן מניה לניתוח מהיר:").upper()
-    if st.button("בדוק מניה"):
-        df = get_indicators(get_data(ticker))
-        score = calculate_score(df)
-        st.metric("ציון", f"{score}/7" if score >= 0 else "נפסל")
-        if score >= 0:
-            sl, tp = calculate_trade_levels(df)
-            st.write(f"🎯 **יעדי עסקה:** Stop Loss: ${sl} | Take Profit: ${tp}")
-            if st.button("➕ הוסף לתיק", key="add_4"):
-                pd.DataFrame({'Ticker': [ticker], 'Entry': [float(df['Close'].iloc[-1])], 'Date': [datetime.now().strftime("%Y-%m-%d")]}).to_csv(PORTFOLIO_FILE, mode='a', header=not os.path.exists(PORTFOLIO_FILE), index=False)
-                st.success("נוספה לתיק!")
-
-with tab3:
-    st.header("🎓 אסטרטגיית צייד התפרצויות (ASST)")
-    st.markdown("""
-    המערכת מחפשת את השילוב הקריטי: **דחיסה (Squeeze) שהופכת לפריצה (Breakout).**
-    
-    
-    **למה זה עובד למקצוענים?**
-    1. **סינון רעשים:** הסורק מתמקד רק במניות שפרצו ביומיים האחרונים – אין יותר מניות ש"פספסו את המהלך".
-    2. **אישור נפח (RVOL):** אנחנו דורשים נפח מסחר גבוה כדי לוודא שהפריצה אמיתית ולא "מלכודת שוורים".
-    3. **משמעת:** יעדי ה-Stop Loss וה-Take Profit מבוססים על תנודתיות שוק (ATR), מה שמבטיח עקביות בניהול סיכונים.
-    """)
-    st.markdown("")
+            if st.button("הוסף לתיק"):
+                pd.DataFrame({'Ticker': [ticker], 'Entry': [last_p], 'SL': [sl], 'TP': [tp]}).to_csv(PORTFOLIO_FILE, mode='a', header=not os.path.exists(PORTFOLIO_FILE), index=False)
+                st.success("נוסף!")
 
 with tab2:
-    if os.path.exists(PORTFOLIO_FILE): st.table(pd.read_csv(PORTFOLIO_FILE))
+    if os.path.exists(PORTFOLIO_FILE):
+        try:
+            st.table(pd.read_csv(PORTFOLIO_FILE))
+            if st.button("🗑️ נקה תיק"): os.remove(PORTFOLIO_FILE); st.rerun()
+        except: os.remove(PORTFOLIO_FILE); st.rerun()
