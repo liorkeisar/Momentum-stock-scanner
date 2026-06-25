@@ -7,20 +7,33 @@ import os
 import numpy as np
 
 # הגדרות
-st.set_page_config(page_title="KEISAR Pro Hunter", layout="wide")
-PORTFOLIO_FILE = 'portfolio.csv'
+st.set_page_config(page_title="KEISAR Bottom Hunter", layout="wide")
 SCAN_RESULTS_FILE = 'scan_results.csv'
+PORTFOLIO_FILE = 'portfolio.csv'
 
-# --- פונקציות ליבה ---
 def get_indicators(ticker):
-    df = yf.Ticker(ticker).history(period="6mo")
-    if len(df) < 20: return None
-    df['MA20'] = df['Close'].rolling(window=20).mean()
-    df['STD'] = df['Close'].rolling(window=20).std()
-    df['Squeeze'] = ((df['MA20'] + (df['STD'] * 2)) - (df['MA20'] - (df['STD'] * 2))) / df['Close']
-    df['RVOL'] = df['Volume'] / df['Volume'].rolling(window=20).mean()
-    df['ATR'] = (df['High'] - df['Low']).rolling(window=14).mean()
-    return df.dropna()
+    try:
+        stock = yf.Ticker(ticker)
+        info = stock.info
+        # סינון איכות: שווי שוק 300M+ ונפח 200K+
+        if info.get('marketCap', 0) < 300_000_000: return None
+        if info.get('averageVolume', 0) < 200_000: return None
+        
+        df = stock.history(period="1y")
+        if len(df) < 252: return None
+        
+        # סינון שפל שנתי: מחיר בתוך 15% מהשפל
+        yearly_low = df['Close'].min()
+        current_price = df['Close'].iloc[-1]
+        if current_price > (yearly_low * 1.15): return None
+
+        df['MA20'] = df['Close'].rolling(window=20).mean()
+        df['STD'] = df['Close'].rolling(window=20).std()
+        df['Squeeze'] = ((df['MA20'] + (df['STD'] * 2)) - (df['MA20'] - (df['STD'] * 2))) / df['Close']
+        df['RVOL'] = df['Volume'] / df['Volume'].rolling(window=20).mean()
+        df['ATR'] = (df['High'] - df['Low']).rolling(window=14).mean()
+        return df.dropna()
+    except: return None
 
 def calculate_score(df):
     score = 0
@@ -30,7 +43,7 @@ def calculate_score(df):
     return score
 
 # --- ממשק ---
-st.title("◈ KEISAR: סורק מוסדי")
+st.title("◈ KEISAR: סורק שפל (Bottom Hunter)")
 tab1, tab2 = st.tabs(["📊 סורק", "💼 תיק"])
 
 with tab1:
@@ -39,25 +52,24 @@ with tab1:
 
     if st.button("🚀 הפעל סריקה"):
         master_list = []
-        for file in selected_files:
-            for ticker in pd.read_csv(file, header=None).iloc[:, 0].dropna().unique():
-                try:
+        with st.spinner('מחפש מניות בשפל עם מומנטום...'):
+            for file in selected_files:
+                for ticker in pd.read_csv(file, header=None).iloc[:, 0].dropna().unique():
                     df = get_indicators(ticker)
                     if df is not None:
                         master_list.append({"Ticker": ticker, "Score": calculate_score(df), "Price": round(float(df['Close'].iloc[-1]), 2), "RVOL": round(float(df['RVOL'].iloc[-1]), 2)})
-                except: continue
         if master_list:
             pd.DataFrame(master_list).sort_values(by="Score", ascending=False).to_csv(SCAN_RESULTS_FILE, index=False)
             st.rerun()
 
     if os.path.exists(SCAN_RESULTS_FILE):
         df_res = pd.read_csv(SCAN_RESULTS_FILE)
-        # סימון ירוק מותנה בציון גבוה AND RVOL גבוה
+        # תנאי מוחמר: רק ציון 3+ וגם RVOL > 1.5
         df_res['Signal'] = df_res.apply(lambda row: '✅ HIGH MOMENTUM' if row['Score'] >= 3 and row['RVOL'] > 1.5 else '', axis=1)
         st.dataframe(df_res, use_container_width=True)
         
-        ticker = st.selectbox("בחר מניה לניתוח:", df_res['Ticker'].unique())
-        if st.button("הצג גרף וניתוח"):
+        ticker = st.selectbox("בחר לניתוח:", df_res['Ticker'].unique())
+        if st.button("הצג ניתוח"):
             df = get_indicators(ticker)
             last_p, atr = float(df['Close'].iloc[-1]), float(df['ATR'].iloc[-1])
             sl, tp = round(last_p - 1.5*atr, 2), round(last_p + 2.5*atr, 2)
@@ -65,8 +77,8 @@ with tab1:
             
             st.metric("יחס R/R", f"1:{rr}")
             col1, col2 = st.columns(2)
-            col1.metric("Stop Loss", f"${sl}")
-            col2.metric("Take Profit", f"${tp}")
+            col1.metric("Stop Loss", f"${sl} ({round(((last_p-sl)/last_p)*100, 2)}%)")
+            col2.metric("Take Profit", f"${tp} ({round(((tp-last_p)/last_p)*100, 2)}%)")
             
             fig = make_subplots(rows=2, cols=1, shared_xaxes=True, row_heights=[0.7, 0.3])
             fig.add_trace(go.Candlestick(x=df.index, open=df['Open'], high=df['High'], low=df['Low'], close=df['Close']), row=1, col=1)
