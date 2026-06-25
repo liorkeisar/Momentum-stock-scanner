@@ -40,28 +40,41 @@ def get_indicators(df):
     df['RSI'] = 100 - (100 / (1 + rs))
     return df.fillna(0)
 
-# --- 2. לוגיקת ניקוד עם הסבר פסילה ---
+# --- 2. לוגיקת ניקוד והסברים ---
 def calculate_score(df):
-    if df is None or len(df) < 20: return -1, "נתונים לא מספיקים"
-    try:
-        # בדיקות פסילה מדורגות
-        if df['Daily_Change'].tail(3).sum() > 0.08: return -1, "עלייה חדה מדי ב-3 ימים האחרונים"
+    if df is None or len(df) < 20: 
+        return -1, "❌ נתונים חסרים (פחות מ-20 ימי מסחר)"
+    
+    reasons = []
+    
+    # בדיקות פסילה
+    if df['Daily_Change'].tail(3).sum() > 0.08:
+        return -1, "❌ פסילה: עלייה חדה מדי (מעל 8% ב-3 ימים)"
+    
+    dist_from_ma = (df['Close'].iloc[-1] - df['MA20'].iloc[-1]) / df['MA20'].iloc[-1]
+    if abs(dist_from_ma) > 0.04:
+        return -1, f"❌ פסילה: מחיר רחוק מהממוצע ({abs(dist_from_ma)*100:.1f}%)"
+    
+    if df['RSI'].iloc[-1] > 70:
+        return -1, "❌ פסילה: מניה במצב קניית יתר (RSI > 70)"
+    
+    # חישוב ציון
+    score = 4 
+    reasons.append("✅ דחיסה (Squeeze) תקינה")
+    
+    if df['OBV'].diff(5).mean() > 0:
+        score += 2
+        reasons.append("✅ מומנטום חיובי (OBV צומח)")
+    else:
+        reasons.append("⚠️ ללא צבירת מוסדיים (OBV שלילי)")
         
-        dist_from_ma = (df['Close'].iloc[-1] - df['MA20'].iloc[-1]) / df['MA20'].iloc[-1]
-        if abs(dist_from_ma) > 0.04: return -1, f"סטייה מהממוצע: {abs(dist_from_ma)*100:.1f}% (גבוה מ-4%)"
+    if 1.0 < df['RVOL'].iloc[-1] < 1.4:
+        score += 1
+        reasons.append("✅ ווליום יחסי (RVOL) תקין")
+    else:
+        reasons.append("⚠️ ווליום לא אידיאלי")
         
-        if df['RSI'].iloc[-1] > 70: return -1, "מצב קניית יתר (RSI > 70)"
-        
-        # חישוב דחיסה
-        min_squeeze = df['Squeeze'].rolling(20).min().iloc[-1]
-        if df['Squeeze'].iloc[-1] > min_squeeze * 1.05: return -1, "אין דחיסה טכנית מספקת"
-        
-        # חישוב ניקוד
-        score = 4
-        if df['OBV'].diff(5).mean() > 0: score += 2
-        if 1.0 < df['RVOL'].iloc[-1] < 1.4: score += 1
-        return score, "עומדת בתנאים"
-    except: return -1, "שגיאה בחישוב הנתונים"
+    return score, " | ".join(reasons)
 
 # --- 3. ממשק משתמש ---
 st.title("◈ KEISAR Pro Hunter: מערכת ניתוח")
@@ -77,9 +90,9 @@ with tab1:
             for t in tickers:
                 t = str(t).strip().split(' ')[0]
                 df = get_indicators(get_data(t))
-                score, _ = calculate_score(df)
+                score, reason = calculate_score(df)
                 if score >= 0:
-                    master_list.append({"Ticker": t, "Score": score, "Price": round(float(df['Close'].iloc[-1]), 2)})
+                    master_list.append({"Ticker": t, "Score": score, "Price": round(float(df['Close'].iloc[-1]), 2), "Details": reason})
         if master_list:
             pd.DataFrame(master_list).sort_values(by="Score", ascending=False).to_csv(SCAN_RESULTS_FILE, index=False)
         else:
@@ -95,14 +108,14 @@ with tab4:
         df = get_indicators(get_data(ticker))
         score, reason = calculate_score(df)
         if score >= 0:
-            st.metric("ציון", f"{score}/7")
-            st.success(f"הסבר: {reason}")
+            st.metric("ציון סופי", f"{score}/7")
+            for point in reason.split(" | "): st.write(point)
         else:
-            st.error(f"נפסל: {reason}")
+            st.error(reason)
 
 with tab3:
     st.header("🎓 אסטרטגיית צייד התפרצויות")
-    st.write("מערכת סריקה המבוססת על דחיסה, ווליום ומומנטום.")
+    st.write("המערכת מזהה דחיסה טכנית מלווה בצבירת מוסדיים.")
 
 with tab2:
     if os.path.exists(PORTFOLIO_FILE): st.table(pd.read_csv(PORTFOLIO_FILE))
