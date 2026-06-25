@@ -31,7 +31,6 @@ def get_indicators(df):
     df['OBV'] = (np.sign(df['Close'].diff()) * df['Volume']).fillna(0).cumsum()
     df['AvgVol'] = df['Volume'].rolling(window=20).mean()
     df['RVOL'] = df['Volume'] / df['AvgVol']
-    df['ATR'] = (df['High'] - df['Low']).rolling(window=14).mean()
     
     delta = df['Close'].diff()
     gain = (delta.where(delta > 0, 0)).rolling(window=14).mean()
@@ -43,6 +42,8 @@ def get_indicators(df):
 def calculate_score(df):
     if df is None: return -1
     try:
+        # בדיקת תקינות נתונים לפני חישוב
+        if len(df) < 20: return -1
         dist_from_ma = (df['Close'].iloc[-1] - df['MA20'].iloc[-1]) / df['MA20'].iloc[-1]
         if abs(dist_from_ma) > 0.04 or df['RSI'].iloc[-1] > 70: return -1
         score = 4
@@ -53,11 +54,12 @@ def calculate_score(df):
 
 def add_to_portfolio(ticker, price):
     hist = yf.Ticker(ticker).history(period="1mo")
+    if hist.empty: return False, "לא נמצאו נתוני מניה"
     atr = float(hist['High'].iloc[-1] - hist['Low'].iloc[-1])
     sl = round(price - (2 * atr), 2)
     tp = round(price + (4 * atr), 2)
     
-    rr = round((tp - price) / (price - sl), 2)
+    rr = round((tp - price) / (price - sl), 2) if (price - sl) != 0 else 0
     risk_pct = round(((price - sl) / price) * 100, 2)
     reward_pct = round(((tp - price) / price) * 100, 2)
     
@@ -96,7 +98,12 @@ with tab1:
                             master.append({"Ticker": t, "Score": score, "Price": round(float(df['Close'].iloc[-1]), 2)})
                 progress_bar.progress((i + 1) / len(selected))
         
-        pd.DataFrame(master).sort_values(by="Score", ascending=False).to_csv(SCAN_RESULTS_FILE, index=False)
+        # תיקון למניעת KeyError אם master ריק
+        if master:
+            pd.DataFrame(master).sort_values(by="Score", ascending=False).to_csv(SCAN_RESULTS_FILE, index=False)
+        else:
+            if os.path.exists(SCAN_RESULTS_FILE): os.remove(SCAN_RESULTS_FILE)
+            st.warning("לא נמצאו מניות בתנאי הסריקה.")
         st.rerun()
     
     if os.path.exists(SCAN_RESULTS_FILE):
@@ -116,7 +123,8 @@ with tab2:
             color = 'lightgreen' if val >= 2 else 'lightcoral'
             return f'background-color: {color}'
         st.subheader("תיק עסקאות פעיל")
-        st.dataframe(df_port.style.applymap(highlight_rr, subset=['R:R']), use_container_width=True)
+        # תיקון לשימוש ב-map במקום applymap למניעת שגיאה
+        st.dataframe(df_port.style.map(highlight_rr, subset=['R:R']), use_container_width=True)
     else:
         st.info("התיק ריק.")
 
