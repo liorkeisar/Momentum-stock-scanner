@@ -67,7 +67,6 @@ def calculate_score(df):
 def calculate_trade_levels(df):
     price = float(df['Close'].iloc[-1])
     atr = float(df['ATR'].iloc[-1])
-    # ניהול סיכונים: יחס של 1:2
     sl = round(price - (2 * atr), 2)
     tp = round(price + (4 * atr), 2)
     return price, sl, tp
@@ -83,16 +82,29 @@ with tab1:
         master_list = []
         with st.spinner("סורק שוק..."):
             for file in selected_files:
-                tickers = pd.read_csv(file, header=None).iloc[:, 0].dropna().unique()
-                for t in tickers:
-                    if get_market_cap(t) > 350_000_000:
-                        df = get_indicators(get_data(t))
-                        score = calculate_score(df)
-                        if score >= 0:
-                            master_list.append({"Ticker": t, "Score": score, "Price": round(float(df['Close'].iloc[-1]), 2)})
-        pd.DataFrame(master_list).sort_values(by="Score", ascending=False).to_csv(SCAN_RESULTS_FILE, index=False)
-        st.rerun()
-    
+                try:
+                    tickers = pd.read_csv(file, header=None).iloc[:, 0].dropna().unique()
+                    for t in tickers:
+                        if get_market_cap(t) > 350_000_000:
+                            df = get_indicators(get_data(t))
+                            score = calculate_score(df)
+                            if score >= 0:
+                                master_list.append({"Ticker": t, "Score": score, "Price": round(float(df['Close'].iloc[-1]), 2)})
+                except Exception as e:
+                    st.error(f"שגיאה בקובץ {file}: {e}")
+        
+        # --- תיקון יציבות: הגנה לפני מיון ושמירה ---
+        if master_list:
+            df_final = pd.DataFrame(master_list)
+            if 'Score' in df_final.columns:
+                df_final = df_final.sort_values(by="Score", ascending=False)
+            df_final.to_csv(SCAN_RESULTS_FILE, index=False)
+            st.rerun()
+        else:
+            if os.path.exists(SCAN_RESULTS_FILE):
+                os.remove(SCAN_RESULTS_FILE)
+            st.warning("לא נמצאו מניות העומדות בקריטריונים בסריקה זו.")
+
     if os.path.exists(SCAN_RESULTS_FILE):
         df_res = pd.read_csv(SCAN_RESULTS_FILE)
         st.dataframe(df_res, use_container_width=True)
