@@ -4,13 +4,23 @@ import pandas as pd
 import numpy as np
 import os
 import time
+import shutil
+import glob
 from datetime import datetime
+from plotly.subplots import make_subplots
+import plotly.graph_objects as go
 
-# הגדרות דף
-st.set_page_config(page_title="KEISAR Pro Hunter - 52w Low Scanner (Fixed)", layout="wide")
+# -------------------------
+# הגדרות כלליות
+# -------------------------
+st.set_page_config(page_title="KEISAR Pro Hunter - Breakout Scanner", layout="wide")
 SCAN_RESULTS_FILE = 'scan_results.csv'
 REJECTIONS_FILE = 'scan_rejections.csv'
 PORTFOLIO_FILE = 'portfolio.csv'
+BACKUP_DIR = "backups"
+LOG_FILE = os.path.join(BACKUP_DIR, "backup_log.csv")
+MAX_BACKUPS = 30
+os.makedirs(BACKUP_DIR, exist_ok=True)
 
 # -------------------------
 # מטמון לקריאות yfinance
@@ -31,17 +41,24 @@ def fetch_info(ticker: str) -> dict:
         return {}
 
 # -------------------------
-# אינדיקטורים ועזרים
+# אינדיקטורים
 # -------------------------
 def add_indicators(df: pd.DataFrame) -> pd.DataFrame:
     df = df.copy()
+    # בסיס
     df['MA20'] = df['Close'].rolling(20).mean()
-    df['STD'] = df['Close'].rolling(20).std()
-    df['BB_upper'] = df['MA20'] + 2 * df['STD']
-    df['BB_lower'] = df['MA20'] - 2 * df['STD']
-    df['Squeeze'] = (df['BB_upper'] - df['BB_lower']) / df['MA20']
+    df['STD20'] = df['Close'].rolling(20).std()
+    df['BB_upper'] = df['MA20'] + 2 * df['STD20']
+    df['BB_lower'] = df['MA20'] - 2 * df['STD20']
+    df['BB_width'] = (df['BB_upper'] - df['BB_lower']) / df['MA20']
+    # OBV
     df['OBV'] = (np.sign(df['Close'].diff()) * df['Volume']).fillna(0).cumsum()
-    df['MACD'] = df['Close'].ewm(span=12, adjust=False).mean() - df['Close'].ewm(span=26, adjust=False).mean()
+    # MACD
+    ema12 = df['Close'].ewm(span=12, adjust=False).mean()
+    ema26 = df['Close'].ewm(span=26, adjust=False).mean()
+    df['MACD'] = ema12 - ema26
+    df['MACD_signal'] = df['MACD'].ewm(span=9, adjust=False).mean()
+    df['MACD_hist'] = df['MACD'] - df['MACD_signal']
     # RSI 14 (EMA)
     delta = df['Close'].diff()
     up = delta.clip(lower=0)
@@ -50,68 +67,78 @@ def add_indicators(df: pd.DataFrame) -> pd.DataFrame:
     ma_down = down.ewm(com=13, adjust=False).mean()
     rs = ma_up / ma_down
     df['RSI'] = 100 - (100 / (1 + rs))
+    # RVOL
     df['RVOL'] = df['Volume'] / df['Volume'].rolling(window=10).mean()
+    # ATR 14
+    high_low = df['High'] - df['Low']
+    high_close = (df['High'] - df['Close'].shift()).abs()
+    low_close = (df['Low'] - df['Close'].shift()).abs()
+    tr = pd.concat([high_low, high_close, low_close], axis=1).max(axis=1)
+    df['ATR'] = tr.ewm(span=14, adjust=False).mean()
+    # VWAP approximation (daily typical price cumulative)
+    tp = (df['High'] + df['Low'] + df['Close']) / 3
+    cum_vp = (tp * df['Volume']).cumsum()
+    cum_vol = df['Volume'].cumsum()
+    df['VWAP'] = cum_vp / cum_vol
     return df.dropna()
 
-def is_52w_low(df: pd.DataFrame, pct_from_low=0.01) -> (bool, str):
-    try:
-        low_52 = df['Close'].min()
-        current = df['Close'].iloc[-1]
-        ok = (current - low_52) / low_52 <= pct_from_low
-        reason = "" if ok else f"לא קרוב לשפל 52w (הפרש {(current-low_52)/low_52:.2%})"
-        return ok, reason
-    except Exception as e:
-        return False, f"שגיאת חישוב 52w: {e}"
+# -------------------------
+# כללי זיהוי פריצה ואישור
+# -------------------------
+def is_bollinger_squeeze(df: pd.DataFrame, lookback=20, width_thresh=0.05) -> (bool, float):
+    # בדוק האם רוחב ה‑BB נמוך יחסית ל־lookback
+    recent = df['BB_width'].iloc[-lookback:]
+    current = recent.iloc[-1]
+    median_width = recent.median()
+    ok = current <= width_thresh or current <= 0.6 * median_width
+    return ok, float(current)
 
-def is_sideways_week(df: pd.DataFrame, days=5, max_range_pct=0.02) -> (bool, str):
+def macd_confirmation(df: pd.DataFrame, lookback=3) -> (bool, float):
+    # MACD עולה והשינוי בהיסטוגרמה חיובי
     try:
-        if len(df) < days:
-            return False, f"היסטוריה קצרה ל־{days} ימים"
-        recent = df['Close'].iloc[-days:]
-        price_range = recent.max() - recent.min()
-        ref = recent.mean()
-        ok = (price_range / ref) <= max_range_pct
-        reason = "" if ok else f"לא תנועה צידית ב{days} ימים (טווח {(price_range/ref):.2%})"
-        return ok, reason
-    except Exception as e:
-        return False, f"שגיאת חישוב תנועה צידית: {e}"
+        hist_now = df['MACD_hist'].iloc[-1]
+        hist_past = df['MACD_hist'].iloc[-1 - lookback]
+        ok = hist_now > hist_past and df['MACD'].iloc[-1] > df['MACD_signal'].iloc[-1]
+        return ok, float(hist_now)
+    except Exception:
+        return False, 0.0
 
-def institutional_accumulation(df: pd.DataFrame, obv_days=10, rvol_thresh=1.5) -> (bool, str):
+def obv_confirmation(df: pd.DataFrame, lookback=10) -> (bool, float):
     try:
-        if len(df) < obv_days + 2:
-            return False, "טווח היסטוריה קצר ל‑OBV"
         obv_now = df['OBV'].iloc[-1]
-        obv_past = df['OBV'].iloc[-(obv_days+1)]
-        rvol_now = df['RVOL'].iloc[-1]
-        vol_now = df['Volume'].iloc[-1]
-        vol_avg = df['Volume'].rolling(window=20).mean().iloc[-1]
-        ok = (obv_now > obv_past) and (rvol_now >= rvol_thresh) and (vol_now >= vol_avg)
-        reasons = []
-        if not (obv_now > obv_past): reasons.append("OBV לא עולה")
-        if not (rvol_now >= rvol_thresh): reasons.append(f"RVOL נמוך ({rvol_now:.2f})")
-        if not (vol_now >= vol_avg): reasons.append("נפח יומי נמוך מהממוצע 20")
-        return ok, "; ".join(reasons)
-    except Exception as e:
-        return False, f"שגיאת חישוב OBV/RVOL/נפח: {e}"
+        obv_past = df['OBV'].iloc[-1 - lookback]
+        ok = obv_now > obv_past
+        return ok, float(obv_now - obv_past)
+    except Exception:
+        return False, 0.0
 
-def macd_rising(df: pd.DataFrame, lookback=3) -> (bool, str):
+def rsi_ok(df: pd.DataFrame, max_rsi=75) -> (bool, float):
     try:
-        if len(df) < lookback + 2:
-            return False, "טווח היסטוריה קצר ל‑MACD"
-        ok = df['MACD'].iloc[-1] > df['MACD'].iloc[-1 - lookback]
-        reason = "" if ok else "MACD לא בעל מגמה עולה"
-        return ok, reason
-    except Exception as e:
-        return False, f"שגיאת חישוב MACD: {e}"
+        rsi = df['RSI'].iloc[-1]
+        return rsi < max_rsi, float(rsi)
+    except Exception:
+        return False, 0.0
 
-def rsi_not_overbought(df: pd.DataFrame, threshold=70) -> (bool, str):
+def vwap_confirmation(df: pd.DataFrame) -> (bool, float):
     try:
-        ok = df['RSI'].iloc[-1] < threshold
-        reason = "" if ok else f"RSI גבוה ({df['RSI'].iloc[-1]:.1f})"
-        return ok, reason
-    except Exception as e:
-        return False, f"שגיאת חישוב RSI: {e}"
+        # מחיר סוגר מעל VWAP (אינדיקציה לתמיכה)
+        ok = df['Close'].iloc[-1] > df['VWAP'].iloc[-1]
+        return ok, float(df['Close'].iloc[-1] - df['VWAP'].iloc[-1])
+    except Exception:
+        return False, 0.0
 
+def atr_expansion(df: pd.DataFrame, lookback=10) -> (bool, float):
+    try:
+        atr_now = df['ATR'].iloc[-1]
+        atr_past = df['ATR'].iloc[-1 - lookback]
+        ok = atr_now > atr_past
+        return ok, float(atr_now / (atr_past + 1e-9))
+    except Exception:
+        return False, 0.0
+
+# -------------------------
+# בדיקות בסיסיות נוספות
+# -------------------------
 def marketcap_ok(info: dict, min_cap=300_000_000) -> (bool, str):
     try:
         mc = info.get('marketCap') or info.get('market_cap') or 0
@@ -133,17 +160,91 @@ def avg_volume_ok(df: pd.DataFrame, min_avg_vol=150_000) -> (bool, str):
         return False, f"שגיאת חישוב ממוצע נפח: {e}"
 
 # -------------------------
-# UI - הגדרות
+# כלי גיבוי/שחזור/לוג
 # -------------------------
-st.title("KEISAR Pro Hunter - 52 Week Low + Accumulation Scanner")
+def _write_log(action: str, files: list, note: str = ""):
+    ts = datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")
+    row = {"timestamp": ts, "action": action, "files": ";".join(files), "note": note}
+    if os.path.exists(LOG_FILE):
+        try:
+            log_df = pd.read_csv(LOG_FILE)
+            log_df = pd.concat([log_df, pd.DataFrame([row])], ignore_index=True)
+        except Exception:
+            log_df = pd.DataFrame([row])
+    else:
+        log_df = pd.DataFrame([row])
+    log_df.to_csv(LOG_FILE, index=False)
+
+def list_backups():
+    files = sorted(glob.glob(os.path.join(BACKUP_DIR, "*")), reverse=True)
+    files = [f for f in files if os.path.basename(f) != os.path.basename(LOG_FILE)]
+    return files
+
+def create_backup(files_to_backup: list):
+    ts = datetime.utcnow().strftime("%Y%m%dT%H%M%SZ")
+    backed = []
+    for f in files_to_backup:
+        if os.path.exists(f):
+            base = os.path.basename(f)
+            backup_name = f"{os.path.splitext(base)[0]}_{ts}{os.path.splitext(base)[1]}"
+            backup_path = os.path.join(BACKUP_DIR, backup_name)
+            shutil.copy2(f, backup_path)
+            backed.append(backup_path)
+    _write_log("backup", backed)
+    _prune_backups()
+    return backed
+
+def _prune_backups():
+    backups = list_backups()
+    if len(backups) > MAX_BACKUPS:
+        to_remove = backups[MAX_BACKUPS:]
+        for r in to_remove:
+            try:
+                os.remove(r)
+            except Exception:
+                pass
+        _write_log("prune", to_remove, note=f"pruned to {MAX_BACKUPS}")
+
+def restore_backup(backup_file: str, restore_files: list):
+    restored = []
+    for f in restore_files:
+        base = os.path.basename(f)
+        if os.path.isfile(backup_file):
+            src = backup_file
+            dst = f
+            try:
+                shutil.copy2(src, dst)
+                restored.append(dst)
+            except Exception as e:
+                return False, f"שגיאה בשחזור {dst}: {e}"
+        else:
+            candidates = [p for p in list_backups() if os.path.basename(p).startswith(os.path.splitext(base)[0])]
+            if candidates:
+                src = candidates[0]
+                try:
+                    shutil.copy2(src, f)
+                    restored.append(f)
+                except Exception as e:
+                    return False, f"שגיאה בשחזור {f}: {e}"
+            else:
+                return False, f"לא נמצא גיבוי עבור {base}"
+    _write_log("restore", restored, note=f"from {os.path.basename(backup_file)}")
+    return True, restored
+
+# -------------------------
+# UI - הגדרות סריקה
+# -------------------------
+st.title("◈ KEISAR Pro Hunter — Breakout Scanner")
 
 left, right = st.columns([1, 3])
 with left:
     st.subheader("הגדרות סריקה")
-    pct_from_low = st.number_input("אחוז מקירוב לשפל 52 שבועות (%)", value=3.0, min_value=0.0, max_value=50.0) / 100.0
-    sideways_range_pct = st.number_input("מקסימום טווח תנועה בשבוע (%)", value=4.0, min_value=0.1, max_value=50.0) / 100.0
+    # פרמטרים פריצתיים
+    pct_from_low = st.number_input("אחוז מקירוב לשפל 52 שבועות (%) — לא חובה כאן", value=3.0, min_value=0.0, max_value=50.0) / 100.0
+    bb_width_thresh = st.number_input("סף רוחב Bollinger (BB width) לפריצה", value=0.05, min_value=0.001, max_value=1.0, step=0.005)
+    sideways_range_pct = st.number_input("מקסימום טווח תנועה בשבוע (%) לזיהוי דחיסה", value=4.0, min_value=0.1, max_value=50.0) / 100.0
     rvol_threshold = st.number_input("סף RVOL לאיסוף", value=1.2, min_value=0.5, max_value=10.0)
-    rsi_threshold = st.number_input("סף RSI מקסימלי", value=70, min_value=30, max_value=90)
+    rsi_threshold = st.number_input("סף RSI מקסימלי לאישור פריצה", value=75, min_value=30, max_value=90)
     min_marketcap = st.number_input("מינימום שווי שוק (USD)", value=300_000_000, step=50_000_000)
     min_avg_vol = st.number_input("ממוצע נפח מינימלי (20 יום)", value=150_000, step=10_000)
     chunk_size = st.number_input("גודל קבוצה לסריקה (chunk size)", min_value=5, max_value=200, value=25, step=5)
@@ -160,7 +261,6 @@ with right:
 uploaded = st.file_uploader("העלה קבצי CSV (טיקר בכל שורה) או השאר ריק לקריאה מקבצים בתיקייה", accept_multiple_files=True, type="csv")
 tickers = []
 
-# קריאה מקבצים שהועלו
 if uploaded:
     for f in uploaded:
         try:
@@ -169,7 +269,6 @@ if uploaded:
         except Exception:
             continue
 else:
-    # קריאה מקבצים מקומיים בתיקייה (שלא שמורים כ־scan/rejections/portfolio)
     local_files = [f for f in os.listdir('.') if f.endswith('.csv') and 'scan' not in f and 'rejection' not in f and 'portfolio' not in f]
     for file in local_files:
         try:
@@ -178,14 +277,13 @@ else:
         except Exception:
             continue
 
-# ניקוי, המרה והסרת כפילויות
 tickers = [t.replace('.', '-').upper() for t in tickers if isinstance(t, str) and t.strip() != ""]
-tickers = list(dict.fromkeys(tickers))  # שומר סדר ומסיר כפילויות
+tickers = list(dict.fromkeys(tickers))
 st.write(f"נמצאו {len(tickers)} טיקרים")
 st.session_state['tickers'] = tickers
 
 # -------------------------
-# פונקציית סריקה ב‑chunks
+# פונקציית סריקה ב‑chunks עם כללי פריצה
 # -------------------------
 def run_scan_on_list(tickers_list, chunk_size=25):
     total = len(tickers_list)
@@ -208,63 +306,82 @@ def run_scan_on_list(tickers_list, chunk_size=25):
             else:
                 df = None
 
-            # בדיקות קריטריונים
+            # בדיקות בסיסיות
             if df is not None:
                 ok_mc, r = marketcap_ok(info, min_marketcap)
                 if not ok_mc: reasons.append(r)
                 ok_volavg, r = avg_volume_ok(df, min_avg_vol)
                 if not ok_volavg: reasons.append(r)
-                ok_52, r = is_52w_low(df, pct_from_low=pct_from_low)
-                if not ok_52: reasons.append(r)
-                ok_side, r = is_sideways_week(df, days=5, max_range_pct=sideways_range_pct)
-                if not ok_side: reasons.append(r)
-                ok_inst, r = institutional_accumulation(df, obv_days=10, rvol_thresh=rvol_threshold)
-                if not ok_inst: reasons.append(r)
-                ok_macd, r = macd_rising(df, lookback=3)
-                if not ok_macd: reasons.append(r)
-                ok_rsi, r = rsi_not_overbought(df, threshold=rsi_threshold)
-                if not ok_rsi: reasons.append(r)
-            else:
-                # אם אין df, כבר הוספנו סיבת דחייה למעלה
-                pass
-
+            # שלב זיהוי דחיסה (Bollinger squeeze)
+            if df is not None:
+                squeeze_ok, squeeze_val = is_bollinger_squeeze(df, lookback=20, width_thresh=bb_width_thresh)
+                if not squeeze_ok:
+                    reasons.append(f"לא דחיסה (BB width {squeeze_val:.3f})")
+                # RVOL + OBV
+                obv_ok, obv_delta = obv_confirmation(df, lookback=10)
+                if not obv_ok:
+                    reasons.append("OBV לא מאשר איסוף")
+                rvol_now = float(df['RVOL'].iloc[-1])
+                if rvol_now < rvol_threshold:
+                    reasons.append(f"RVOL נמוך ({rvol_now:.2f})")
+                # MACD
+                macd_ok, macd_hist = macd_confirmation(df, lookback=3)
+                if not macd_ok:
+                    reasons.append("MACD לא מאשר")
+                # RSI
+                rsi_ok_flag, rsi_val = rsi_ok(df, max_rsi=rsi_threshold)
+                if not rsi_ok_flag:
+                    reasons.append(f"RSI גבוה ({rsi_val:.1f})")
+                # VWAP
+                vwap_ok_flag, vwap_diff = vwap_confirmation(df)
+                if not vwap_ok_flag:
+                    reasons.append("מחיר מתחת ל‑VWAP")
+                # ATR expansion (אישור עוצמה)
+                atr_ok, atr_ratio = atr_expansion(df, lookback=10)
+                if not atr_ok:
+                    # לא חובה לדחות על זה, רק להזהיר
+                    reasons.append(f"ATR לא מראה הרחבה ({atr_ratio:.2f})")
+            # החלטה: אם יש סיבות ודיבאג כבוי -> דחייה
             if reasons and not DEBUG_MODE:
                 rejections.append({"Ticker": t, "Reasons": "; ".join(reasons)})
                 continue
 
-            # אם DEBUG_MODE: אפשר להוסיף גם תוצאות עם Warnings
+            # אם הגענו לכאן — הוסף לתוצאות (ב‑DEBUG גם אם יש Warnings)
             if df is not None:
                 obv_change = float(df['OBV'].iloc[-1] - df['OBV'].iloc[-11]) if len(df) > 11 else 0.0
                 results.append({
                     "Ticker": t,
                     "Price": float(df['Close'].iloc[-1]),
                     "52w_low": float(df['Close'].min()),
+                    "BB_width": float(df['BB_width'].iloc[-1]),
                     "RVOL": float(df['RVOL'].iloc[-1]),
                     "OBV_change_10d": obv_change,
-                    "MACD": float(df['MACD'].iloc[-1]),
+                    "MACD_hist": float(df['MACD_hist'].iloc[-1]),
                     "RSI": float(df['RSI'].iloc[-1]),
+                    "VWAP_diff": float(df['Close'].iloc[-1] - df['VWAP'].iloc[-1]),
+                    "ATR": float(df['ATR'].iloc[-1]),
                     "MarketCap": info.get('marketCap', None),
                     "AvgVol20": float(df['Volume'].rolling(20).mean().iloc[-1]),
                     "Warnings": "; ".join(reasons) if reasons else ""
                 })
             else:
-                # במקרה של df None וה‑DEBUG_MODE, הוסף שורה עם מידע מינימלי
                 results.append({
                     "Ticker": t,
                     "Price": None,
                     "52w_low": None,
+                    "BB_width": None,
                     "RVOL": None,
                     "OBV_change_10d": None,
-                    "MACD": None,
+                    "MACD_hist": None,
                     "RSI": None,
+                    "VWAP_diff": None,
+                    "ATR": None,
                     "MarketCap": info.get('marketCap', None),
                     "AvgVol20": None,
                     "Warnings": "; ".join(reasons) if reasons else ""
                 })
 
-            # הימנעות מקצב גבוה מדי
             time.sleep(0.05)
-        # עדכון פרוגרס אחרי כל batch
         progress.progress(min(1.0, (i + chunk_size) / total))
     progress.empty()
     return results, rejections
@@ -286,13 +403,58 @@ if run_scan:
             st.subheader("תוצאות שעברו סינון")
             st.dataframe(df_res, use_container_width=True)
             st.download_button("⬇️ הורד תוצאות CSV", data=df_res.to_csv(index=False), file_name=SCAN_RESULTS_FILE, mime='text/csv')
+            # הצגה שורה-שורה עם כפתור גרף והוספה לתיק
+            for idx, row in df_res.reset_index(drop=True).iterrows():
+                cols = st.columns([1,1,1,1,1,1,1])
+                with cols[0]:
+                    st.write(f"**{row['Ticker']}**")
+                with cols[1]:
+                    st.write(f"מחיר: {row['Price']:.2f}" if pd.notna(row['Price']) else "N/A")
+                with cols[2]:
+                    st.write(f"RSI: {row['RSI']:.1f}" if pd.notna(row['RSI']) else "N/A")
+                with cols[3]:
+                    st.write(f"RVOL: {row['RVOL']:.2f}" if pd.notna(row['RVOL']) else "N/A")
+                with cols[4]:
+                    st.write(f"BBw: {row['BB_width']:.3f}" if pd.notna(row['BB_width']) else "N/A")
+                with cols[5]:
+                    st.write(f"MarketCap: {int(row['MarketCap']) if pd.notna(row['MarketCap']) else 'N/A'}")
+                btn_key = f"show_{row['Ticker']}_{idx}"
+                with cols[6]:
+                    if st.button("הצג גרף", key=btn_key):
+                        hist = fetch_history(row['Ticker'], period="1y")
+                        if hist.empty:
+                            st.warning("היסטוריה לא זמינה להצגה.")
+                        else:
+                            df_plot = add_indicators(hist)
+                            fig = make_subplots(rows=4, cols=1, shared_xaxes=True, row_heights=[0.5, 0.15, 0.15, 0.2])
+                            fig.add_trace(go.Candlestick(x=df_plot.index, open=df_plot['Open'], high=df_plot['High'],
+                                                         low=df_plot['Low'], close=df_plot['Close'], name='Candles'), row=1, col=1)
+                            fig.add_trace(go.Scatter(x=df_plot.index, y=df_plot['MA20'], line=dict(color='blue'), name='MA20'), row=1, col=1)
+                            fig.add_trace(go.Scatter(x=df_plot.index, y=df_plot['BB_upper'], line=dict(color='lightgrey'), name='BB_upper', opacity=0.5), row=1, col=1)
+                            fig.add_trace(go.Scatter(x=df_plot.index, y=df_plot['BB_lower'], line=dict(color='lightgrey'), name='BB_lower', opacity=0.5), row=1, col=1)
+                            fig.add_trace(go.Bar(x=df_plot.index, y=df_plot['Volume'], name='Volume', marker_color='lightgrey'), row=2, col=1)
+                            fig.add_trace(go.Scatter(x=df_plot.index, y=df_plot['RVOL'], line=dict(color='orange'), name='RVOL'), row=2, col=1)
+                            fig.add_trace(go.Scatter(x=df_plot.index, y=df_plot['OBV'], line=dict(color='green'), name='OBV'), row=3, col=1)
+                            fig.add_trace(go.Scatter(x=df_plot.index, y=df_plot['MACD_hist'], line=dict(color='purple'), name='MACD_hist'), row=4, col=1)
+                            fig.update_layout(height=900, showlegend=True, title_text=f"{row['Ticker']} - גרף מפורט")
+                            st.plotly_chart(fig, use_container_width=True)
+                            st.write(f"מחיר נוכחי: **{row['Price']:.2f}** | RSI: **{row['RSI']:.1f}** | RVOL: **{row['RVOL']:.2f}**")
+                            add_key = f"add_{row['Ticker']}_{idx}"
+                            if st.button("הוסף לתיק", key=add_key):
+                                p_row = {"Ticker": row['Ticker'], "AddedAt": datetime.utcnow().isoformat(), "Price": row['Price']}
+                                if os.path.exists(PORTFOLIO_FILE):
+                                    p_df = pd.read_csv(PORTFOLIO_FILE)
+                                    p_df = pd.concat([p_df, pd.DataFrame([p_row])], ignore_index=True)
+                                else:
+                                    p_df = pd.DataFrame([p_row])
+                                p_df.to_csv(PORTFOLIO_FILE, index=False)
+                                st.success(f"{row['Ticker']} נוסף לתיק.")
         else:
-            df_res = pd.DataFrame(columns=["Ticker","Price","52w_low","RVOL","OBV_change_10d","MACD","RSI","MarketCap","AvgVol20","Warnings"])
             results_placeholder.info("לא נמצאו תוצאות שעברו את כל הקריטריונים.")
+            df_res = pd.DataFrame(columns=["Ticker","Price","52w_low","BB_width","RVOL","OBV_change_10d","MACD_hist","RSI","VWAP_diff","ATR","MarketCap","AvgVol20","Warnings"])
 
         if rejections:
             df_rej = pd.DataFrame(rejections)
-            # הוספת סיבת דחייה עיקרית
             df_rej['PrimaryReason'] = df_rej['Reasons'].apply(lambda x: x.split(';')[0] if isinstance(x, str) and x else '')
             df_rej.to_csv(REJECTIONS_FILE, index=False)
             st.subheader("טיקרים שנדחו וסיבות")
@@ -302,9 +464,112 @@ if run_scan:
             st.write("אין דחיות להציג.")
 
 # -------------------------
+# ניהול קבצים: גיבוי/שחזור/מחיקה
+# -------------------------
+st.markdown("---")
+st.markdown("### ניהול קבצי סריקה")
+with st.expander("גיבוי, שחזור ומחיקה של קבצי סריקה"):
+    st.write("גיבוי נוצר אוטומטית לפני מחיקה. ניתן לשחזר גיבוי אחרון או לבחור גיבוי ספציפי.")
+    files_available = [SCAN_RESULTS_FILE, REJECTIONS_FILE, PORTFOLIO_FILE]
+    file_checks = {}
+    cols = st.columns(len(files_available))
+    for i, f in enumerate(files_available):
+        with cols[i]:
+            file_checks[f] = st.checkbox(os.path.basename(f), value=(os.path.exists(f)))
+
+    if st.button("גבה עכשיו"):
+        to_backup = [f for f, checked in file_checks.items() if checked and os.path.exists(f)]
+        if not to_backup:
+            st.warning("אין קבצים זמינים לגיבוי.")
+        else:
+            backed = create_backup(to_backup)
+            if backed:
+                st.success(f"גובו {len(backed)} קבצים לתיקיית {BACKUP_DIR}.")
+                for b in backed:
+                    st.write(f"- {b}")
+            else:
+                st.info("לא נוצרו גיבויים (ייתכן שהקבצים לא קיימים).")
+
+    st.markdown("---")
+    backups = list_backups()
+    if backups:
+        st.write(f"נמצאו {len(backups)} גיבויים אחרונים:")
+        sel = st.selectbox("בחר גיבוי לשחזור", backups, format_func=lambda x: os.path.basename(x))
+        restore_checks = {}
+        rcols = st.columns(len(files_available))
+        for i, f in enumerate(files_available):
+            with rcols[i]:
+                restore_checks[f] = st.checkbox(f"שחזר {os.path.basename(f)}", value=False)
+        if st.button("שחזר גיבוי שנבחר"):
+            to_restore = [f for f, checked in restore_checks.items() if checked]
+            if not to_restore:
+                st.warning("בחר לפחות קובץ אחד לשחזור.")
+            else:
+                ok, info = restore_backup(sel, to_restore)
+                if ok:
+                    st.success(f"שוחזרו {len(info)} קבצים.")
+                    for r in info:
+                        st.write(f"- {r}")
+                else:
+                    st.error(f"שגיאה בשחזור: {info}")
+    else:
+        st.info("אין גיבויים זמינים כרגע.")
+
+    st.markdown("---")
+    delete_confirm = st.checkbox("אני מאשר/ת למחוק את הקבצים שנבחרו (גיבוי ייווצר אוטומטית)")
+    include_portfolio = st.checkbox("כלול גם portfolio.csv במחיקה (ברירת מחדל: לא)", value=False)
+    if st.button("מחק קבצי סריקה שנבחרו"):
+        if not delete_confirm:
+            st.warning("יש לסמן את תיבת האישור לפני המחיקה.")
+        else:
+            to_remove = [SCAN_RESULTS_FILE, REJECTIONS_FILE]
+            if include_portfolio:
+                to_remove.append(PORTFOLIO_FILE)
+            existing = [f for f in to_remove if os.path.exists(f)]
+            if existing:
+                backed = create_backup(existing)
+                st.write(f"גובו לפני מחיקה: {len(backed)} קבצים.")
+            else:
+                st.write("לא נמצאו קבצים קיימים לגיבוי לפני מחיקה.")
+            removed = []
+            errors = []
+            for f in to_remove:
+                if os.path.exists(f):
+                    try:
+                        os.remove(f)
+                        removed.append(f)
+                    except Exception as e:
+                        errors.append(f"{f}: {e}")
+                else:
+                    errors.append(f"{f}: לא נמצא")
+            _write_log("delete", removed + errors)
+            if removed:
+                st.success("הקבצים הוסרו:")
+                for r in removed:
+                    st.write(f"- {r}")
+            if errors:
+                st.error("חלק מהקבצים לא נמחו או לא נמצאו:")
+                for err in errors:
+                    st.write(f"- {err}")
+
+    st.markdown("---")
+    if os.path.exists(LOG_FILE):
+        try:
+            log_df = pd.read_csv(LOG_FILE).sort_values(by='timestamp', ascending=False).head(50)
+            st.write("לוג גיבויים (50 רשומות אחרונות):")
+            st.dataframe(log_df, use_container_width=True)
+            if st.button("הורד לוג גיבויים"):
+                st.download_button("הורד לוג", data=log_df.to_csv(index=False), file_name=os.path.basename(LOG_FILE), mime='text/csv')
+        except Exception:
+            st.write("לא ניתן לקרוא את קובץ הלוג.")
+    else:
+        st.write("אין לוג גיבויים להצגה.")
+
+# -------------------------
 # הצגת תוצאות קודמות וגרפים
 # -------------------------
-if os.path.exists(SCAN_RESULTS_FILE) and not run_scan:
+st.markdown("---")
+if os.path.exists(SCAN_RESULTS_FILE):
     st.subheader("תוצאות סריקה קודמות")
     try:
         df_prev = pd.read_csv(SCAN_RESULTS_FILE)
@@ -316,8 +581,6 @@ if os.path.exists(SCAN_RESULTS_FILE) and not run_scan:
                 st.warning("היסטוריה לא זמינה להצגה.")
             else:
                 df_plot = add_indicators(hist)
-                import plotly.graph_objects as go
-                from plotly.subplots import make_subplots
                 fig = make_subplots(rows=4, cols=1, shared_xaxes=True, row_heights=[0.5, 0.15, 0.15, 0.2])
                 fig.add_trace(go.Candlestick(x=df_plot.index, open=df_plot['Open'], high=df_plot['High'],
                                              low=df_plot['Low'], close=df_plot['Close'], name='Candles'), row=1, col=1)
@@ -325,14 +588,11 @@ if os.path.exists(SCAN_RESULTS_FILE) and not run_scan:
                 fig.add_trace(go.Bar(x=df_plot.index, y=df_plot['Volume'], name='Volume', marker_color='lightgrey'), row=2, col=1)
                 fig.add_trace(go.Scatter(x=df_plot.index, y=df_plot['RVOL'], line=dict(color='orange'), name='RVOL'), row=2, col=1)
                 fig.add_trace(go.Scatter(x=df_plot.index, y=df_plot['OBV'], line=dict(color='green'), name='OBV'), row=3, col=1)
-                fig.add_trace(go.Scatter(x=df_plot.index, y=df_plot['MACD'], line=dict(color='purple'), name='MACD'), row=4, col=1)
+                fig.add_trace(go.Scatter(x=df_plot.index, y=df_plot['MACD_hist'], line=dict(color='purple'), name='MACD_hist'), row=4, col=1)
                 fig.update_layout(height=900, showlegend=True, title_text=f"{sel} - גרף מפורט")
                 st.plotly_chart(fig, use_container_width=True)
     except Exception:
         st.info("לא ניתן לקרוא את קובץ התוצאות הקודם.")
 
-# -------------------------
-# סיום
-# -------------------------
 st.markdown("---")
 st.write("הערה: זהו כלי מחקר טכני בלבד ולא ייעוץ השקעות.")
