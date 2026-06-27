@@ -86,7 +86,6 @@ def add_indicators(df: pd.DataFrame) -> pd.DataFrame:
 # כללי זיהוי פריצה ואישור
 # -------------------------
 def is_bollinger_squeeze(df: pd.DataFrame, lookback=20, width_thresh=0.05) -> (bool, float):
-    # בדוק האם רוחב ה‑BB נמוך יחסית ל־lookback
     recent = df['BB_width'].iloc[-lookback:]
     current = recent.iloc[-1]
     median_width = recent.median()
@@ -94,7 +93,6 @@ def is_bollinger_squeeze(df: pd.DataFrame, lookback=20, width_thresh=0.05) -> (b
     return ok, float(current)
 
 def macd_confirmation(df: pd.DataFrame, lookback=3) -> (bool, float):
-    # MACD עולה והשינוי בהיסטוגרמה חיובי
     try:
         hist_now = df['MACD_hist'].iloc[-1]
         hist_past = df['MACD_hist'].iloc[-1 - lookback]
@@ -121,7 +119,6 @@ def rsi_ok(df: pd.DataFrame, max_rsi=75) -> (bool, float):
 
 def vwap_confirmation(df: pd.DataFrame) -> (bool, float):
     try:
-        # מחיר סוגר מעל VWAP (אינדיקציה לתמיכה)
         ok = df['Close'].iloc[-1] > df['VWAP'].iloc[-1]
         return ok, float(df['Close'].iloc[-1] - df['VWAP'].iloc[-1])
     except Exception:
@@ -239,7 +236,6 @@ st.title("◈ KEISAR Pro Hunter — Breakout Scanner")
 left, right = st.columns([1, 3])
 with left:
     st.subheader("הגדרות סריקה")
-    # פרמטרים פריצתיים
     pct_from_low = st.number_input("אחוז מקירוב לשפל 52 שבועות (%) — לא חובה כאן", value=3.0, min_value=0.0, max_value=50.0) / 100.0
     bb_width_thresh = st.number_input("סף רוחב Bollinger (BB width) לפריצה", value=0.05, min_value=0.001, max_value=1.0, step=0.005)
     sideways_range_pct = st.number_input("מקסימום טווח תנועה בשבוע (%) לזיהוי דחיסה", value=4.0, min_value=0.1, max_value=50.0) / 100.0
@@ -256,31 +252,86 @@ with right:
     results_placeholder = st.empty()
 
 # -------------------------
-# טעינת טיקרים מ‑CSV (uploader או תיקייה)
+# בחירת קובץ CSV יחיד לסריקה (ממשק חדש)
 # -------------------------
-uploaded = st.file_uploader("העלה קבצי CSV (טיקר בכל שורה) או השאר ריק לקריאה מקבצים בתיקייה", accept_multiple_files=True, type="csv")
-tickers = []
+st.markdown("### בחר קובץ CSV לסריקה (סריקה על קובץ יחיד)")
+col_file, col_preview = st.columns([2, 3])
 
-if uploaded:
-    for f in uploaded:
-        try:
-            tdf = pd.read_csv(f, header=None)
-            tickers += tdf.iloc[:, 0].dropna().astype(str).str.strip().tolist()
-        except Exception:
-            continue
-else:
-    local_files = [f for f in os.listdir('.') if f.endswith('.csv') and 'scan' not in f and 'rejection' not in f and 'portfolio' not in f]
-    for file in local_files:
-        try:
-            tdf = pd.read_csv(file, header=None)
-            tickers += tdf.iloc[:, 0].dropna().astype(str).str.strip().tolist()
-        except Exception:
-            continue
+# רשימת קבצי CSV מקומיים (לא כולל קבצי תוצאות/portfolio)
+local_csvs = sorted([f for f in os.listdir('.') if f.endswith('.csv') and f not in [SCAN_RESULTS_FILE, REJECTIONS_FILE, PORTFOLIO_FILE]])
 
-tickers = [t.replace('.', '-').upper() for t in tickers if isinstance(t, str) and t.strip() != ""]
-tickers = list(dict.fromkeys(tickers))
-st.write(f"נמצאו {len(tickers)} טיקרים")
-st.session_state['tickers'] = tickers
+with col_file:
+    st.write("**בחר קובץ מקומי**")
+    selected_local = None
+    if local_csvs:
+        selected_local = st.selectbox("קבצי CSV בתיקייה", ["-- בחר קובץ --"] + local_csvs)
+        if selected_local == "-- בחר קובץ --":
+            selected_local = None
+    else:
+        st.info("לא נמצאו קבצי CSV בתיקייה.")
+
+    st.write("או העלה קובץ CSV חדש")
+    uploaded_single = st.file_uploader("העלה קובץ CSV (טיקר בכל שורה)", accept_multiple_files=False, type="csv", key="single_uploader")
+
+    # כפתור להרצת סריקה על הקובץ הנבחר/הועלה
+    scan_single = st.button("🔎 סרוק קובץ נבחר")
+
+with col_preview:
+    st.write("**תצוגת טיקרים (דוגמה)**")
+    preview_placeholder = st.empty()
+
+def read_tickers_from_fileobj(fileobj):
+    try:
+        if isinstance(fileobj, str):
+            df = pd.read_csv(fileobj, header=None)
+        else:
+            fileobj.seek(0)
+            df = pd.read_csv(fileobj, header=None)
+        tickers_list = df.iloc[:, 0].dropna().astype(str).str.strip().tolist()
+        return [t.replace('.', '-').upper() for t in tickers_list if t.strip() != ""]
+    except Exception:
+        return []
+
+# הצגת תצוגה מקדימה של הקובץ שנבחר או שהועלה
+preview_tickers = []
+if uploaded_single:
+    preview_tickers = read_tickers_from_fileobj(uploaded_single)
+    preview_placeholder.write(f"קובץ שהועלה: {uploaded_single.name} — {len(preview_tickers)} טיקרים")
+    preview_placeholder.dataframe(pd.DataFrame(preview_tickers, columns=["Ticker"]).head(50), use_container_width=True)
+elif selected_local:
+    try:
+        preview_tickers = read_tickers_from_fileobj(selected_local)
+        preview_placeholder.write(f"קובץ מקומי: {selected_local} — {len(preview_tickers)} טיקרים")
+        preview_placeholder.dataframe(pd.DataFrame(preview_tickers, columns=["Ticker"]).head(50), use_container_width=True)
+    except Exception:
+        preview_placeholder.warning("לא ניתן לקרוא את הקובץ המקומי שנבחר.")
+
+# -------------------------
+# טעינת טיקרים כללית (אם לא משתמשים בסריקה על קובץ יחיד)
+# -------------------------
+# רק אם לא בחרו לסרוק קובץ יחיד, נטען את כל הקבצים בתיקייה (כמו קודם)
+if not scan_single:
+    uploaded = st.file_uploader("העלה קבצי CSV (טיקר בכל שורה) או השאר ריק לקריאה מקבצים בתיקייה", accept_multiple_files=True, type="csv", key="multi_uploader")
+    tickers = []
+    if uploaded:
+        for f in uploaded:
+            try:
+                tdf = pd.read_csv(f, header=None)
+                tickers += tdf.iloc[:, 0].dropna().astype(str).str.strip().tolist()
+            except Exception:
+                continue
+    else:
+        local_files = [f for f in os.listdir('.') if f.endswith('.csv') and 'scan' not in f and 'rejection' not in f and 'portfolio' not in f]
+        for file in local_files:
+            try:
+                tdf = pd.read_csv(file, header=None)
+                tickers += tdf.iloc[:, 0].dropna().astype(str).str.strip().tolist()
+            except Exception:
+                continue
+    tickers = [t.replace('.', '-').upper() for t in tickers if isinstance(t, str) and t.strip() != ""]
+    tickers = list(dict.fromkeys(tickers))
+    st.write(f"נמצאו {len(tickers)} טיקרים (מכל הקבצים)")
+    st.session_state['tickers'] = tickers
 
 # -------------------------
 # פונקציית סריקה ב‑chunks עם כללי פריצה
@@ -339,7 +390,6 @@ def run_scan_on_list(tickers_list, chunk_size=25):
                 # ATR expansion (אישור עוצמה)
                 atr_ok, atr_ratio = atr_expansion(df, lookback=10)
                 if not atr_ok:
-                    # לא חובה לדחות על זה, רק להזהיר
                     reasons.append(f"ATR לא מראה הרחבה ({atr_ratio:.2f})")
             # החלטה: אם יש סיבות ודיבאג כבוי -> דחייה
             if reasons and not DEBUG_MODE:
@@ -387,15 +437,51 @@ def run_scan_on_list(tickers_list, chunk_size=25):
     return results, rejections
 
 # -------------------------
-# הפעלת סריקה
+# הפעלת סריקה על קובץ יחיד אם נבחר
 # -------------------------
-if run_scan:
+if scan_single:
+    if uploaded_single:
+        tickers_to_scan = read_tickers_from_fileobj(uploaded_single)
+        st.success(f"טוען {len(tickers_to_scan)} טיקרים מהקובץ שהועלה.")
+    elif selected_local:
+        tickers_to_scan = read_tickers_from_fileobj(selected_local)
+        st.success(f"טוען {len(tickers_to_scan)} טיקרים מהקובץ המקומי: {selected_local}")
+    else:
+        st.warning("לא נבחר קובץ לסריקה. בחר קובץ מקומי או העלה קובץ.")
+        tickers_to_scan = []
+
+    st.session_state['tickers'] = tickers_to_scan
+
+    if tickers_to_scan:
+        with st.spinner("מריץ סריקה על הקובץ הנבחר..."):
+            results, rejections = run_scan_on_list(tickers_to_scan, chunk_size=int(chunk_size))
+        if results:
+            df_res = pd.DataFrame(results).sort_values(by=['OBV_change_10d','RVOL'], ascending=False, na_position='last')
+            df_res.to_csv(SCAN_RESULTS_FILE, index=False)
+            st.success(f"סריקה הושלמה: {len(df_res)} תוצאות.")
+            st.dataframe(df_res, use_container_width=True)
+            st.download_button("⬇️ הורד תוצאות CSV", data=df_res.to_csv(index=False), file_name=SCAN_RESULTS_FILE, mime='text/csv')
+        else:
+            st.info("לא נמצאו תוצאות שעברו את כל הקריטריונים בקובץ זה.")
+        if rejections:
+            df_rej = pd.DataFrame(rejections)
+            df_rej['PrimaryReason'] = df_rej['Reasons'].apply(lambda x: x.split(';')[0] if isinstance(x, str) and x else '')
+            df_rej.to_csv(REJECTIONS_FILE, index=False)
+            st.subheader("טיקרים שנדחו וסיבות")
+            st.dataframe(df_rej, use_container_width=True)
+            st.download_button("⬇️ הורד דחיות CSV", data=df_rej.to_csv(index=False), file_name=REJECTIONS_FILE, mime='text/csv')
+        else:
+            st.write("אין דחיות להציג.")
+
+# -------------------------
+# הפעלת סריקה רגילה (אם המשתמש לחץ על כפתור ההפעלה הראשי)
+# -------------------------
+if run_scan and not scan_single:
     if not st.session_state.get('tickers'):
         st.warning("אין טיקרים להרצה. העלה קובץ CSV או הנח קבצי CSV בתיקייה.")
     else:
         with st.spinner("מריץ סריקה ב‑chunks..."):
             results, rejections = run_scan_on_list(st.session_state['tickers'], chunk_size=int(chunk_size))
-        # שמירה והצגה
         if results:
             df_res = pd.DataFrame(results).sort_values(by=['OBV_change_10d','RVOL'], ascending=False, na_position='last')
             df_res.to_csv(SCAN_RESULTS_FILE, index=False)
@@ -403,7 +489,6 @@ if run_scan:
             st.subheader("תוצאות שעברו סינון")
             st.dataframe(df_res, use_container_width=True)
             st.download_button("⬇️ הורד תוצאות CSV", data=df_res.to_csv(index=False), file_name=SCAN_RESULTS_FILE, mime='text/csv')
-            # הצגה שורה-שורה עם כפתור גרף והוספה לתיק
             for idx, row in df_res.reset_index(drop=True).iterrows():
                 cols = st.columns([1,1,1,1,1,1,1])
                 with cols[0]:
