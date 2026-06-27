@@ -3,22 +3,25 @@ import streamlit as st
 import yfinance as yf
 import pandas as pd
 import numpy as np
-import plotly.graph_objects as go
-from plotly.subplots import make_subplots
 import os
 import glob
-import traceback
 from datetime import datetime
+import traceback
+from plotly.subplots import make_subplots
+import plotly.graph_objects as go
 
-st.set_page_config(page_title="Breakout Scanner Pro — Decision Support", layout="wide")
-st.title("📈 Breakout Scanner Pro — כלי תמיכה בהחלטה לפני פריצה")
+# --- הגדרות דף ---
+st.set_page_config(page_title="מערכת וייקוף Pro", layout="wide")
+st.title("◈ מערכת השקעות מבוססת וייקוף — סורק פריצה משופר")
 
 PORTFOLIO_FILE = 'portfolio.csv'
 
-# -------------------------
-# עזרות כלליות
-# -------------------------
+# ============================
+# פונקציות עזר בטוחות
+# ============================
+
 def safe_last(s):
+    """מחזיר ערך יחיד מהסדרה או np.nan אם אין ערך"""
     try:
         if s is None:
             return np.nan
@@ -27,10 +30,11 @@ def safe_last(s):
                 return np.nan
             return s.iloc[-1]
         return s
-    except:
+    except Exception:
         return np.nan
 
 def validate_df(df, required_cols=None):
+    """בודק אם df תקין ואם קיימות העמודות הנדרשות"""
     if df is None or df.empty:
         return False, "DataFrame ריק"
     if required_cols:
@@ -39,44 +43,64 @@ def validate_df(df, required_cols=None):
             return False, f"עמודות חסרות: {missing}"
     return True, None
 
-# -------------------------
-# טעינת טיקרים מתיקיה
-# -------------------------
+# ============================
+# טעינת טיקרים מקבצי CSV / תיקיה
+# ============================
+
+def get_csv_files_in_cwd():
+    """מחזיר רשימת כל קבצי ה-CSV בתיקייה הנוכחית"""
+    return [f for f in os.listdir('.') if f.lower().endswith('.csv')]
+
+def tickers_from_csv_file(path):
+    """מנסה לקרוא עמודת Ticker/Symbol; אם לא קיימת מחזיר שם הקובץ"""
+    try:
+        df = pd.read_csv(path)
+        cols = [c.strip().lower() for c in df.columns]
+
+        if 'ticker' in cols:
+            col = [c for c in df.columns if c.strip().lower() == 'ticker'][0]
+            return df[col].dropna().astype(str).str.upper().tolist()
+
+        if 'symbol' in cols:
+            col = [c for c in df.columns if c.strip().lower() == 'symbol'][0]
+            return df[col].dropna().astype(str).str.upper().tolist()
+
+    except Exception:
+        pass
+
+    base = os.path.basename(path)
+    name = os.path.splitext(base)[0]
+    return [name.upper()]
+
 def load_tickers_from_folder(folder_path):
+    """טוען את כל הטיקרים מכל קבצי ה-CSV בתיקיה (לא רק קובץ אחד)"""
     csv_files = glob.glob(os.path.join(folder_path, "*.csv"))
     all_tickers = []
+
     for f in csv_files:
         try:
-            df = pd.read_csv(f)
-            cols = [c.strip().lower() for c in df.columns]
-            if 'ticker' in cols:
-                col = [c for c in df.columns if c.strip().lower() == 'ticker'][0]
-                all_tickers.extend(df[col].dropna().astype(str).str.upper().tolist())
-            elif 'symbol' in cols:
-                col = [c for c in df.columns if c.strip().lower() == 'symbol'][0]
-                all_tickers.extend(df[col].dropna().astype(str).str.upper().tolist())
-            else:
-                base = os.path.basename(f)
-                name = os.path.splitext(base)[0]
-                all_tickers.append(name.upper())
+            tickers = tickers_from_csv_file(f)
+            all_tickers.extend(tickers)
         except Exception as e:
             st.warning(f"בעיה בקריאת {f}: {e}")
-    # הסרת כפילויות ושמירה על סדר
+
     seen = set()
-    tickers = []
+    unique = []
     for t in all_tickers:
         if t not in seen:
             seen.add(t)
-            tickers.append(t)
-    return tickers
+            unique.append(t)
 
-# -------------------------
+    return unique
+
+# ============================
 # הורדת נתונים והוספת אינדיקטורים
-# -------------------------
+# ============================
+
 @st.cache_data
-def load_data(ticker, period="6mo", interval="1d"):
+def load_history(ticker, period="6mo"):
     try:
-        df = yf.download(ticker, period=period, interval=interval, progress=False)
+        df = yf.Ticker(ticker).history(period=period)
         df.dropna(inplace=True)
         return df
     except Exception:
@@ -98,7 +122,7 @@ def add_indicators(df):
     tr = pd.concat([high_low, high_close, low_close], axis=1).max(axis=1)
     df["ATR"] = tr.rolling(14).mean()
 
-    # Volatility
+    # Volatility and MA
     df["STD20"] = df["Close"].rolling(20).std()
     df["MA20"] = df["Close"].rolling(20).mean()
 
@@ -133,19 +157,20 @@ def add_indicators(df):
     df["MACD"] = exp1 - exp2
     df["Signal"] = df["MACD"].ewm(span=9, adjust=False).mean()
 
-    # RVOL
+    # Volume MA and RVOL
     df["VOL_MA20"] = df["Volume"].rolling(20).mean()
     df["RVOL"] = df["Volume"] / df["VOL_MA20"]
 
     return df
 
-# -------------------------
-# פונקציית ניקוד החלטה
-# -------------------------
+# ============================
+# מנוע החלטה לפני פריצה
+# ============================
+
 def score_component(value, low, high, invert=False):
     """ממפה ערך ל-0..100 לפי טווח; invert הופך את הכיוון"""
     try:
-        if np.isnan(value):
+        if value is None or (isinstance(value, float) and np.isnan(value)):
             return 0
         if low == high:
             return 100 if not invert else 0
@@ -154,275 +179,317 @@ def score_component(value, low, high, invert=False):
         if invert:
             v = 1.0 - v
         return int(round(v * 100))
-    except:
+    except Exception:
         return 0
 
-def compute_decision_score(df):
-    """
-    מחזיר dict עם רכיבי ניקוד ו-score סופי.
-    components: dict של רכיבים 0..100
-    score: משוקלל 0..100
-    risk: 0..100 (גבוה = יותר סיכון)
-    confidence: 0..100
-    note: טקסט קצר
-    """
-    try:
-        ok, msg = validate_df(df, ["High","Low","Close","Volume","ATR","STD20","MA20","RVOL","OBV","AD_Cum","MACD","Signal","RSI","EMA20","EMA50"])
-        if not ok:
-            return {"components":{}, "score":0, "risk":100, "confidence":0, "note":"נתונים חסרים"}
+def compute_breakout_decision(df):
+    """מחזיר dict עם score, confidence, risk, components, note"""
+    ok, msg = validate_df(df, ["High","Low","Close","Volume","EMA20","EMA50","ATR","STD20","OBV","AD_Cum","MACD","Signal","RSI","MA20","UpperBB","LowerBB","UpperKC","LowerKC","VOL_MA20"])
+    if not ok:
+        return {"score":0, "confidence":0, "risk":100, "components":{}, "note":"נתונים חסרים"}
 
-        comps = {}
+    comps = {}
 
-        # 1. Volatility compression (lower STD20 relative to historical)
-        std20 = safe_last(df["STD20"])
-        # השוואה לטווח אחוזי: נשתמש ב־rolling של כל היסטוריה
-        hist_std = df["STD20"].dropna()
-        if len(hist_std) >= 30:
-            low_std, high_std = hist_std.quantile(0.05), hist_std.quantile(0.95)
-        else:
-            low_std, high_std = hist_std.min() if not hist_std.empty else 0, hist_std.max() if not hist_std.empty else 1
-        comps['compression'] = score_component(std20, low_std, high_std, invert=True)
+    # 1. Volatility compression (lower STD20 is better)
+    std20 = safe_last(df["STD20"])
+    hist_std = df["STD20"].dropna()
+    if len(hist_std) >= 30:
+        low_std, high_std = hist_std.quantile(0.05), hist_std.quantile(0.95)
+    else:
+        low_std, high_std = (hist_std.min() if not hist_std.empty else 0), (hist_std.max() if not hist_std.empty else 1)
+    comps["compression"] = score_component(std20, low_std, high_std, invert=True)
 
-        # 2. RVOL (נפח יחסי)
-        rvol = safe_last(df["RVOL"])
-        comps['rvol'] = score_component(rvol, 0.5, 2.5)  # 0.5..2.5
+    # 2. RVOL (relative volume)
+    vol_ma20 = safe_last(df["VOL_MA20"])
+    rvol = safe_last(df["Volume"]) / vol_ma20 if vol_ma20 not in [0, None, np.nan] else 1
+    comps["rvol"] = score_component(rvol, 0.5, 3.0)
 
-        # 3. Trend strength (EMA20 > EMA50)
-        ema20 = safe_last(df["EMA20"])
-        ema50 = safe_last(df["EMA50"])
-        trend_ratio = (ema20 / ema50) if ema50 and not np.isnan(ema50) else 1.0
-        comps['trend'] = score_component(trend_ratio, 0.95, 1.1)
+    # 3. Trend (EMA20 / EMA50)
+    ema20, ema50 = safe_last(df["EMA20"]), safe_last(df["EMA50"])
+    trend_ratio = ema20 / ema50 if ema50 not in [0, None, np.nan] else 1
+    comps["trend"] = score_component(trend_ratio, 0.95, 1.1)
 
-        # 4. Momentum (MACD > Signal and RSI in healthy zone)
-        macd = safe_last(df["MACD"])
-        signal = safe_last(df["Signal"])
-        macd_diff = macd - signal if not np.isnan(macd) and not np.isnan(signal) else 0
-        comps['macd'] = score_component(macd_diff, -1.0, 2.0)
-        rsi = safe_last(df["RSI"])
-        comps['rsi'] = score_component(rsi, 30, 70)
+    # 4. Momentum (MACD diff and RSI)
+    macd_diff = safe_last(df["MACD"]) - safe_last(df["Signal"])
+    comps["macd"] = score_component(macd_diff, -1.0, 2.0)
+    comps["rsi"] = score_component(safe_last(df["RSI"]), 40, 70)
 
-        # 5. Institutional flow (OBV and AD)
-        obv = safe_last(df["OBV"])
-        obv_shift = safe_last(df["OBV"].shift(10))
-        obv_gain = 1 if (not np.isnan(obv) and not np.isnan(obv_shift) and obv > obv_shift) else 0
-        ad = safe_last(df["AD_Cum"])
-        ad_shift = safe_last(df["AD_Cum"].shift(10))
-        ad_gain = 1 if (not np.isnan(ad) and not np.isnan(ad_shift) and ad > ad_shift) else 0
-        comps['institution'] = int(round((obv_gain + ad_gain) / 2 * 100))
+    # 5. Institutional flow (OBV and AD)
+    obv_gain = 1 if (safe_last(df["OBV"]) > safe_last(df["OBV"].shift(10))) else 0
+    ad_gain = 1 if (safe_last(df["AD_Cum"]) > safe_last(df["AD_Cum"].shift(10))) else 0
+    comps["institutional"] = int(round(((obv_gain + ad_gain) / 2) * 100))
 
-        # 6. Squeeze (BB inside KC)
-        upperbb = safe_last(df["UpperBB"])
-        upperkc = safe_last(df["UpperKC"])
-        lowerbb = safe_last(df["LowerBB"])
-        lowerkc = safe_last(df["LowerKC"])
-        squeeze = 1 if (not np.isnan(upperbb) and not np.isnan(upperkc) and upperbb < upperkc and not np.isnan(lowerbb) and not np.isnan(lowerkc) and lowerbb > lowerkc) else 0
-        comps['squeeze'] = 100 if squeeze else 0
+    # 6. Proximity to breakout (close to 20-day high)
+    high20 = df["High"].rolling(20).max()
+    prox = safe_last(df["Close"]) / safe_last(high20) if safe_last(high20) not in [0, None, np.nan] else 0
+    comps["proximity"] = score_component(prox, 0.9, 1.02)
 
-        # 7. Proximity to breakout (close to 20-day high)
-        high20 = df["High"].rolling(20).max()
-        prox = safe_last(df["Close"]) / safe_last(high20) if not np.isnan(safe_last(high20)) and safe_last(high20) != 0 else 0
-        comps['proximity'] = score_component(prox, 0.9, 1.02)
+    # 7. Risk (ATR as percent of price) — lower is better
+    atr_pct = safe_last(df["ATR"]) / safe_last(df["Close"]) if safe_last(df["Close"]) not in [0, None, np.nan] else 0
+    comps["risk"] = score_component(atr_pct, 0.0, 0.06, invert=True)
 
-        # 8. Liquidity and risk (ATR / Price and avg volume)
-        atr = safe_last(df["ATR"])
-        price = safe_last(df["Close"])
-        atr_pct = (atr / price) if price and not np.isnan(price) and not np.isnan(atr) else 0
-        comps['risk'] = score_component(atr_pct, 0.0, 0.05, invert=True)  # lower ATR% => better (higher score)
-        vol_ma20 = safe_last(df["VOL_MA20"])
-        comps['liquidity'] = score_component(vol_ma20, 10000, 2000000)  # adjust ranges as needed
+    # 8. Squeeze (BB inside KC)
+    sq = (
+        safe_last(df["UpperBB"]) < safe_last(df["UpperKC"]) and
+        safe_last(df["LowerBB"]) > safe_last(df["LowerKC"])
+    )
+    comps["squeeze"] = 100 if sq else 0
 
-        # Weights (sum to 1)
-        weights = {
-            'compression': 0.20,
-            'rvol': 0.20,
-            'trend': 0.15,
-            'macd': 0.08,
-            'rsi': 0.07,
-            'institution': 0.10,
-            'squeeze': 0.05,
-            'proximity': 0.10,
-            'liquidity': 0.05
-        }
+    # Weights for final score
+    weights = {
+        "compression": 0.20,
+        "rvol": 0.20,
+        "trend": 0.15,
+        "macd": 0.10,
+        "rsi": 0.05,
+        "institutional": 0.10,
+        "proximity": 0.10,
+        "squeeze": 0.05,
+        "risk": 0.05
+    }
 
-        # Compute weighted score
-        total = 0.0
-        for k,w in weights.items():
-            val = comps.get(k, 0)
-            total += val * w
+    final_score = sum(comps.get(k, 0) * w for k, w in weights.items())
+    final_score = int(round(final_score))
 
-        final_score = int(round(total))
+    # Confidence: כמה רכיבים חזקים
+    strong = sum(1 for v in comps.values() if v >= 70)
+    confidence = int(round((strong / len(comps)) * 100)) if len(comps) > 0 else 0
 
-        # Confidence: based on number of strong signals
-        strong_signals = sum(1 for k in ['compression','rvol','trend','macd','institution','squeeze','proximity'] if comps.get(k,0) >= 70)
-        confidence = int(round(min(100, strong_signals / 7 * 100)))
+    # Risk metric (higher = more risky)
+    risk_metric = 100 - comps.get("risk", 0)
 
-        # Risk metric (higher = more risky)
-        risk_metric = int(round((100 - comps['risk']) * 1.0))  # invert risk score to "riskiness"
+    # Notes
+    notes = []
+    if comps.get("compression", 0) >= 70: notes.append("דחיסה חזקה")
+    if comps.get("rvol", 0) >= 70: notes.append("נפח תומך")
+    if comps.get("trend", 0) >= 70: notes.append("טרנד עולה")
+    if comps.get("institutional", 0) >= 60: notes.append("כסף מוסדי נכנס")
+    if comps.get("squeeze", 0) == 100: notes.append("Squeeze פעיל")
+    if prox < 0.95: notes.append("עדיין רחוק מהפריצה")
+    note = ", ".join(notes) if notes else "אין אותות חזקים"
 
-        # Note generation
-        notes = []
-        if comps['compression'] >= 70:
-            notes.append("דחיסה חזקה")
-        if comps['rvol'] >= 70:
-            notes.append("נפח תומך")
-        if comps['trend'] >= 60:
-            notes.append("טרנד עולה")
-        if comps['institution'] >= 60:
-            notes.append("כסף מוסדי")
-        if comps['squeeze'] >= 100:
-            notes.append("Squeeze פעיל")
-        if prox < 0.95:
-            notes.append("מרחק מהפריצה >5%")
-        note = ", ".join(notes) if notes else "אין אותות חזקים"
+    return {
+        "score": final_score,
+        "confidence": confidence,
+        "risk": risk_metric,
+        "components": comps,
+        "note": note
+    }
 
-        return {
-            "components": comps,
-            "score": final_score,
-            "risk": risk_metric,
-            "confidence": confidence,
-            "note": note
-        }
-
-    except Exception as e:
-        return {"components":{}, "score":0, "risk":100, "confidence":0, "note":f"error: {e}"}
-
-# -------------------------
+# ============================
 # גרף מפורט
-# -------------------------
+# ============================
+
 def plot_advanced(df, ticker):
     fig = make_subplots(rows=4, cols=1, shared_xaxes=True, vertical_spacing=0.02,
                         row_heights=[0.5, 0.12, 0.18, 0.2])
     fig.add_trace(go.Candlestick(x=df.index, open=df["Open"], high=df["High"], low=df["Low"], close=df["Close"], name="Price"), row=1, col=1)
-    fig.add_trace(go.Scatter(x=df.index, y=df["MA20"], line=dict(color="blue"), name="MA20"), row=1, col=1)
-    fig.add_trace(go.Scatter(x=df.index, y=df["UpperBB"], line=dict(color="lightblue"), name="UpperBB"), row=1, col=1)
-    fig.add_trace(go.Scatter(x=df.index, y=df["LowerBB"], line=dict(color="lightblue"), name="LowerBB"), row=1, col=1)
+    if "MA20" in df.columns:
+        fig.add_trace(go.Scatter(x=df.index, y=df["MA20"], line=dict(color="blue"), name="MA20"), row=1, col=1)
+    if "UpperBB" in df.columns:
+        fig.add_trace(go.Scatter(x=df.index, y=df["UpperBB"], line=dict(color="lightblue"), name="UpperBB"), row=1, col=1)
+    if "LowerBB" in df.columns:
+        fig.add_trace(go.Scatter(x=df.index, y=df["LowerBB"], line=dict(color="lightblue"), name="LowerBB"), row=1, col=1)
     fig.add_trace(go.Bar(x=df.index, y=df["Volume"], name="Volume"), row=2, col=1)
-    fig.add_trace(go.Scatter(x=df.index, y=df["OBV"], name="OBV"), row=3, col=1)
-    fig.add_trace(go.Scatter(x=df.index, y=df["MACD"], name="MACD"), row=4, col=1)
-    fig.add_trace(go.Scatter(x=df.index, y=df["Signal"], name="Signal"), row=4, col=1)
+    if "OBV" in df.columns:
+        fig.add_trace(go.Scatter(x=df.index, y=df["OBV"], name="OBV"), row=3, col=1)
+    if "MACD" in df.columns:
+        fig.add_trace(go.Scatter(x=df.index, y=df["MACD"], name="MACD"), row=4, col=1)
+    if "Signal" in df.columns:
+        fig.add_trace(go.Scatter(x=df.index, y=df["Signal"], name="Signal"), row=4, col=1)
     fig.update_layout(height=900, title=f"{ticker} — Decision Chart")
     return fig
 
-# -------------------------
-# UI
-# -------------------------
-st.sidebar.header("מקורות טיקרים")
-mode = st.sidebar.radio("בחר מקור:", ["הקלדה ידנית", "קובץ CSV בודד", "תיקיית CSV", "מדד מובנה"])
+# ============================
+# תיק השקעות
+# ============================
 
-tickers = []
-if mode == "הקלדה ידנית":
-    txt = st.sidebar.text_area("טיקרים (מופרדים בפסיק):", "AAPL, MSFT, NVDA")
-    tickers = [t.strip().upper() for t in txt.split(",") if t.strip()]
+def get_portfolio_df():
+    if not os.path.exists(PORTFOLIO_FILE) or os.path.getsize(PORTFOLIO_FILE) == 0:
+        df = pd.DataFrame(columns=['Ticker', 'Date', 'EntryPrice'])
+        df.to_csv(PORTFOLIO_FILE, index=False)
+        return df
+    try:
+        return pd.read_csv(PORTFOLIO_FILE)
+    except pd.errors.EmptyDataError:
+        df = pd.DataFrame(columns=['Ticker', 'Date', 'EntryPrice'])
+        df.to_csv(PORTFOLIO_FILE, index=False)
+        return df
 
-elif mode == "קובץ CSV בודד":
-    uploaded = st.sidebar.file_uploader("העלה CSV עם עמודת Ticker או Symbol", type=["csv"])
-    if uploaded:
-        dfu = pd.read_csv(uploaded)
-        cols = [c.strip().lower() for c in dfu.columns]
-        if 'ticker' in cols:
-            col = [c for c in dfu.columns if c.strip().lower()=='ticker'][0]
-            tickers = dfu[col].dropna().astype(str).str.upper().tolist()
-        elif 'symbol' in cols:
-            col = [c for c in dfu.columns if c.strip().lower()=='symbol'][0]
-            tickers = dfu[col].dropna().astype(str).str.upper().tolist()
+def show_buttons(ticker):
+    c1, c2 = st.columns(2)
+    with c1: st.markdown(f"[Yahoo](https://finance.yahoo.com/quote/{ticker})")
+    with c2: st.markdown(f"[Finviz](https://finviz.com/quote.ashx?t={ticker})")
+    c3, c4 = st.columns(2)
+    with c3: st.markdown(f"[Investing](https://www.investing.com/search/?q={ticker})")
+    with c4: st.markdown(f"[Webull](https://www.webull.com/quote/{ticker})")
+
+# ============================
+# ממשק משתמש — טאבים
+# ============================
+
+tab1, tab2 = st.tabs(["📊 סורק פריצה משופר", "💼 תיק השקעות"])
+
+# --- טאב הסורק ---
+with tab1:
+    st.sidebar.header("מקורות טיקרים לסורק")
+    mode = st.sidebar.radio(
+        "בחר מקור:",
+        ["קובץ CSV בודד", "תיקיית CSV", "רשימת CSV בתיקייה הנוכחית", "הקלדה ידנית"]
+    )
+
+    tickers = []
+
+    if mode == "קובץ CSV בודד":
+        uploaded = st.sidebar.file_uploader("העלה קובץ CSV עם עמודת Ticker או Symbol", type=["csv"])
+        if uploaded:
+            try:
+                dfu = pd.read_csv(uploaded)
+                cols = [c.strip().lower() for c in dfu.columns]
+                if 'ticker' in cols:
+                    col = [c for c in dfu.columns if c.strip().lower() == 'ticker'][0]
+                    tickers = dfu[col].dropna().astype(str).str.upper().tolist()
+                elif 'symbol' in cols:
+                    col = [c for c in dfu.columns if c.strip().lower() == 'symbol'][0]
+                    tickers = dfu[col].dropna().astype(str).str.upper().tolist()
+                else:
+                    st.sidebar.error("לא נמצאה עמודת Ticker/Symbol בקובץ")
+            except Exception as e:
+                st.sidebar.error(f"שגיאה בקריאת הקובץ: {e}")
+
+    elif mode == "תיקיית CSV":
+        folder = st.sidebar.text_input("נתיב לתיקיה:", ".")
+        if folder and os.path.isdir(folder):
+            tickers = load_tickers_from_folder(folder)
+            st.sidebar.success(f"נטענו {len(tickers)} טיקרים מהתיקיה")
+        elif folder:
+            st.sidebar.error("התיקיה לא קיימת")
+
+    elif mode == "רשימת CSV בתיקייה הנוכחית":
+        available_lists = get_csv_files_in_cwd()
+        if available_lists:
+            selected_file = st.sidebar.selectbox("בחר קובץ מהרשימה:", available_lists)
+            tickers = tickers_from_csv_file(selected_file)
+            st.sidebar.success(f"נטענו {len(tickers)} טיקרים מהקובץ")
         else:
-            st.sidebar.error("אין עמודת Ticker/Symbol בקובץ")
+            st.sidebar.info("אין קבצי CSV בתיקייה הנוכחית")
 
-elif mode == "תיקיית CSV":
-    folder = st.sidebar.text_input("נתיב לתיקיה (מקומי):", ".")
-    if folder and os.path.isdir(folder):
-        tickers = load_tickers_from_folder(folder)
-        st.sidebar.success(f"נטענו {len(tickers)} טיקרים מתיקיה")
+    else:  # הקלדה ידנית
+        txt = st.sidebar.text_area("טיקרים (מופרדים בפסיק):", "AAPL, MSFT, NVDA")
+        tickers = [t.strip().upper() for t in txt.split(",") if t.strip()]
 
-else:
-    INDEX_MAP = {
-        "S&P 500 small sample": ["AAPL","MSFT","AMZN","NVDA","GOOGL","META"],
-        "NASDAQ sample": ["AAPL","MSFT","NVDA","AMD","INTC"]
-    }
-    idx = st.sidebar.selectbox("בחר מדד:", list(INDEX_MAP.keys()))
-    tickers = INDEX_MAP[idx]
+    min_score = st.sidebar.slider("ציון מינימלי להצגה:", 0, 100, 60)
+    max_tickers = st.sidebar.number_input("מקסימום טיקרים לסריקה:", min_value=10, max_value=1000, value=200, step=10)
 
-min_score = st.sidebar.slider("מינימום ציון להצגה:", 0, 100, 60)
-max_tickers = st.sidebar.number_input("מקסימום טיקרים לסריקה:", min_value=10, max_value=1000, value=200, step=10)
+    st.sidebar.markdown("---")
+    st.sidebar.markdown("**הערה**: כלי תמיכה בהחלטה בלבד, לא ייעוץ השקעות.")
 
-st.sidebar.markdown("---")
-st.sidebar.markdown("**הערה**: זהו כלי תמיכה בלבד, לא ייעוץ השקעות.")
+    if st.sidebar.button("הרץ סריקת פריצה"):
+        if not tickers:
+            st.error("לא נבחרו טיקרים")
+        else:
+            tickers = tickers[:int(max_tickers)]
+            results = []
+            details = {}
+            progress = st.progress(0)
+            total = len(tickers)
 
-# כפתור הרצה
-if st.button("הרץ סורק עם תמיכה בהחלטה"):
-    if not tickers:
-        st.error("לא נבחרו טיקרים")
-        st.stop()
-
-    tickers = tickers[:int(max_tickers)]
-    rows = []
-    details = {}
-
-    progress = st.progress(0)
-    total = len(tickers)
-
-    for i, t in enumerate(tickers):
-        try:
-            st.write(f"בודק {t} ({i+1}/{total})")
-            df = load_data(t)
-            if df.empty:
-                rows.append({"Ticker": t, "Score": 0, "Price": np.nan, "Confidence": 0, "Risk": 100})
-                continue
-            df = add_indicators(df)
-            res = compute_decision_score(df)
-            rows.append({"Ticker": t, "Score": res["score"], "Price": round(float(safe_last(df["Close"])),2) if not np.isnan(safe_last(df["Close"])) else np.nan, "Confidence": res["confidence"], "Risk": res["risk"]})
-            details[t] = {"res": res, "df_tail": df.tail(30)}
-        except Exception as e:
-            rows.append({"Ticker": t, "Score": 0, "Price": np.nan, "Confidence": 0, "Risk": 100})
-        progress.progress((i+1)/total)
-
-    df_results = pd.DataFrame(rows).sort_values("Score", ascending=False).reset_index(drop=True)
-    st.subheader("תוצאות סריקה")
-    st.dataframe(df_results, use_container_width=True)
-
-    # בחירת טיקר להצגה מפורטת
-    st.subheader("דוח מפורט לטיקר")
-    sel = st.selectbox("בחר טיקר להצגה:", df_results["Ticker"].tolist())
-    if sel:
-        info = details.get(sel)
-        if info:
-            res = info["res"]
-            st.metric("ציון כולל", res["score"])
-            st.metric("ביטחון", res["confidence"])
-            st.metric("מדד סיכון", res["risk"])
-            st.write("**רכיבי ניקוד**")
-            comp_df = pd.DataFrame.from_dict(res["components"], orient="index", columns=["Value"]).sort_values("Value", ascending=False)
-            st.table(comp_df)
-
-            st.write("**הערות**")
-            st.info(res["note"])
-
-            # גרף
-            df_plot = info["df_tail"].copy()
-            st.plotly_chart(plot_advanced(df_plot, sel), use_container_width=True)
-
-            # קישורים חיצוניים
-            c1, c2, c3, c4 = st.columns(4)
-            with c1: st.markdown(f"[Yahoo](https://finance.yahoo.com/quote/{sel})")
-            with c2: st.markdown(f"[Finviz](https://finviz.com/quote.ashx?t={sel})")
-            with c3: st.markdown(f"[Investing](https://www.investing.com/search/?q={sel})")
-            with c4: st.markdown(f"[Webull](https://www.webull.com/quote/{sel})")
-
-            # הוספה לתיק
-            if st.button("הוסף לתיק ההשקעות"):
-                price = res.get("price", None)
+            for i, ticker in enumerate(tickers):
                 try:
-                    price = round(float(safe_last(info["df_tail"]["Close"])),2)
-                except:
-                    price = None
-                new_row = pd.DataFrame({'Ticker':[sel], 'Date':[datetime.now().strftime('%Y-%m-%d')], 'EntryPrice':[price]})
-                header = not os.path.exists(PORTFOLIO_FILE)
-                new_row.to_csv(PORTFOLIO_FILE, mode='a', header=header, index=False)
-                st.success(f"{sel} נוסף לתיק")
+                    st.write(f"בודק {ticker} ({i+1}/{total})")
+                    df = load_history(ticker, period="6mo")
+                    if df.empty:
+                        results.append({"Ticker": ticker, "Score": 0, "Confidence": 0, "Risk": 100, "Price": np.nan, "Note": "אין נתונים"})
+                        progress.progress((i+1)/total)
+                        continue
+                    df = add_indicators(df)
+                    res = compute_breakout_decision(df)
+                    results.append({
+                        "Ticker": ticker,
+                        "Score": res["score"],
+                        "Confidence": res["confidence"],
+                        "Risk": res["risk"],
+                        "Price": round(float(safe_last(df["Close"])), 2) if not np.isnan(safe_last(df["Close"])) else np.nan,
+                        "Note": res["note"]
+                    })
+                    details[ticker] = {"res": res, "df_tail": df.tail(60)}
+                except Exception as e:
+                    results.append({"Ticker": ticker, "Score": 0, "Confidence": 0, "Risk": 100, "Price": np.nan, "Note": "שגיאה"})
+                progress.progress((i+1)/total)
 
-        else:
-            st.warning("אין פרטים לטיקר זה")
+            df_res = pd.DataFrame(results).sort_values("Score", ascending=False).reset_index(drop=True)
+            df_res = df_res[df_res["Score"] >= min_score]
 
-    # הורדה של התוצאות
-    csv_data = df_results.to_csv(index=False).encode('utf-8')
-    st.download_button("הורד תוצאות כ־CSV", csv_data, file_name="decision_scan_results.csv", mime="text/csv")
+            if df_res.empty:
+                st.info("לא נמצאו מניות מתאימות לפי הקריטריונים.")
+            else:
+                st.subheader("תוצאות סריקה")
+                st.dataframe(df_res, use_container_width=True)
+
+                st.divider()
+                col_select, col_buttons = st.columns([2, 1])
+                with col_select:
+                    to_view = st.selectbox("בחר מניה לניתוח:", df_res['Ticker'].tolist())
+                with col_buttons:
+                    if st.button("הוסף לתיק ההשקעות 💼"):
+                        try:
+                            price = df_res[df_res['Ticker'] == to_view]['Price'].values[0]
+                        except Exception:
+                            price = None
+                        new_row = pd.DataFrame({'Ticker': [to_view], 'Date': [datetime.now().strftime('%Y-%m-%d')], 'EntryPrice': [price]})
+                        new_row.to_csv(PORTFOLIO_FILE, mode='a', header=not os.path.exists(PORTFOLIO_FILE), index=False)
+                        st.success(f"{to_view} נוספה בהצלחה לתיק!")
+
+                # דוח מפורט לטיקר הנבחר
+                st.subheader("דוח מפורט לטיקר")
+                sel = to_view
+                info = details.get(sel)
+                if info:
+                    res = info["res"]
+                    st.metric("ציון פריצה", res["score"])
+                    st.metric("ביטחון", res["confidence"])
+                    st.metric("מדד סיכון", res["risk"])
+                    st.write("**רכיבי ניקוד**")
+                    comp_df = pd.DataFrame.from_dict(res["components"], orient="index", columns=["Value"]).sort_values("Value", ascending=False)
+                    st.table(comp_df)
+                    st.write("**הערות**")
+                    st.info(res["note"])
+
+                    df_plot = info["df_tail"].copy()
+                    st.plotly_chart(plot_advanced(df_plot, sel), use_container_width=True)
+
+                    show_buttons(sel)
+                else:
+                    st.warning("אין פרטים לטיקר זה")
+
+                # הורדה של התוצאות
+                csv_data = df_res.to_csv(index=False).encode('utf-8')
+                st.download_button("הורד תוצאות כ־CSV", csv_data, file_name="decision_scan_results.csv", mime="text/csv")
+
+# --- טאב תיק ההשקעות ---
+with tab2:
+    portfolio = get_portfolio_df()
+    if not portfolio.empty:
+        for i, row in portfolio.iterrows():
+            try:
+                curr = yf.Ticker(row['Ticker']).history(period="1d")['Close'].iloc[-1]
+                portfolio.loc[i, 'CurrentPrice'] = round(curr, 2)
+                portfolio.loc[i, 'Performance'] = f"{round(((curr - row['EntryPrice']) / row['EntryPrice']) * 100, 2)}%"
+            except Exception:
+                portfolio.loc[i, 'CurrentPrice'] = np.nan
+                portfolio.loc[i, 'Performance'] = "N/A"
+
+        st.dataframe(portfolio, use_container_width=True)
+
+        st.divider()
+        to_manage = st.selectbox("בחר מניה לניהול:", portfolio['Ticker'].tolist())
+
+        show_buttons(to_manage)
+
+        if st.button("מחק מניה מהתיק 🗑️"):
+            portfolio = portfolio[portfolio['Ticker'] != to_manage]
+            portfolio.to_csv(PORTFOLIO_FILE, index=False)
+            st.success(f"{to_manage} הוסר מהתיק")
+            st.experimental_rerun()
+    else:
+        st.info("התיק ריק.")
