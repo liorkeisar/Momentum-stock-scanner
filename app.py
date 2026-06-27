@@ -9,6 +9,7 @@ import glob
 from datetime import datetime
 from plotly.subplots import make_subplots
 import plotly.graph_objects as go
+import plotly.express as px
 
 # -------------------------
 # הגדרות כלליות
@@ -45,21 +46,17 @@ def fetch_info(ticker: str) -> dict:
 # -------------------------
 def add_indicators(df: pd.DataFrame) -> pd.DataFrame:
     df = df.copy()
-    # בסיס
     df['MA20'] = df['Close'].rolling(20).mean()
     df['STD20'] = df['Close'].rolling(20).std()
     df['BB_upper'] = df['MA20'] + 2 * df['STD20']
     df['BB_lower'] = df['MA20'] - 2 * df['STD20']
     df['BB_width'] = (df['BB_upper'] - df['BB_lower']) / df['MA20']
-    # OBV
     df['OBV'] = (np.sign(df['Close'].diff()) * df['Volume']).fillna(0).cumsum()
-    # MACD
     ema12 = df['Close'].ewm(span=12, adjust=False).mean()
     ema26 = df['Close'].ewm(span=26, adjust=False).mean()
     df['MACD'] = ema12 - ema26
     df['MACD_signal'] = df['MACD'].ewm(span=9, adjust=False).mean()
     df['MACD_hist'] = df['MACD'] - df['MACD_signal']
-    # RSI 14 (EMA)
     delta = df['Close'].diff()
     up = delta.clip(lower=0)
     down = -1 * delta.clip(upper=0)
@@ -67,15 +64,12 @@ def add_indicators(df: pd.DataFrame) -> pd.DataFrame:
     ma_down = down.ewm(com=13, adjust=False).mean()
     rs = ma_up / ma_down
     df['RSI'] = 100 - (100 / (1 + rs))
-    # RVOL
     df['RVOL'] = df['Volume'] / df['Volume'].rolling(window=10).mean()
-    # ATR 14
     high_low = df['High'] - df['Low']
     high_close = (df['High'] - df['Close'].shift()).abs()
     low_close = (df['Low'] - df['Close'].shift()).abs()
     tr = pd.concat([high_low, high_close, low_close], axis=1).max(axis=1)
     df['ATR'] = tr.ewm(span=14, adjust=False).mean()
-    # VWAP approximation (daily typical price cumulative)
     tp = (df['High'] + df['Low'] + df['Close']) / 3
     cum_vp = (tp * df['Volume']).cumsum()
     cum_vol = df['Volume'].cumsum()
@@ -236,15 +230,28 @@ st.title("◈ KEISAR Pro Hunter — Breakout Scanner")
 left, right = st.columns([1, 3])
 with left:
     st.subheader("הגדרות סריקה")
+    # השתמש במפתחות כדי לאפשר עדכון אוטומטי מאוחר יותר
+    if 'bb_width_thresh' not in st.session_state:
+        st.session_state['bb_width_thresh'] = 0.05
+    if 'rvol_threshold' not in st.session_state:
+        st.session_state['rvol_threshold'] = 1.2
+    if 'rsi_threshold' not in st.session_state:
+        st.session_state['rsi_threshold'] = 75
+    if 'min_marketcap' not in st.session_state:
+        st.session_state['min_marketcap'] = 300_000_000
+    if 'min_avg_vol' not in st.session_state:
+        st.session_state['min_avg_vol'] = 150_000
+    if 'chunk_size' not in st.session_state:
+        st.session_state['chunk_size'] = 25
+
     pct_from_low = st.number_input("אחוז מקירוב לשפל 52 שבועות (%) — לא חובה כאן", value=3.0, min_value=0.0, max_value=50.0) / 100.0
-    bb_width_thresh = st.number_input("סף רוחב Bollinger (BB width) לפריצה", value=0.05, min_value=0.001, max_value=1.0, step=0.005)
-    sideways_range_pct = st.number_input("מקסימום טווח תנועה בשבוע (%) לזיהוי דחיסה", value=4.0, min_value=0.1, max_value=50.0) / 100.0
-    rvol_threshold = st.number_input("סף RVOL לאיסוף", value=1.2, min_value=0.5, max_value=10.0)
-    rsi_threshold = st.number_input("סף RSI מקסימלי לאישור פריצה", value=75, min_value=30, max_value=90)
-    min_marketcap = st.number_input("מינימום שווי שוק (USD)", value=300_000_000, step=50_000_000)
-    min_avg_vol = st.number_input("ממוצע נפח מינימלי (20 יום)", value=150_000, step=10_000)
-    chunk_size = st.number_input("גודל קבוצה לסריקה (chunk size)", min_value=5, max_value=200, value=25, step=5)
-    DEBUG_MODE = st.checkbox("מצב Debug - אל תדחה אוטומטית, הצג Warnings", value=False)
+    bb_width_thresh = st.number_input("סף רוחב Bollinger (BB width) לפריצה", value=st.session_state['bb_width_thresh'], min_value=0.001, max_value=1.0, step=0.005, key="bb_width_widget")
+    rvol_threshold = st.number_input("סף RVOL לאיסוף", value=st.session_state['rvol_threshold'], min_value=0.5, max_value=10.0, key="rvol_widget")
+    rsi_threshold = st.number_input("סף RSI מקסימלי לאישור פריצה", value=st.session_state['rsi_threshold'], min_value=30, max_value=90, key="rsi_widget")
+    min_marketcap = st.number_input("מינימום שווי שוק (USD)", value=st.session_state['min_marketcap'], step=50_000_000, key="mc_widget")
+    min_avg_vol = st.number_input("ממוצע נפח מינימלי (20 יום)", value=st.session_state['min_avg_vol'], step=10_000, key="avgvol_widget")
+    chunk_size = st.number_input("גודל קבוצה לסריקה (chunk size)", min_value=5, max_value=200, value=st.session_state['chunk_size'], step=5, key="chunk_widget")
+    DEBUG_MODE = st.checkbox("מצב Debug - אל תדחה אוטומטית, הצג Warnings", value=False, key="debug_widget")
     run_scan = st.button("הפעל סריקה")
 
 with right:
@@ -257,14 +264,13 @@ with right:
 st.markdown("### בחר קובץ CSV לסריקה (סריקה על קובץ יחיד)")
 col_file, col_preview = st.columns([2, 3])
 
-# רשימת קבצי CSV מקומיים (לא כולל קבצי תוצאות/portfolio)
 local_csvs = sorted([f for f in os.listdir('.') if f.endswith('.csv') and f not in [SCAN_RESULTS_FILE, REJECTIONS_FILE, PORTFOLIO_FILE]])
 
 with col_file:
     st.write("**בחר קובץ מקומי**")
     selected_local = None
     if local_csvs:
-        selected_local = st.selectbox("קבצי CSV בתיקייה", ["-- בחר קובץ --"] + local_csvs)
+        selected_local = st.selectbox("קבצי CSV בתיקייה", ["-- בחר קובץ --"] + local_csvs, key="local_select")
         if selected_local == "-- בחר קובץ --":
             selected_local = None
     else:
@@ -273,7 +279,6 @@ with col_file:
     st.write("או העלה קובץ CSV חדש")
     uploaded_single = st.file_uploader("העלה קובץ CSV (טיקר בכל שורה)", accept_multiple_files=False, type="csv", key="single_uploader")
 
-    # כפתור להרצת סריקה על הקובץ הנבחר/הועלה
     scan_single = st.button("🔎 סרוק קובץ נבחר")
 
 with col_preview:
@@ -292,7 +297,6 @@ def read_tickers_from_fileobj(fileobj):
     except Exception:
         return []
 
-# הצגת תצוגה מקדימה של הקובץ שנבחר או שהועלה
 preview_tickers = []
 if uploaded_single:
     preview_tickers = read_tickers_from_fileobj(uploaded_single)
@@ -309,7 +313,6 @@ elif selected_local:
 # -------------------------
 # טעינת טיקרים כללית (אם לא משתמשים בסריקה על קובץ יחיד)
 # -------------------------
-# רק אם לא בחרו לסרוק קובץ יחיד, נטען את כל הקבצים בתיקייה (כמו קודם)
 if not scan_single:
     uploaded = st.file_uploader("העלה קבצי CSV (טיקר בכל שורה) או השאר ריק לקריאה מקבצים בתיקייה", accept_multiple_files=True, type="csv", key="multi_uploader")
     tickers = []
@@ -357,46 +360,44 @@ def run_scan_on_list(tickers_list, chunk_size=25):
             else:
                 df = None
 
-            # בדיקות בסיסיות
             if df is not None:
                 ok_mc, r = marketcap_ok(info, min_marketcap)
                 if not ok_mc: reasons.append(r)
                 ok_volavg, r = avg_volume_ok(df, min_avg_vol)
                 if not ok_volavg: reasons.append(r)
-            # שלב זיהוי דחיסה (Bollinger squeeze)
-            if df is not None:
+
                 squeeze_ok, squeeze_val = is_bollinger_squeeze(df, lookback=20, width_thresh=bb_width_thresh)
                 if not squeeze_ok:
                     reasons.append(f"לא דחיסה (BB width {squeeze_val:.3f})")
-                # RVOL + OBV
+
                 obv_ok, obv_delta = obv_confirmation(df, lookback=10)
                 if not obv_ok:
                     reasons.append("OBV לא מאשר איסוף")
+
                 rvol_now = float(df['RVOL'].iloc[-1])
                 if rvol_now < rvol_threshold:
                     reasons.append(f"RVOL נמוך ({rvol_now:.2f})")
-                # MACD
+
                 macd_ok, macd_hist = macd_confirmation(df, lookback=3)
                 if not macd_ok:
                     reasons.append("MACD לא מאשר")
-                # RSI
+
                 rsi_ok_flag, rsi_val = rsi_ok(df, max_rsi=rsi_threshold)
                 if not rsi_ok_flag:
                     reasons.append(f"RSI גבוה ({rsi_val:.1f})")
-                # VWAP
+
                 vwap_ok_flag, vwap_diff = vwap_confirmation(df)
                 if not vwap_ok_flag:
                     reasons.append("מחיר מתחת ל‑VWAP")
-                # ATR expansion (אישור עוצמה)
+
                 atr_ok, atr_ratio = atr_expansion(df, lookback=10)
                 if not atr_ok:
                     reasons.append(f"ATR לא מראה הרחבה ({atr_ratio:.2f})")
-            # החלטה: אם יש סיבות ודיבאג כבוי -> דחייה
+
             if reasons and not DEBUG_MODE:
                 rejections.append({"Ticker": t, "Reasons": "; ".join(reasons)})
                 continue
 
-            # אם הגענו לכאן — הוסף לתוצאות (ב‑DEBUG גם אם יש Warnings)
             if df is not None:
                 obv_change = float(df['OBV'].iloc[-1] - df['OBV'].iloc[-11]) if len(df) > 11 else 0.0
                 results.append({
@@ -549,6 +550,143 @@ if run_scan and not scan_single:
             st.write("אין דחיות להציג.")
 
 # -------------------------
+# Auto-Tune: ניתוח ספים אוטומטי על דגימה של טיקרים
+# -------------------------
+def compute_indicator_sample_stats(tickers_sample, max_samples=300):
+    rows = []
+    count = 0
+    for t in tickers_sample:
+        if count >= max_samples:
+            break
+        hist = fetch_history(t, period="1y")
+        if hist.empty or len(hist) < 60:
+            continue
+        try:
+            df = add_indicators(hist)
+        except Exception:
+            continue
+        try:
+            bbw = float(df['BB_width'].iloc[-1])
+            rvol = float(df['RVOL'].iloc[-1])
+            avgvol = float(df['Volume'].rolling(20).mean().iloc[-1]) if len(df) >= 20 else None
+            rsi = float(df['RSI'].iloc[-1])
+            atr = float(df['ATR'].iloc[-1])
+            rows.append({"Ticker": t, "BB_width": bbw, "RVOL": rvol, "AvgVol20": avgvol, "RSI": rsi, "ATR": atr})
+            count += 1
+        except Exception:
+            continue
+    return pd.DataFrame(rows)
+
+def suggest_thresholds_from_stats(df_stats, percentiles=None):
+    if percentiles is None:
+        percentiles = {
+            "BB_width": 20,
+            "RVOL": 75,
+            "AvgVol20": 50,
+            "RSI": 90,
+            "ATR": 60
+        }
+    suggestions = {}
+    for k, p in percentiles.items():
+        if k not in df_stats.columns or df_stats[k].dropna().empty:
+            suggestions[k] = None
+            continue
+        val = float(np.percentile(df_stats[k].dropna(), p))
+        suggestions[k] = val
+    return suggestions
+
+st.markdown("### Auto‑Tune — כוונון ספים אוטומטי")
+with st.expander("הפעל Auto‑Tune כדי לקבל המלצות ספים לפי דגימה של הטיקרים"):
+    st.write("הפיצ׳ר ינתח דגימה של הטיקרים (עד N) ויחזיר המלצות לפרמטרים: BB width, RVOL, AvgVol20, RSI, ATR.")
+    sample_size = st.number_input("גודל דגימה לניתוח (max)", min_value=50, max_value=2000, value=500, step=50, key="autotune_sample")
+    percentile_bb = st.slider("פרסנטיל ל‑BB width (קטן = דחיסה יותר קפדנית)", min_value=1, max_value=50, value=20, key="autotune_bb")
+    percentile_rvol = st.slider("פרסנטיל ל‑RVOL (גבוה = דרוש נפח חזק יותר)", min_value=50, max_value=100, value=75, key="autotune_rvol")
+    percentile_avgvol = st.slider("פרסנטיל ל‑AvgVol20 (ממוצע נפח מינימלי)", min_value=10, max_value=90, value=50, key="autotune_avgvol")
+    percentile_rsi = st.slider("פרסנטיל ל‑RSI (מקסימום מקובל)", min_value=60, max_value=100, value=90, key="autotune_rsi")
+    percentile_atr = st.slider("פרסנטיל ל‑ATR (אישור הרחבת תנודתיות)", min_value=10, max_value=100, value=60, key="autotune_atr")
+    run_autotune = st.button("Auto‑Tune — נתח והצע ספים", key="run_autotune")
+
+    if run_autotune:
+        all_tickers = st.session_state.get('tickers', None)
+        if not all_tickers or len(all_tickers) == 0:
+            local_files = [f for f in os.listdir('.') if f.endswith('.csv') and f not in [SCAN_RESULTS_FILE, REJECTIONS_FILE, PORTFOLIO_FILE]]
+            tickers = []
+            for file in local_files:
+                try:
+                    tdf = pd.read_csv(file, header=None)
+                    tickers += tdf.iloc[:,0].dropna().astype(str).str.strip().tolist()
+                except Exception:
+                    continue
+            tickers = [t.replace('.', '-').upper() for t in tickers if isinstance(t, str) and t.strip()!='']
+            tickers = list(dict.fromkeys(tickers))
+            all_tickers = tickers
+
+        if not all_tickers:
+            st.warning("לא נמצאו טיקרים לניתוח. העלה קובץ CSV או הנח קבצי CSV בתיקייה.")
+        else:
+            st.info(f"מריץ ניתוח על עד {sample_size} טיקרים (דגימה מתוך {len(all_tickers)}) — זה עלול לקחת זמן.")
+            np.random.seed(42)
+            sample = list(np.random.choice(all_tickers, size=min(sample_size, len(all_tickers)), replace=False))
+            stats_df = compute_indicator_sample_stats(sample, max_samples=sample_size)
+            if stats_df.empty:
+                st.error("לא התקבלו מדדים מהדגימה — בדוק שהטיקרים תקינים ו‑yfinance מחזיר היסטוריה.")
+            else:
+                st.success(f"נבדקו {len(stats_df)} טיקרים בדגימה.")
+                st.write("סטטיסטיקה תמציתית לדגימה:")
+                st.dataframe(stats_df.describe().T[['count','mean','50%','std']].rename(columns={'50%':'median'}), use_container_width=True)
+
+                percentiles = {
+                    "BB_width": percentile_bb,
+                    "RVOL": percentile_rvol,
+                    "AvgVol20": percentile_avgvol,
+                    "RSI": percentile_rsi,
+                    "ATR": percentile_atr
+                }
+                suggestions = suggest_thresholds_from_stats(stats_df, percentiles=percentiles)
+                st.markdown("**המלצות ספים (מוצע)**")
+                sug_df = pd.DataFrame([suggestions])
+                if sug_df['AvgVol20'].notna().any():
+                    sug_df['AvgVol20'] = sug_df['AvgVol20'].apply(lambda x: int(x) if pd.notna(x) else x)
+                if sug_df['RSI'].notna().any():
+                    sug_df['RSI'] = sug_df['RSI'].apply(lambda x: round(x,1) if pd.notna(x) else x)
+                st.table(sug_df.T.rename(columns={0:'Suggested'}))
+
+                st.markdown("**התפלגויות (דגימה)**")
+                cols = st.columns(3)
+                with cols[0]:
+                    fig_bbw = px.histogram(stats_df, x='BB_width', nbins=40, title='BB width (sample)')
+                    st.plotly_chart(fig_bbw, use_container_width=True)
+                with cols[1]:
+                    fig_rvol = px.histogram(stats_df, x='RVOL', nbins=40, title='RVOL (sample)')
+                    st.plotly_chart(fig_rvol, use_container_width=True)
+                with cols[2]:
+                    fig_avgv = px.histogram(stats_df.dropna(subset=['AvgVol20']), x='AvgVol20', nbins=40, title='AvgVol20 (sample)')
+                    st.plotly_chart(fig_avgv, use_container_width=True)
+
+                cols2 = st.columns(2)
+                with cols2[0]:
+                    fig_rsi = px.histogram(stats_df, x='RSI', nbins=40, title='RSI (sample)')
+                    st.plotly_chart(fig_rsi, use_container_width=True)
+                with cols2[1]:
+                    fig_atr = px.histogram(stats_df, x='ATR', nbins=40, title='ATR (sample)')
+                    st.plotly_chart(fig_atr, use_container_width=True)
+
+                if st.button("החל את ההמלצות כערכי ברירת מחדל"):
+                    # עדכון session_state של ה-widgets ואז רענון
+                    if suggestions.get('BB_width') is not None:
+                        st.session_state['bb_width_thresh'] = float(suggestions['BB_width'])
+                    if suggestions.get('RVOL') is not None:
+                        st.session_state['rvol_threshold'] = float(suggestions['RVOL'])
+                    if suggestions.get('AvgVol20') is not None:
+                        st.session_state['min_avg_vol'] = int(suggestions['AvgVol20'])
+                    if suggestions.get('RSI') is not None:
+                        st.session_state['rsi_threshold'] = float(suggestions['RSI'])
+                    # כתוב ללוג
+                    _write_log("auto_tune_apply", [f"{k}:{v}" for k,v in suggestions.items()], note=f"applied from sample {len(stats_df)}")
+                    st.success("ההמלצות נשמרו ב‑session והחליפו את ברירות המחדל. הדף ירענן כדי להציג את הערכים החדשים.")
+                    st.experimental_rerun()
+
+# -------------------------
 # ניהול קבצים: גיבוי/שחזור/מחיקה
 # -------------------------
 st.markdown("---")
@@ -659,7 +797,7 @@ if os.path.exists(SCAN_RESULTS_FILE):
     try:
         df_prev = pd.read_csv(SCAN_RESULTS_FILE)
         st.dataframe(df_prev, use_container_width=True)
-        sel = st.selectbox("בחר מניה להצגה מתוך תוצאות קודמות", df_prev['Ticker'].tolist())
+        sel = st.selectbox("בחר מניה להצגה מתוך תוצאות קודמות", df_prev['Ticker'].tolist(), key="prev_select")
         if st.button("הצג גרף מהתוצאות הקודמות"):
             hist = fetch_history(sel, period="1y")
             if hist.empty:
