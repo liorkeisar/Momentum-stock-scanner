@@ -1,319 +1,335 @@
 import streamlit as st
 import yfinance as yf
 import pandas as pd
+import numpy as np
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
-import os
-import numpy as np
-from datetime import datetime
+from datetime import datetime, timedelta
 import logging
+import os
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import tempfile
 
-# ---------- הגדרות ----------
-st.set_page_config(page_title="KEISAR Pro Hunter", layout="wide")
-PORTFOLIO_FILE = 'portfolio.csv'
-SCAN_RESULTS_FILE = 'scan_results.csv'
-MAX_WORKERS = 5  # להגבלת בקשות מקבילות ל-yfinance
+# ==========================
+# הגדרות כלליות
+# ==========================
 
-logging.basicConfig(level=logging.INFO, format='%(asctime)s %(levelname)s %(message)s')
+st.set_page_config(page_title="Breakout Scanner Pro", layout="wide")
 
-# ---------- פונקציות עזר ----------
-def atomic_write_csv(df: pd.DataFrame, path: str, mode: str = 'w', header: bool = True):
-    """כתיבה אטומית לקובץ CSV (מונע קבצים חלקיים)"""
-    dirn = os.path.dirname(os.path.abspath(path)) or '.'
-    with tempfile.NamedTemporaryFile(mode='w', delete=False, dir=dirn, suffix='.tmp') as tmp:
-        df.to_csv(tmp.name, index=False, header=header)
-        tmp_name = tmp.name
-    os.replace(tmp_name, path)
+DEFAULT_PERIOD = "6mo"
+DEFAULT_INTERVAL = "1d"
 
-def read_ticker_file(path):
-    """קריאת קובץ טיקרים בצורה בטוחה והחזרת רשימה של טיקרים תקינים"""
-    try:
-        s = pd.read_csv(path, header=None).iloc[:, 0].dropna().astype(str).str.strip().str.upper().unique().tolist()
-        return [t for t in s if t]
-    except Exception as e:
-        logging.error(f"Error reading {path}: {e}")
-        return []
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
-# ---------- קבלת נתונים עם cache ברמת session ----------
-@st.cache_data(ttl=3600)
-def fetch_history(ticker):
-    """קריאה ל-yfinance; מטמון גלובלי של Streamlit לפי ticker"""
-    return yf.Ticker(ticker).history(period="6mo")
 
-def get_data_cached(ticker):
-    """מעט עטיפה כדי להחזיר None במקרה של שגיאה"""
-    try:
-        df = fetch_history(ticker)
-        if df is None or df.empty:
-            raise ValueError("No data")
-        return df
-    except Exception as e:
-        logging.warning(f"fetch_history failed for {ticker}: {e}")
-        return None
+# ==========================
+# פונקציות עזר לנתונים
+# ==========================
 
-# ---------- אינדיקטורים ----------
-def get_indicators(df):
+@st.cache_data
+def load_data(ticker, period=DEFAULT_PERIOD, interval=DEFAULT_INTERVAL):
+    df = yf.download(ticker, period=period, interval=interval)
+    df.dropna(inplace=True)
+    return df
+
+
+def add_indicators(df):
     df = df.copy()
-    df['Daily_Change'] = df['Close'].pct_change()
-    df['MA20'] = df['Close'].rolling(window=20).mean()
-    df['STD'] = df['Close'].rolling(window=20).std()
-    df['Upper'] = df['MA20'] + (df['STD'] * 2)
-    df['Lower'] = df['MA20'] - (df['STD'] * 2)
-    df['Squeeze'] = (df['Upper'] - df['Lower']) / df['Close']
-    # OBV סטנדרטי
-    direction = np.sign(df['Close'].diff()).fillna(0)
-    df['OBV'] = (df['Volume'] * direction).cumsum()
-    df['AvgVol'] = df['Volume'].rolling(window=20).mean()
-    df['RVOL'] = df['Volume'] / df['AvgVol']
-    high_low = df['High'] - df['Low']
-    df['ATR'] = high_low.rolling(window=14).mean()
-    exp1 = df['Close'].ewm(span=12, adjust=False).mean()
-    exp2 = df['Close'].ewm(span=26, adjust=False).mean()
-    df['MACD'] = exp1 - exp2
-    df['Signal'] = df['MACD'].ewm(span=9, adjust=False).mean()
-    return df.dropna()
 
-def calculate_score(df):
-    try:
-        if df['Daily_Change'].iloc[-1] < -0.05:
-            return -1
-        score = 0
-        if df['Squeeze'].iloc[-1] < 0.10:
-            score += 2
-        elif df['Squeeze'].iloc[-1] < 0.15:
-            score += 1
-        if df['Close'].iloc[-1] > df['MA20'].iloc[-1]:
-            score += 1
-        if df['OBV'].iloc[-1] > df['OBV'].iloc[-10]:
-            score += 1
-        if df['RVOL'].iloc[-1] > 1.5:
-            score += 1
-        return score
-    except Exception as e:
-        logging.warning(f"calculate_score error: {e}")
-        return 0
+    # ממוצעים
+    df["EMA20"] = df["Close"].ewm(span=20, adjust=False).mean()
+    df["EMA50"] = df["Close"].ewm(span=50, adjust=False).mean()
 
-def get_market_status():
-    try:
-        spy = yf.Ticker("SPY").history(period="1y")
-        spy['MA200'] = spy['Close'].rolling(window=200).mean()
-        return spy['Close'].iloc[-1] > spy['MA200'].iloc[-1]
-    except Exception as e:
-        logging.warning(f"get_market_status failed: {e}")
-        return True  # אם נכשל, לא לחסום את המשתמש
+    # ATR
+    high_low = df["High"] - df["Low"]
+    high_close = np.abs(df["High"] - df["Close"].shift(1))
+    low_close = np.abs(df["Low"] - df["Close"].shift(1))
+    tr = pd.concat([high_low, high_close, low_close], axis=1).max(axis=1)
+    df["ATR"] = tr.rolling(14).mean()
 
-# ---------- ממשק משתמש ----------
-st.title("◈ KEISAR: סורק מוסדי מקצועי")
+    # בולינגר
+    df["MA20"] = df["Close"].rolling(20).mean()
+    df["STD20"] = df["Close"].rolling(20).std()
+    df["UpperBB"] = df["MA20"] + 2 * df["STD20"]
+    df["LowerBB"] = df["MA20"] - 2 * df["STD20"]
 
-if not get_market_status():
-    st.warning("⚠️ אזהרת מערכת: השוק (SPY) מתחת ל-MA200.")
+    # קלטנר
+    df["UpperKC"] = df["MA20"] + df["ATR"] * 1.5
+    df["LowerKC"] = df["MA20"] - df["ATR"] * 1.5
 
-tab1, tab2, tab3 = st.tabs(["📊 סורק", "💼 תיק השקעות", "🎓 מדריך אסטרטגי"])
+    # OBV
+    df["OBV"] = (np.sign(df["Close"].diff()) * df["Volume"]).fillna(0).cumsum()
 
-with tab1:
-    st.sidebar.header("⚙️ הגדרות סריקה")
-    all_files = [f for f in os.listdir('.') if f.endswith('.csv') and 'portfolio' not in f and 'scan_results' not in f]
-    selected_files = st.sidebar.multiselect("בחר קבצי רשימות:", all_files, default=all_files)
+    # Accumulation/Distribution
+    ad = ((df["Close"] - df["Low"]) - (df["High"] - df["Close"])) / \
+         (df["High"] - df["Low"]).replace(0, 1) * df["Volume"]
+    df["AD_Cum"] = ad.cumsum()
 
-    run_scan = st.button("🚀 הפעל סריקה")
-    if run_scan:
-        # בניית רשימת טיקרים
-        all_tickers = []
-        for file in selected_files:
-            all_tickers.extend(read_ticker_file(file))
-        all_tickers = list(dict.fromkeys(all_tickers))  # שמירה על סדר והסרת כפילויות
+    # MFI
+    typical = (df["High"] + df["Low"] + df["Close"]) / 3
+    money_flow = typical * df["Volume"]
+    pos_flow = money_flow.where(typical > typical.shift(1), 0).rolling(14).sum()
+    neg_flow = money_flow.where(typical < typical.shift(1), 0).rolling(14).sum()
+    df["MFI"] = 100 - (100 / (1 + (pos_flow / neg_flow.replace(0, 1))))
 
-        if not all_tickers:
-            st.info("לא נמצאו טיקרים בקבצים שנבחרו.")
-        else:
-            progress_bar = st.progress(0)
-            master_list = []
-            alerts = []
-            futures = []
-            # שימוש ב-ThreadPoolExecutor לקריאות מקבילות מבוקרות
-            with ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
-                for ticker in all_tickers:
-                    futures.append(executor.submit(get_data_cached, ticker))
+    # RSI
+    delta = df["Close"].diff()
+    gain = (delta.where(delta > 0, 0)).rolling(14).mean()
+    loss = (-delta.where(delta < 0, 0)).rolling(14).mean()
+    rs = gain / loss.replace(0, 1)
+    df["RSI"] = 100 - (100 / (1 + rs))
 
-                for i, future in enumerate(as_completed(futures)):
-                    try:
-                        df_hist = future.result()
-                        # צריך לדעת איזה טיקר שייך לתוצאה; פשוט נבדוק לפי סדר all_tickers
-                        # כדי לשמור התאמה מדויקת, נשתמש בגישה פשוטה: בקשות נשלחות לפי סדר, לכן נשתמש באינדקס i
-                        # הערה: as_completed משנה סדר ההשלמה; לכן במקום זאת נבצע mapping של futures->tickers
-                    except Exception as e:
-                        logging.warning(f"Future error: {e}")
+    # MACD
+    exp1 = df["Close"].ewm(span=12, adjust=False).mean()
+    exp2 = df["Close"].ewm(span=26, adjust=False).mean()
+    df["MACD"] = exp1 - exp2
+    df["Signal"] = df["MACD"].ewm(span=9, adjust=False).mean()
 
-            # חלופה: מפה מפורשת של futures->tickers
-            progress_bar.progress(0)
-            master_list = []
-            alerts = []
-            future_to_ticker = {}
-            with ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
-                for ticker in all_tickers:
-                    future = executor.submit(get_data_cached, ticker)
-                    future_to_ticker[future] = ticker
+    return df
 
-                total = len(all_tickers)
-                done = 0
-                for future in as_completed(future_to_ticker):
-                    ticker = future_to_ticker[future]
-                    done += 1
-                    try:
-                        df_hist = future.result()
-                        if df_hist is None:
-                            logging.info(f"No data for {ticker}")
-                            progress_bar.progress(done / total)
-                            continue
-                        df = get_indicators(df_hist)
-                        if len(df) > 50:
-                            score = calculate_score(df)
-                            if score >= 0:
-                                master_list.append({
-                                    "Ticker": ticker,
-                                    "Score": score,
-                                    "Price": round(float(df['Close'].iloc[-1]), 2),
-                                    "RVOL": round(float(df['RVOL'].iloc[-1]), 2)
-                                })
-                                if score >= 4 and df['RVOL'].iloc[-1] > 1.5:
-                                    alerts.append(f"🔥 איתות חם: {ticker} בציון {score} ו-RVOL {round(float(df['RVOL'].iloc[-1]), 2)}!")
-                    except Exception as e:
-                        logging.warning(f"Failed processing {ticker}: {e}")
-                    progress_bar.progress(done / total)
 
-            # שמירת תוצאות סריקה אטומית
-            if master_list:
-                df_out = pd.DataFrame(master_list).sort_values(by="Score", ascending=False)
-                try:
-                    atomic_write_csv(df_out, SCAN_RESULTS_FILE, header=True)
-                except Exception as e:
-                    logging.error(f"Failed to write scan results: {e}")
+# ==========================
+# לוגיקת פריצה + ניקוד
+# ==========================
+
+def breakout_score(df):
+    df = df.copy()
+    score = 0
+
+    # דשדוש 10 ימים
+    range10 = (df["High"].rolling(10).max() - df["Low"].rolling(10).min()) / df["Close"]
+    if range10.iloc[-1] < 0.03:
+        score += 15
+
+    # סטיית תקן נמוכה
+    std_now = df["Close"].rolling(20).std().iloc[-1]
+    std_mean = df["Close"].rolling(20).std().mean()
+    if std_now < std_mean * 0.8:
+        score += 10
+
+    # ATR נמוך
+    atr_now = df["ATR"].iloc[-1]
+    atr_mean = df["ATR"].rolling(20).mean().iloc[-1]
+    if atr_now < atr_mean * 0.8:
+        score += 10
+
+    # כסף מוסדי
+    if df["OBV"].iloc[-1] > df["OBV"].iloc[-10]:
+        score += 10
+    if df["AD_Cum"].iloc[-1] > df["AD_Cum"].iloc[-10]:
+        score += 10
+    if df["MFI"].iloc[-1] > 60:
+        score += 10
+    if df["Volume"].iloc[-1] > df["Volume"].rolling(20).mean().iloc[-1] * 1.3:
+        score += 10
+
+    # מומנטום
+    if df["MACD"].iloc[-1] > df["Signal"].iloc[-1]:
+        score += 10
+    if 50 < df["RSI"].iloc[-1] < 60:
+        score += 5
+    if df["Close"].iloc[-1] > df["EMA20"].iloc[-1] > df["EMA50"].iloc[-1]:
+        score += 10
+
+    # קרבה לפריצה
+    if df["Close"].iloc[-1] > df["High"].rolling(20).max().iloc[-1] * 0.97:
+        score += 10
+    if (df["High"] - df["Low"]).iloc[-1] < df["ATR"].iloc[-1] * 0.7:
+        score += 5
+
+    return score
+
+
+def detect_breakout_setup(df):
+    df = df.copy()
+
+    # דשדוש
+    df["Range10"] = df["High"].rolling(10).max() - df["Low"].rolling(10).min()
+    df["Range10_pct"] = df["Range10"] / df["Close"]
+    sideways = df["Range10_pct"].iloc[-1] < 0.03
+
+    # כסף מוסדי
+    institutional_buying = (
+        df["AD_Cum"].iloc[-1] > df["AD_Cum"].iloc[-10] and
+        df["MFI"].iloc[-1] > 60 and
+        df["Volume"].iloc[-1] > df["Volume"].rolling(20).mean().iloc[-1] * 1.3
+    )
+
+    # סקוויז
+    squeeze_on = (
+        df["UpperBB"].iloc[-1] < df["UpperKC"].iloc[-1] and
+        df["LowerBB"].iloc[-1] > df["LowerKC"].iloc[-1]
+    )
+
+    # לחץ קונים
+    buy_pressure = df["OBV"].iloc[-1] > df["OBV"].iloc[-10]
+
+    # MACD חיובי
+    macd_bullish = df["MACD"].iloc[-1] > df["Signal"].iloc[-1]
+
+    return all([sideways, institutional_buying, squeeze_on, buy_pressure, macd_bullish])
+
+
+# ==========================
+# Backtesting לפריצות
+# ==========================
+
+def breakout_backtest(df, min_score=60, lookahead_days=10, rr=2.0):
+    df = df.copy()
+    results = []
+
+    for i in range(40, len(df) - lookahead_days):
+        window = df.iloc[:i]
+        score = breakout_score(window)
+
+        if score >= min_score and detect_breakout_setup(window):
+            entry = df["Close"].iloc[i]
+            stop = window["Low"].rolling(10).min().iloc[-1]
+            risk = entry - stop
+            if risk <= 0:
+                continue
+            target = entry + risk * rr
+
+            future = df.iloc[i:i + lookahead_days]
+
+            hit_target = (future["High"] >= target).any()
+            hit_stop = (future["Low"] <= stop).any()
+
+            if hit_target:
+                results.append(rr)
+            elif hit_stop:
+                results.append(-1)
             else:
-                # מחיקת קובץ תוצאות אם אין תוצאות
-                if os.path.exists(SCAN_RESULTS_FILE):
-                    try:
-                        os.remove(SCAN_RESULTS_FILE)
-                    except Exception:
-                        pass
+                final = future["Close"].iloc[-1]
+                results.append((final - entry) / risk)
 
-            st.session_state['alerts'] = alerts
-            st.success("סריקה הושלמה.")
+    if not results:
+        return {
+            "trades": 0,
+            "win_rate": 0.0,
+            "avg_r": 0.0,
+            "max_drawdown_r": 0.0
+        }
 
-    # הצגת התראות אם קיימות
-    if 'alerts' in st.session_state and st.session_state['alerts']:
-        st.error("🚨 מרכז התראות בזמן אמת:")
-        for alert in st.session_state['alerts']:
-            st.write(alert)
+    results_series = pd.Series(results)
+    wins = (results_series > 0).sum()
+    losses = (results_series <= 0).sum()
+    win_rate = wins / (wins + losses) * 100
+    avg_r = results_series.mean()
+    max_dd = results_series.min()
 
-    # הצגת תוצאות סריקה
-    if os.path.exists(SCAN_RESULTS_FILE):
+    return {
+        "trades": len(results),
+        "win_rate": round(win_rate, 2),
+        "avg_r": round(avg_r, 2),
+        "max_drawdown_r": round(max_dd, 2)
+    }
+
+
+# ==========================
+# גרפים מתקדמים
+# ==========================
+
+def plot_advanced_chart(df, ticker):
+    fig = make_subplots(
+        rows=4, cols=1,
+        shared_xaxes=True,
+        vertical_spacing=0.02,
+        row_heights=[0.45, 0.15, 0.2, 0.2]
+    )
+
+    # נרות
+    fig.add_trace(go.Candlestick(
+        x=df.index,
+        open=df["Open"], high=df["High"],
+        low=df["Low"], close=df["Close"],
+        name="Price"
+    ), row=1, col=1)
+
+    # בולינגר
+    fig.add_trace(go.Scatter(x=df.index, y=df["UpperBB"], line=dict(color="blue"), name="Upper BB"), row=1, col=1)
+    fig.add_trace(go.Scatter(x=df.index, y=df["LowerBB"], line=dict(color="blue"), name="Lower BB"), row=1, col=1)
+
+    # קלטנר
+    fig.add_trace(go.Scatter(x=df.index, y=df["UpperKC"], line=dict(color="orange"), name="Upper KC"), row=1, col=1)
+    fig.add_trace(go.Scatter(x=df.index, y=df["LowerKC"], line=dict(color="orange"), name="Lower KC"), row=1, col=1)
+
+    # נפחים
+    fig.add_trace(go.Bar(x=df.index, y=df["Volume"], name="Volume"), row=2, col=1)
+
+    # OBV
+    fig.add_trace(go.Scatter(x=df.index, y=df["OBV"], name="OBV", line=dict(color="purple")), row=3, col=1)
+
+    # MACD
+    fig.add_trace(go.Scatter(x=df.index, y=df["MACD"], name="MACD", line=dict(color="green")), row=4, col=1)
+    fig.add_trace(go.Scatter(x=df.index, y=df["Signal"], name="Signal", line=dict(color="red")), row=4, col=1)
+
+    fig.update_layout(title=f"Advanced Breakout Chart — {ticker}", height=900)
+    return fig
+
+
+# ==========================
+# UI ראשי
+# ==========================
+
+st.title("📈 Breakout Scanner Pro — דשדוש, כסף מוסדי, סקוויז, Backtesting")
+
+tickers_input = st.text_area(
+    "הכנס רשימת טיקרי מניות (מופרדים בפסיק):",
+    value="AAPL, MSFT, NVDA, META, TSLA"
+)
+
+min_score = st.slider("מינימום ציון פריצה להצגה:", 0, 100, 60)
+run_backtest = st.checkbox("הרץ Backtesting לכל טיקר")
+
+if st.button("הרץ סורק"):
+    tickers = [t.strip().upper() for t in tickers_input.split(",") if t.strip()]
+    master_list = []
+    backtest_results = {}
+
+    progress = st.progress(0)
+
+    for idx, ticker in enumerate(tickers):
         try:
-            df_res = pd.read_csv(SCAN_RESULTS_FILE)
-            if not df_res.empty:
-                selected = st.selectbox("בחר מניה לניתוח:", df_res['Ticker'].unique())
-                if st.button("הצג ניתוח"):
-                    st.session_state['selected_ticker'] = selected
+            df = load_data(ticker)
+            df = add_indicators(df)
 
-                if 'selected_ticker' in st.session_state:
-                    ticker = st.session_state['selected_ticker']
-                    data_hist = get_data_cached(ticker)
-                    if data_hist is None:
-                        st.warning("לא ניתן לקבל נתונים עבור המניה שנבחרה.")
-                    else:
-                        data = get_indicators(data_hist)
-                        last_price = float(data['Close'].iloc[-1])
-                        atr = float(data['ATR'].iloc[-1])
-                        sl = round(last_price - (1.5 * atr), 2)
-                        tp = round(last_price + (3.0 * atr), 2)
-                        risk = last_price - sl
-                        reward = tp - last_price
-                        rr_ratio = round(reward / risk, 2) if risk != 0 else float('inf')
+            score = breakout_score(df)
+            setup = detect_breakout_setup(df)
 
-                        st.subheader(f"📊 ניתוח טכני: {ticker}")
-                        st.markdown("""
-                        <div style="display: flex; justify-content: space-between; align-items: center; background-color: #f8f9fa; padding: 15px; border-radius: 10px;">
-                            <div style="text-align: center;"><b>מחיר</b><br>${:.2f}</div>
-                            <div style="text-align: center; color: red;"><b>SL</b><br>${:.2f}</div>
-                            <div style="text-align: center; color: green;"><b>TP</b><br>${:.2f}</div>
-                            <div style="text-align: center;"><b>R/R</b><br>1 : {:.2f}</div>
-                        </div>
-                        """.format(last_price, sl, tp, rr_ratio), unsafe_allow_html=True)
+            if score >= min_score and setup:
+                master_list.append({
+                    "Ticker": ticker,
+                    "Score": score,
+                    "Price": round(float(df["Close"].iloc[-1]), 2),
+                    "RVOL": round(float(df["Volume"].iloc[-1] / df["Volume"].rolling(20).mean().iloc[-1]), 2)
+                })
 
-                        st.markdown("---")
-                        fig = make_subplots(rows=3, cols=1, shared_xaxes=True, row_heights=[0.5, 0.25, 0.25])
-                        fig.add_trace(go.Candlestick(x=data.index, open=data['Open'], high=data['High'], low=data['Low'], close=data['Close'], name='Price'), row=1, col=1)
-                        fig.add_trace(go.Scatter(x=data.index, y=data['RVOL'], name='RVOL', line=dict(color='orange')), row=2, col=1)
-                        fig.add_trace(go.Scatter(x=data.index, y=data['MACD'], name='MACD'), row=3, col=1)
-                        fig.update_layout(height=600, margin=dict(l=20, r=20, t=30, b=20))
-                        st.plotly_chart(fig, use_container_width=True)
+                if run_backtest:
+                    stats = breakout_backtest(df, min_score=min_score)
+                    backtest_results[ticker] = stats
 
-                        if st.button("הוסף לתיק"):
-                            new_entry = pd.DataFrame({
-                                'Ticker': [ticker],
-                                'Entry': [last_price],
-                                'SL': [sl],
-                                'TP': [tp],
-                                'Date': [datetime.now().strftime("%Y-%m-%d")]
-                            })
-                            try:
-                                if os.path.exists(PORTFOLIO_FILE):
-                                    df_port = pd.read_csv(PORTFOLIO_FILE)
-                                    df_port = pd.concat([df_port, new_entry], ignore_index=True)
-                                else:
-                                    df_port = new_entry
-                                atomic_write_csv(df_port, PORTFOLIO_FILE, header=True)
-                                st.success(f"{ticker} נוספה לתיק!")
-                            except Exception as e:
-                                logging.error(f"Failed to add to portfolio: {e}")
-                                st.error("שגיאה בשמירת התיק.")
-            else:
-                st.info("אין תוצאות בסריקה.")
         except Exception as e:
-            logging.error(f"Error reading scan results: {e}")
-            st.error("שגיאה בקריאת תוצאות הסריקה.")
+            logger.warning(f"בעיה עם {ticker}: {e}")
+            st.warning(f"בעיה עם {ticker}: {e}")
 
-with tab2:
-    st.subheader("💼 התיק הפעיל שלך")
-    if os.path.exists(PORTFOLIO_FILE):
-        try:
-            df_port = pd.read_csv(PORTFOLIO_FILE)
-            if df_port.empty:
-                st.info("התיק עדיין ריק.")
-            else:
-                for i, row in df_port.iterrows():
-                    col1, col2 = st.columns([0.8, 0.2])
-                    data_hist = get_data_cached(row['Ticker'])
-                    if data_hist is None:
-                        curr_p = float('nan')
-                        ret = float('nan')
-                    else:
-                        curr_p = float(data_hist['Close'].iloc[-1])
-                        ret = ((curr_p - float(row['Entry'])) / float(row['Entry'])) * 100
+        progress.progress((idx + 1) / len(tickers))
 
-                    col1.write(f"**{row['Ticker']}** | כניסה: ${float(row['Entry']):.2f} | **נוכחי: ${curr_p:.2f}** | תשואה: {ret:.2f}%")
-                    col1.caption(f"יעדים: SL ${row['SL']} | TP ${row['TP']}")
+    if master_list:
+        df_results = pd.DataFrame(master_list).sort_values("Score", ascending=False)
+        st.subheader("📊 מניות לפני פריצה לפי ניקוד")
+        st.dataframe(df_results, use_container_width=True)
 
-                    if col2.button("🗑️ הסר", key=f"del_{i}"):
-                        df_port = df_port.drop(i).reset_index(drop=True)
-                        try:
-                            atomic_write_csv(df_port, PORTFOLIO_FILE, header=True)
-                            st.experimental_rerun()
-                        except Exception as e:
-                            logging.error(f"Failed to remove from portfolio: {e}")
-                            st.error("שגיאה בהסרת הפריט.")
-        except Exception as e:
-            logging.error(f"Error reading portfolio: {e}")
-            st.error("שגיאה בקריאת התיק.")
+        selected_ticker = st.selectbox("בחר טיקר להצגת גרף:", df_results["Ticker"])
+        df_sel = add_indicators(load_data(selected_ticker))
+        fig = plot_advanced_chart(df_sel, selected_ticker)
+        st.plotly_chart(fig, use_container_width=True)
+
+        if run_backtest and backtest_results:
+            st.subheader("🧪 Backtesting תוצאות")
+            bt_df = pd.DataFrame(backtest_results).T
+            bt_df.index.name = "Ticker"
+            st.dataframe(bt_df, use_container_width=True)
     else:
-        st.info("התיק עדיין ריק.")
-
-with tab3:
-    st.header("🎓 מדריך אסטרטגי: צייד התפרצויות (ASST)")
-    st.markdown("""
-    ### ניהול סיכונים חכם
-    * **R/R Ratio:** יחס הסיכוי מול הסיכון. שאיפה ל-1.5 ומעלה.
-    * **ATR:** כלי התנודתיות שקובע היכן הסטופ שלך צריך להיות.
-    """)
-    st.info("הערה: המידע המוצג הוא לצורכי לימוד בלבד ואינו מהווה ייעוץ פיננסי.")
+        st.info("לא נמצאו מניות שעומדות בתנאים שהגדרת.")
