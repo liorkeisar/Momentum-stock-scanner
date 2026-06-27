@@ -115,23 +115,27 @@ def add_indicators(df):
     return df
 
 # ==========================
-# ניקוד פריצה
+# ניקוד פריצה (מתוקן)
 # ==========================
 
 def breakout_score(df):
     df = df.copy()
     score = 0
 
+    # דשדוש
     range10 = (df["High"].rolling(10).max() - df["Low"].rolling(10).min()) / df["Close"]
     if range10.iloc[-1] < 0.03:
         score += 15
 
-    if df["Close"].rolling(20).std().iloc[-1] < df["Close"].rolling(20).std().mean() * 0.8:
+    # סטיית תקן
+    if df["STD20"].iloc[-1] < df["STD20"].mean() * 0.8:
         score += 10
 
+    # ATR
     if df["ATR"].iloc[-1] < df["ATR"].rolling(20).mean().iloc[-1] * 0.8:
         score += 10
 
+    # כסף מוסדי
     if df["OBV"].iloc[-1] > df["OBV"].iloc[-10]:
         score += 10
     if df["AD_Cum"].iloc[-1] > df["AD_Cum"].iloc[-10]:
@@ -141,6 +145,7 @@ def breakout_score(df):
     if df["Volume"].iloc[-1] > df["Volume"].rolling(20).mean().iloc[-1] * 1.3:
         score += 10
 
+    # מומנטום
     if df["MACD"].iloc[-1] > df["Signal"].iloc[-1]:
         score += 10
     if 50 < df["RSI"].iloc[-1] < 60:
@@ -148,12 +153,17 @@ def breakout_score(df):
     if df["Close"].iloc[-1] > df["EMA20"].iloc[-1] > df["EMA50"].iloc[-1]:
         score += 10
 
+    # קרבה לפריצה
     if df["Close"].iloc[-1] > df["High"].rolling(20).max().iloc[-1] * 0.97:
         score += 10
-    if (df["High"] - df["Low"]).iloc[-1] < df["ATR"].iloc[-1] * 0.7:
+    if (df["High"].iloc[-1] - df["Low"].iloc[-1]) < df["ATR"].iloc[-1] * 0.7:
         score += 5
 
     return score
+
+# ==========================
+# זיהוי פריצה (מתוקן)
+# ==========================
 
 def detect_breakout_setup(df):
     df = df.copy()
