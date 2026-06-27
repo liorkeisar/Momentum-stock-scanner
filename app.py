@@ -6,7 +6,7 @@ import os
 import time
 import shutil
 import glob
-from datetime import datetime
+from datetime import datetime, timedelta
 from plotly.subplots import make_subplots
 import plotly.graph_objects as go
 import plotly.express as px
@@ -27,10 +27,6 @@ os.makedirs(BACKUP_DIR, exist_ok=True)
 # עזרי נרמול וכפילויות
 # -------------------------
 def normalize_ticker(t: str) -> str:
-    """
-    נרמול טיקר: הסרת רווחים, המרת נקודה ל־-, uppercase,
-    הסרת תווים לא רצויים, ושמירה על מחרוזת תקינה.
-    """
     if not isinstance(t, str):
         return ""
     s = t.strip().upper().replace('.', '-')
@@ -50,9 +46,13 @@ def dedupe_preserve_order(seq):
 # מטמון לקריאות yfinance
 # -------------------------
 @st.cache_data(ttl=60*30)
-def fetch_history(ticker: str, period: str = "1y") -> pd.DataFrame:
+def fetch_history(ticker: str, period: str = "1y", interval: str = "1d") -> pd.DataFrame:
     try:
-        df = yf.Ticker(ticker).history(period=period)
+        # שימוש ב‑yfinance history
+        df = yf.Ticker(ticker).history(period=period, interval=interval)
+        # ודא אינדקס מסוג datetime
+        if not df.empty:
+            df.index = pd.to_datetime(df.index)
         return df
     except Exception:
         return pd.DataFrame()
@@ -127,12 +127,20 @@ def obv_confirmation(df: pd.DataFrame, lookback=10) -> (bool, float):
     except Exception:
         return False, 0.0
 
-def rsi_ok(df: pd.DataFrame, max_rsi=75) -> (bool, float):
+def rsi_smart_check(df: pd.DataFrame, rvol_now: float, rvol_threshold: float) -> (bool, str):
     try:
-        rsi = df['RSI'].iloc[-1]
-        return rsi < max_rsi, float(rsi)
-    except Exception:
-        return False, 0.0
+        rsi_val = float(df['RSI'].iloc[-1])
+        if rsi_val < 50:
+            return False, f"RSI נמוך ({rsi_val:.1f})"
+        if rsi_val <= 70:
+            return True, f"RSI בטווח טוב ({rsi_val:.1f})"
+        # RSI > 70 -> דרוש אישור נפח/ATR
+        atr_ok_flag, atr_ratio = atr_expansion(df, lookback=10)
+        if rvol_now >= max(1.5, rvol_threshold) and atr_ok_flag:
+            return True, f"RSI גבוה ({rsi_val:.1f}) אך מאושר (RVOL {rvol_now:.2f}, ATR_ratio {atr_ratio:.2f})"
+        return False, f"RSI גבוה ({rsi_val:.1f}) ללא אישור נפח/ATR"
+    except Exception as e:
+        return False, f"שגיאת RSI: {e}"
 
 def vwap_confirmation(df: pd.DataFrame) -> (bool, float):
     try:
@@ -246,14 +254,50 @@ def restore_backup(backup_file: str, restore_files: list):
     return True, restored
 
 # -------------------------
+# פונקציות PreBreakout / Intraday
+# -------------------------
+def find_squeeze_date(df: pd.DataFrame, lookback=60):
+    try:
+        recent = df['BB_width'].iloc[-lookback:]
+        idx = recent.idxmin()
+        return idx if not pd.isna(idx) else None
+    except Exception:
+        return None
+
+def fetch_intraday_volume_series(ticker: str, period: str = "5d", interval: str = "60m"):
+    try:
+        # שימוש ב‑yf.download כדי לקבל נתוני אינטרדיי
+        df = yf.download(tickers=ticker, period=period, interval=interval, progress=False)
+        if not df.empty:
+            df.index = pd.to_datetime(df.index)
+        return df
+    except Exception:
+        return pd.DataFrame()
+
+def intraday_rvol_spike(ticker: str, rvol_thresh=1.3):
+    """
+    מחזיר True אם יש spike בנפח אינטרדיילי ב‑period האחרון.
+    מחשב RVOL על בסיס ממוצע 10 של נפח אינטרדיילי.
+    """
+    try:
+        df = fetch_intraday_volume_series(ticker, period="5d", interval="60m")
+        if df.empty or 'Volume' not in df.columns:
+            return False, None
+        vol = df['Volume']
+        rvol = vol / vol.rolling(window=10).mean()
+        last_rvol = float(rvol.dropna().iloc[-1]) if len(rvol.dropna())>0 else 0.0
+        return last_rvol >= rvol_thresh, last_rvol
+    except Exception:
+        return False, None
+
+# -------------------------
 # UI - הגדרות סריקה
 # -------------------------
-st.title("◈ KEISAR Pro Hunter — Breakout Scanner")
+st.title("◈ KEISAR Pro Hunter — Breakout Scanner (with PreBreakout)")
 
 left, right = st.columns([1, 3])
 with left:
     st.subheader("הגדרות סריקה")
-    # השתמש במפתחות כדי לאפשר עדכון אוטומטי מאוחר יותר
     if 'bb_width_thresh' not in st.session_state:
         st.session_state['bb_width_thresh'] = 0.05
     if 'rvol_threshold' not in st.session_state:
@@ -274,6 +318,8 @@ with left:
     min_marketcap = st.number_input("מינימום שווי שוק (USD)", value=st.session_state['min_marketcap'], step=50_000_000, key="mc_widget")
     min_avg_vol = st.number_input("ממוצע נפח מינימלי (20 יום)", value=st.session_state['min_avg_vol'], step=10_000, key="avgvol_widget")
     chunk_size = st.number_input("גודל קבוצה לסריקה (chunk size)", min_value=5, max_value=200, value=st.session_state['chunk_size'], step=5, key="chunk_widget")
+    prebreak_squeeze_lookback = st.number_input("מספר ימים לחיפוש squeeze (PreBreakout)", min_value=5, max_value=120, value=14, step=1)
+    intraday_rvol_thresh = st.number_input("סף RVOL אינטרדיילי לזיהוי spike", min_value=1.0, max_value=5.0, value=1.3, step=0.1)
     DEBUG_MODE = st.checkbox("מצב Debug - אל תדחה אוטומטית, הצג Warnings", value=False, key="debug_widget")
     run_scan = st.button("הפעל סריקה")
 
@@ -282,7 +328,7 @@ with right:
     results_placeholder = st.empty()
 
 # -------------------------
-# בחירת קובץ CSV יחיד לסריקה (ממשק חדש)
+# בחירת קובץ CSV יחיד לסריקה
 # -------------------------
 st.markdown("### בחר קובץ CSV לסריקה (סריקה על קובץ יחיד)")
 col_file, col_preview = st.columns([2, 3])
@@ -366,7 +412,7 @@ if not scan_single:
     st.session_state['tickers'] = tickers
 
 # -------------------------
-# פונקציית סריקה ב‑chunks עם כללי פריצה
+# פונקציית סריקה ב‑chunks עם כללי פריצה + PreBreakout
 # -------------------------
 def run_scan_on_list(tickers_list, chunk_size=25):
     total = len(tickers_list)
@@ -377,8 +423,9 @@ def run_scan_on_list(tickers_list, chunk_size=25):
         batch = tickers_list[i:i+chunk_size]
         for t in batch:
             reasons = []
+            prebreak_flag = False
             info = fetch_info(t)
-            hist = fetch_history(t, period="1y")
+            hist = fetch_history(t, period="1y", interval="1d")
             if hist.empty or len(hist) < 60:
                 reasons.append("היסטוריה חסרה/קצרה")
                 if not DEBUG_MODE:
@@ -411,21 +458,14 @@ def run_scan_on_list(tickers_list, chunk_size=25):
                 if not macd_ok:
                     reasons.append("MACD לא מאשר")
 
-                # בדיקת RSI מותאמת לפריצות (טווח 50-70, אם >70 דרוש אישור נפח/ATR)
-                try:
-                    rsi_val = float(df['RSI'].iloc[-1])
-                    if rsi_val < 50:
-                        reasons.append(f"RSI נמוך ({rsi_val:.1f}) - אין תנופה")
-                    elif rsi_val <= 70:
-                        pass
-                    else:
-                        atr_ok_flag, atr_ratio = atr_expansion(df, lookback=10)
-                        if rvol_now < max(1.5, rvol_threshold) or not atr_ok_flag:
-                            reasons.append(f"RSI גבוה ({rsi_val:.1f}) ללא אישור נפח/ATR (RVOL {rvol_now:.2f}, ATR_ratio {atr_ratio:.2f})")
-                        else:
-                            reasons.append(f"Warning: RSI גבוה ({rsi_val:.1f}) אך מאושר על ידי נפח/ATR")
-                except Exception as e:
-                    reasons.append(f"שגיאת חישוב RSI: {e}")
+                # RSI חכם
+                rsi_ok_flag, rsi_msg = rsi_smart_check(df, rvol_now, rvol_threshold)
+                if not rsi_ok_flag:
+                    reasons.append(rsi_msg)
+                else:
+                    # אם זה warning - הוסף כ‑warning (לא דחייה)
+                    if rsi_msg.startswith("Warning"):
+                        reasons.append(rsi_msg)
 
                 vwap_ok_flag, vwap_diff = vwap_confirmation(df)
                 if not vwap_ok_flag:
@@ -435,10 +475,23 @@ def run_scan_on_list(tickers_list, chunk_size=25):
                 if not atr_ok:
                     reasons.append(f"ATR לא מראה הרחבה ({atr_ratio:.2f})")
 
+                # --- PreBreakout logic ---
+                squeeze_date = find_squeeze_date(df, lookback=60)
+                days_since_squeeze = None
+                if squeeze_date is not None:
+                    days_since_squeeze = (df.index[-1].date() - squeeze_date.date()).days
+                # בדיקת intraday RVOL spike (מהירה)
+                intraday_spike, intraday_rvol = intraday_rvol_spike(t, rvol_thresh=intraday_rvol_thresh)
+                # תנאי PreBreakout: squeeze קרוב, OBV עולה, RVOL מתחיל לעלות או spike אינטרדיילי
+                if squeeze_date is not None and days_since_squeeze is not None and days_since_squeeze <= prebreak_squeeze_lookback:
+                    if obv_ok and (rvol_now >= max(1.05, rvol_threshold*0.8) or intraday_spike):
+                        prebreak_flag = True
+
             if reasons and not DEBUG_MODE:
                 rejections.append({"Ticker": t, "Reasons": "; ".join(reasons)})
                 continue
 
+            # הוספת שורה לתוצאות (כולל PreBreakout)
             if df is not None:
                 obv_change = float(df['OBV'].iloc[-1] - df['OBV'].iloc[-11]) if len(df) > 11 else 0.0
                 results.append({
@@ -454,6 +507,8 @@ def run_scan_on_list(tickers_list, chunk_size=25):
                     "ATR": float(df['ATR'].iloc[-1]),
                     "MarketCap": info.get('marketCap', None),
                     "AvgVol20": float(df['Volume'].rolling(20).mean().iloc[-1]),
+                    "PreBreakout": prebreak_flag,
+                    "IntradayRVOL": float(intraday_rvol) if 'intraday_rvol' in locals() and intraday_rvol is not None else None,
                     "Warnings": "; ".join(reasons) if reasons else ""
                 })
             else:
@@ -470,6 +525,8 @@ def run_scan_on_list(tickers_list, chunk_size=25):
                     "ATR": None,
                     "MarketCap": info.get('marketCap', None),
                     "AvgVol20": None,
+                    "PreBreakout": prebreak_flag,
+                    "IntradayRVOL": None,
                     "Warnings": "; ".join(reasons) if reasons else ""
                 })
 
@@ -510,7 +567,7 @@ if scan_single:
                 seen.add(t)
                 r['Ticker'] = t
                 unique_results.append(r)
-            df_res = pd.DataFrame(unique_results).sort_values(by=['OBV_change_10d','RVOL'], ascending=False, na_position='last')
+            df_res = pd.DataFrame(unique_results).sort_values(by=['PreBreakout','OBV_change_10d','RVOL'], ascending=[False,False,False], na_position='last')
             df_res.to_csv(SCAN_RESULTS_FILE, index=False)
             st.success(f"סריקה הושלמה: {len(df_res)} תוצאות.")
             st.dataframe(df_res, use_container_width=True)
@@ -560,7 +617,7 @@ if run_scan and not scan_single:
                 seen.add(t)
                 r['Ticker'] = t
                 unique_results.append(r)
-            df_res = pd.DataFrame(unique_results).sort_values(by=['OBV_change_10d','RVOL'], ascending=False, na_position='last')
+            df_res = pd.DataFrame(unique_results).sort_values(by=['PreBreakout','OBV_change_10d','RVOL'], ascending=[False,False,False], na_position='last')
             df_res.to_csv(SCAN_RESULTS_FILE, index=False)
             results_placeholder.success(f"סריקה הושלמה: {len(df_res)} תוצאות (כולל DEBUG).")
             st.subheader("תוצאות שעברו סינון")
@@ -579,7 +636,7 @@ if run_scan and not scan_single:
                 with cols[4]:
                     st.write(f"BBw: {row['BB_width']:.3f}" if pd.notna(row['BB_width']) else "N/A")
                 with cols[5]:
-                    st.write(f"MarketCap: {int(row['MarketCap']) if pd.notna(row['MarketCap']) else 'N/A'}")
+                    st.write(f"PreBreakout: {'Yes' if row.get('PreBreakout') else 'No'}")
                 btn_key = f"show_{row['Ticker']}_{idx}"
                 with cols[6]:
                     if st.button("הצג גרף", key=btn_key):
@@ -620,7 +677,7 @@ if run_scan and not scan_single:
                                     st.success(f"{ticker_to_add} נוסף לתיק.")
         else:
             results_placeholder.info("לא נמצאו תוצאות שעברו את כל הקריטריונים.")
-            df_res = pd.DataFrame(columns=["Ticker","Price","52w_low","BB_width","RVOL","OBV_change_10d","MACD_hist","RSI","VWAP_diff","ATR","MarketCap","AvgVol20","Warnings"])
+            df_res = pd.DataFrame(columns=["Ticker","Price","52w_low","BB_width","RVOL","OBV_change_10d","MACD_hist","RSI","VWAP_diff","ATR","MarketCap","AvgVol20","PreBreakout","IntradayRVOL","Warnings"])
 
         if rejections:
             # נרמול דחיות והסרת כפילויות
@@ -652,7 +709,7 @@ def compute_indicator_sample_stats(tickers_sample, max_samples=300):
     for t in tickers_sample:
         if count >= max_samples:
             break
-        hist = fetch_history(t, period="1y")
+        hist = fetch_history(t, period="1y", interval="1d")
         if hist.empty or len(hist) < 60:
             continue
         try:
