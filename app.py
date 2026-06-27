@@ -4,17 +4,45 @@ import pandas as pd
 import numpy as np
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
-from datetime import datetime, timedelta
 import logging
-import os
 
 st.set_page_config(page_title="Breakout Scanner Pro", layout="wide")
+
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 DEFAULT_PERIOD = "6mo"
 DEFAULT_INTERVAL = "1d"
 
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
+# ==========================
+# רשימות מדדים מוכנות
+# ==========================
+
+SP500 = [
+    "AAPL","MSFT","AMZN","NVDA","GOOGL","META","TSLA","BRK-B","UNH","XOM","JPM","JNJ","V","PG","MA",
+    "HD","CVX","ABBV","LLY","PFE","KO","PEP","BAC","COST","MRK","AVGO","TMO","WMT","DIS","CSCO"
+]
+
+NASDAQ100 = [
+    "AAPL","MSFT","AMZN","NVDA","META","GOOGL","TSLA","PEP","COST","AVGO","ADBE","NFLX","CMCSA",
+    "AMD","INTC","QCOM","TXN","AMGN","SBUX","HON","INTU","AMAT","MDLZ","PYPL","BKNG"
+]
+
+DOW30 = [
+    "AAPL","MSFT","JPM","V","GS","HD","UNH","JNJ","PG","DIS","KO","MCD","IBM","INTC","WMT","CAT",
+    "CVX","BA","MMM","AXP","NKE","MRK","TRV","VZ","CSCO","DOW","WBA","HON","AMGN","CRM"
+]
+
+RUSSELL2000 = [
+    "AAON","ABCB","ABG","ABM","ABR","ABUS","ACAD","ACDC","ACEL","ACGL","ACHC","ACIW","ACLS","ACMR"
+]
+
+INDEX_MAP = {
+    "S&P 500": SP500,
+    "NASDAQ 100": NASDAQ100,
+    "Dow Jones 30": DOW30,
+    "Russell 2000 (דוגמה חלקית)": RUSSELL2000
+}
 
 # ==========================
 # טעינת CSV
@@ -30,7 +58,6 @@ def load_csv_tickers(uploaded_file):
     except Exception as e:
         st.error(f"בעיה בקריאת הקובץ: {e}")
         return []
-
 
 # ==========================
 # נתונים ואינדיקטורים
@@ -87,7 +114,6 @@ def add_indicators(df):
 
     return df
 
-
 # ==========================
 # ניקוד פריצה
 # ==========================
@@ -129,7 +155,6 @@ def breakout_score(df):
 
     return score
 
-
 def detect_breakout_setup(df):
     df = df.copy()
 
@@ -150,7 +175,6 @@ def detect_breakout_setup(df):
     macd_bullish = df["MACD"].iloc[-1] > df["Signal"].iloc[-1]
 
     return all([sideways, institutional_buying, squeeze_on, buy_pressure, macd_bullish])
-
 
 # ==========================
 # Backtesting
@@ -196,7 +220,6 @@ def breakout_backtest(df, min_score=60, lookahead_days=10, rr=2.0):
         "max_drawdown_r": round(s.min(), 2)
     }
 
-
 # ==========================
 # גרפים
 # ==========================
@@ -232,14 +255,13 @@ def plot_advanced_chart(df, ticker):
     fig.update_layout(title=f"Advanced Breakout Chart — {ticker}", height=900)
     return fig
 
-
 # ==========================
 # UI
 # ==========================
 
-st.title("📈 Breakout Scanner Pro — כולל תמיכה ב־CSV")
+st.title("📈 Breakout Scanner Pro — כולל רשימות מדדים + שמירת CSV")
 
-mode = st.radio("בחר מקור טיקרים:", ["הקלדה ידנית", "קובץ CSV"])
+mode = st.radio("בחר מקור טיקרים:", ["הקלדה ידנית", "קובץ CSV", "רשימות מדדים מוכנות"])
 
 tickers = []
 
@@ -247,10 +269,14 @@ if mode == "הקלדה ידנית":
     tickers_input = st.text_area("הכנס טיקרים (מופרדים בפסיק):", "AAPL, MSFT, NVDA")
     tickers = [t.strip().upper() for t in tickers_input.split(",") if t.strip()]
 
-else:
+elif mode == "קובץ CSV":
     uploaded_file = st.file_uploader("העלה קובץ CSV עם עמודה בשם Ticker", type=["csv"])
     if uploaded_file:
         tickers = load_csv_tickers(uploaded_file)
+
+else:
+    index_choice = st.selectbox("בחר מדד:", list(INDEX_MAP.keys()))
+    tickers = INDEX_MAP[index_choice]
 
 min_score = st.slider("מינימום ציון להצגה:", 0, 100, 60)
 run_backtest = st.checkbox("הרץ Backtesting")
@@ -293,6 +319,10 @@ if st.button("הרץ סורק"):
         df_results = pd.DataFrame(master_list).sort_values("Score", ascending=False)
         st.subheader("📊 מניות לפני פריצה")
         st.dataframe(df_results, use_container_width=True)
+
+        # שמירת תוצאות ל־CSV
+        csv_data = df_results.to_csv(index=False).encode("utf-8")
+        st.download_button("📥 הורד תוצאות כ־CSV", csv_data, "breakout_results.csv", "text/csv")
 
         selected = st.selectbox("בחר טיקר לגרף:", df_results["Ticker"])
         df_sel = add_indicators(load_data(selected))
