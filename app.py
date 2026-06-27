@@ -24,6 +24,29 @@ MAX_BACKUPS = 30
 os.makedirs(BACKUP_DIR, exist_ok=True)
 
 # -------------------------
+# עזרי נרמול וכפילויות
+# -------------------------
+def normalize_ticker(t: str) -> str:
+    """
+    נרמול טיקר: הסרת רווחים, המרת נקודה ל־-, uppercase,
+    הסרת תווים לא רצויים, ושמירה על מחרוזת תקינה.
+    """
+    if not isinstance(t, str):
+        return ""
+    s = t.strip().upper().replace('.', '-')
+    s = ''.join(ch for ch in s if ch.isalnum() or ch == '-')
+    return s
+
+def dedupe_preserve_order(seq):
+    seen = set()
+    out = []
+    for x in seq:
+        if x and x not in seen:
+            seen.add(x)
+            out.append(x)
+    return out
+
+# -------------------------
 # מטמון לקריאות yfinance
 # -------------------------
 @st.cache_data(ttl=60*30)
@@ -288,12 +311,14 @@ with col_preview:
 def read_tickers_from_fileobj(fileobj):
     try:
         if isinstance(fileobj, str):
-            df = pd.read_csv(fileobj, header=None)
+            df = pd.read_csv(fileobj, header=None, dtype=str)
         else:
             fileobj.seek(0)
-            df = pd.read_csv(fileobj, header=None)
-        tickers_list = df.iloc[:, 0].dropna().astype(str).str.strip().tolist()
-        return [t.replace('.', '-').upper() for t in tickers_list if t.strip() != ""]
+            df = pd.read_csv(fileobj, header=None, dtype=str)
+        raw = df.iloc[:, 0].dropna().astype(str).tolist()
+        normalized = [normalize_ticker(t) for t in raw]
+        normalized = [t for t in normalized if t]
+        return dedupe_preserve_order(normalized)
     except Exception:
         return []
 
@@ -319,21 +344,25 @@ if not scan_single:
     if uploaded:
         for f in uploaded:
             try:
-                tdf = pd.read_csv(f, header=None)
-                tickers += tdf.iloc[:, 0].dropna().astype(str).str.strip().tolist()
+                tdf = pd.read_csv(f, header=None, dtype=str)
+                raw = tdf.iloc[:, 0].dropna().astype(str).tolist()
+                normalized = [normalize_ticker(t) for t in raw]
+                tickers.extend(normalized)
             except Exception:
                 continue
     else:
         local_files = [f for f in os.listdir('.') if f.endswith('.csv') and 'scan' not in f and 'rejection' not in f and 'portfolio' not in f]
         for file in local_files:
             try:
-                tdf = pd.read_csv(file, header=None)
-                tickers += tdf.iloc[:, 0].dropna().astype(str).str.strip().tolist()
+                tdf = pd.read_csv(file, header=None, dtype=str)
+                raw = tdf.iloc[:, 0].dropna().astype(str).tolist()
+                normalized = [normalize_ticker(t) for t in raw]
+                tickers.extend(normalized)
             except Exception:
                 continue
-    tickers = [t.replace('.', '-').upper() for t in tickers if isinstance(t, str) and t.strip() != ""]
-    tickers = list(dict.fromkeys(tickers))
-    st.write(f"נמצאו {len(tickers)} טיקרים (מכל הקבצים)")
+    tickers = [t for t in tickers if t]
+    tickers = dedupe_preserve_order(tickers)
+    st.write(f"נמצאו {len(tickers)} טיקרים (מכל הקבצים) לאחר נרמול והסרת כפילויות")
     st.session_state['tickers'] = tickers
 
 # -------------------------
@@ -382,9 +411,21 @@ def run_scan_on_list(tickers_list, chunk_size=25):
                 if not macd_ok:
                     reasons.append("MACD לא מאשר")
 
-                rsi_ok_flag, rsi_val = rsi_ok(df, max_rsi=rsi_threshold)
-                if not rsi_ok_flag:
-                    reasons.append(f"RSI גבוה ({rsi_val:.1f})")
+                # בדיקת RSI מותאמת לפריצות (טווח 50-70, אם >70 דרוש אישור נפח/ATR)
+                try:
+                    rsi_val = float(df['RSI'].iloc[-1])
+                    if rsi_val < 50:
+                        reasons.append(f"RSI נמוך ({rsi_val:.1f}) - אין תנופה")
+                    elif rsi_val <= 70:
+                        pass
+                    else:
+                        atr_ok_flag, atr_ratio = atr_expansion(df, lookback=10)
+                        if rvol_now < max(1.5, rvol_threshold) or not atr_ok_flag:
+                            reasons.append(f"RSI גבוה ({rsi_val:.1f}) ללא אישור נפח/ATR (RVOL {rvol_now:.2f}, ATR_ratio {atr_ratio:.2f})")
+                        else:
+                            reasons.append(f"Warning: RSI גבוה ({rsi_val:.1f}) אך מאושר על ידי נפח/ATR")
+                except Exception as e:
+                    reasons.append(f"שגיאת חישוב RSI: {e}")
 
                 vwap_ok_flag, vwap_diff = vwap_confirmation(df)
                 if not vwap_ok_flag:
@@ -446,7 +487,7 @@ if scan_single:
         st.success(f"טוען {len(tickers_to_scan)} טיקרים מהקובץ שהועלה.")
     elif selected_local:
         tickers_to_scan = read_tickers_from_fileobj(selected_local)
-        st.success(f"טוען {len(tickers_to_scan)} טיקרים מהקובץ המקומי: {selected_local}")
+        st.success(f"טוען {len(tickers_to_scan)} טיקרים מההקובץ המקומי: {selected_local}")
     else:
         st.warning("לא נבחר קובץ לסריקה. בחר קובץ מקומי או העלה קובץ.")
         tickers_to_scan = []
@@ -457,7 +498,19 @@ if scan_single:
         with st.spinner("מריץ סריקה על הקובץ הנבחר..."):
             results, rejections = run_scan_on_list(tickers_to_scan, chunk_size=int(chunk_size))
         if results:
-            df_res = pd.DataFrame(results).sort_values(by=['OBV_change_10d','RVOL'], ascending=False, na_position='last')
+            # הסרת כפילויות בתוצאות לפי טיקר לפני שמירה
+            seen = set()
+            unique_results = []
+            for r in results:
+                t = normalize_ticker(r.get('Ticker', ''))
+                if not t:
+                    continue
+                if t in seen:
+                    continue
+                seen.add(t)
+                r['Ticker'] = t
+                unique_results.append(r)
+            df_res = pd.DataFrame(unique_results).sort_values(by=['OBV_change_10d','RVOL'], ascending=False, na_position='last')
             df_res.to_csv(SCAN_RESULTS_FILE, index=False)
             st.success(f"סריקה הושלמה: {len(df_res)} תוצאות.")
             st.dataframe(df_res, use_container_width=True)
@@ -465,7 +518,18 @@ if scan_single:
         else:
             st.info("לא נמצאו תוצאות שעברו את כל הקריטריונים בקובץ זה.")
         if rejections:
-            df_rej = pd.DataFrame(rejections)
+            # נרמול דחיות והסרת כפילויות
+            rej_norm = []
+            seen_r = set()
+            for rr in rejections:
+                t = normalize_ticker(rr.get('Ticker', ''))
+                if not t:
+                    continue
+                if t in seen_r:
+                    continue
+                seen_r.add(t)
+                rej_norm.append({"Ticker": t, "Reasons": rr.get('Reasons', '')})
+            df_rej = pd.DataFrame(rej_norm)
             df_rej['PrimaryReason'] = df_rej['Reasons'].apply(lambda x: x.split(';')[0] if isinstance(x, str) and x else '')
             df_rej.to_csv(REJECTIONS_FILE, index=False)
             st.subheader("טיקרים שנדחו וסיבות")
@@ -484,7 +548,19 @@ if run_scan and not scan_single:
         with st.spinner("מריץ סריקה ב‑chunks..."):
             results, rejections = run_scan_on_list(st.session_state['tickers'], chunk_size=int(chunk_size))
         if results:
-            df_res = pd.DataFrame(results).sort_values(by=['OBV_change_10d','RVOL'], ascending=False, na_position='last')
+            # הסרת כפילויות בתוצאות לפי טיקר לפני שמירה
+            seen = set()
+            unique_results = []
+            for r in results:
+                t = normalize_ticker(r.get('Ticker', ''))
+                if not t:
+                    continue
+                if t in seen:
+                    continue
+                seen.add(t)
+                r['Ticker'] = t
+                unique_results.append(r)
+            df_res = pd.DataFrame(unique_results).sort_values(by=['OBV_change_10d','RVOL'], ascending=False, na_position='last')
             df_res.to_csv(SCAN_RESULTS_FILE, index=False)
             results_placeholder.success(f"סריקה הושלמה: {len(df_res)} תוצאות (כולל DEBUG).")
             st.subheader("תוצאות שעברו סינון")
@@ -527,20 +603,38 @@ if run_scan and not scan_single:
                             st.write(f"מחיר נוכחי: **{row['Price']:.2f}** | RSI: **{row['RSI']:.1f}** | RVOL: **{row['RVOL']:.2f}**")
                             add_key = f"add_{row['Ticker']}_{idx}"
                             if st.button("הוסף לתיק", key=add_key):
-                                p_row = {"Ticker": row['Ticker'], "AddedAt": datetime.utcnow().isoformat(), "Price": row['Price']}
+                                # מניעת כפילויות בעת הוספה לתיק
+                                ticker_to_add = normalize_ticker(row['Ticker'])
                                 if os.path.exists(PORTFOLIO_FILE):
-                                    p_df = pd.read_csv(PORTFOLIO_FILE)
-                                    p_df = pd.concat([p_df, pd.DataFrame([p_row])], ignore_index=True)
+                                    p_df = pd.read_csv(PORTFOLIO_FILE, dtype=str)
+                                    existing = set(p_df['Ticker'].astype(str).str.upper().tolist()) if 'Ticker' in p_df.columns else set()
                                 else:
-                                    p_df = pd.DataFrame([p_row])
-                                p_df.to_csv(PORTFOLIO_FILE, index=False)
-                                st.success(f"{row['Ticker']} נוסף לתיק.")
+                                    p_df = pd.DataFrame(columns=["Ticker","AddedAt","Price"])
+                                    existing = set()
+                                if ticker_to_add in existing:
+                                    st.info(f"{ticker_to_add} כבר בתיק — לא נוסף שוב.")
+                                else:
+                                    p_row = {"Ticker": ticker_to_add, "AddedAt": datetime.utcnow().isoformat(), "Price": row['Price']}
+                                    p_df = pd.concat([p_df, pd.DataFrame([p_row])], ignore_index=True)
+                                    p_df.to_csv(PORTFOLIO_FILE, index=False)
+                                    st.success(f"{ticker_to_add} נוסף לתיק.")
         else:
             results_placeholder.info("לא נמצאו תוצאות שעברו את כל הקריטריונים.")
             df_res = pd.DataFrame(columns=["Ticker","Price","52w_low","BB_width","RVOL","OBV_change_10d","MACD_hist","RSI","VWAP_diff","ATR","MarketCap","AvgVol20","Warnings"])
 
         if rejections:
-            df_rej = pd.DataFrame(rejections)
+            # נרמול דחיות והסרת כפילויות
+            rej_norm = []
+            seen_r = set()
+            for rr in rejections:
+                t = normalize_ticker(rr.get('Ticker', ''))
+                if not t:
+                    continue
+                if t in seen_r:
+                    continue
+                seen_r.add(t)
+                rej_norm.append({"Ticker": t, "Reasons": rr.get('Reasons', '')})
+            df_rej = pd.DataFrame(rej_norm)
             df_rej['PrimaryReason'] = df_rej['Reasons'].apply(lambda x: x.split(';')[0] if isinstance(x, str) and x else '')
             df_rej.to_csv(REJECTIONS_FILE, index=False)
             st.subheader("טיקרים שנדחו וסיבות")
@@ -617,8 +711,8 @@ with st.expander("הפעל Auto‑Tune כדי לקבל המלצות ספים ל�
                     tickers += tdf.iloc[:,0].dropna().astype(str).str.strip().tolist()
                 except Exception:
                     continue
-            tickers = [t.replace('.', '-').upper() for t in tickers if isinstance(t, str) and t.strip()!='']
-            tickers = list(dict.fromkeys(tickers))
+            tickers = [normalize_ticker(t) for t in tickers if isinstance(t, str) and t.strip()!='']
+            tickers = dedupe_preserve_order(tickers)
             all_tickers = tickers
 
         if not all_tickers:
@@ -672,7 +766,6 @@ with st.expander("הפעל Auto‑Tune כדי לקבל המלצות ספים ל�
                     st.plotly_chart(fig_atr, use_container_width=True)
 
                 if st.button("החל את ההמלצות כערכי ברירת מחדל"):
-                    # עדכון session_state של ה-widgets ואז רענון
                     if suggestions.get('BB_width') is not None:
                         st.session_state['bb_width_thresh'] = float(suggestions['BB_width'])
                     if suggestions.get('RVOL') is not None:
@@ -681,7 +774,6 @@ with st.expander("הפעל Auto‑Tune כדי לקבל המלצות ספים ל�
                         st.session_state['min_avg_vol'] = int(suggestions['AvgVol20'])
                     if suggestions.get('RSI') is not None:
                         st.session_state['rsi_threshold'] = float(suggestions['RSI'])
-                    # כתוב ללוג
                     _write_log("auto_tune_apply", [f"{k}:{v}" for k,v in suggestions.items()], note=f"applied from sample {len(stats_df)}")
                     st.success("ההמלצות נשמרו ב‑session והחליפו את ברירות המחדל. הדף ירענן כדי להציג את הערכים החדשים.")
                     st.experimental_rerun()
