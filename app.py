@@ -15,6 +15,7 @@ st.set_page_config(page_title="מערכת וייקוף Pro", layout="wide")
 st.title("◈ מערכת השקעות מבוססת וייקוף — סורק פריצה משופר")
 
 PORTFOLIO_FILE = 'portfolio.csv'
+SCAN_RESULTS_FILE = 'scan_results.csv'  # קובץ לשמירת תוצאות הסריקה
 
 # ============================
 # פונקציות עזר בטוחות
@@ -277,6 +278,50 @@ def compute_breakout_decision(df):
     }
 
 # ============================
+# שמירת תוצאות סריקה ופעולות מחיקה
+# ============================
+
+def save_scan_results(df_results):
+    """שומר DataFrame של תוצאות סריקה לקובץ CSV (מוסיף אם קיים)"""
+    if df_results is None or df_results.empty:
+        return False
+    header = not os.path.exists(SCAN_RESULTS_FILE)
+    df_results.to_csv(SCAN_RESULTS_FILE, mode='a', header=header, index=False)
+    return True
+
+def load_saved_results():
+    """טוען תוצאות סריקה שמורות"""
+    if not os.path.exists(SCAN_RESULTS_FILE):
+        return pd.DataFrame(columns=["Ticker","Score","Confidence","Risk","Price","Note","SavedAt"])
+    try:
+        df = pd.read_csv(SCAN_RESULTS_FILE)
+        return df
+    except Exception:
+        return pd.DataFrame(columns=["Ticker","Score","Confidence","Risk","Price","Note","SavedAt"])
+
+def delete_saved_tickers(tickers_to_delete):
+    """מוחק רשומות של טיקרים מתוך קובץ התוצאות השמורות"""
+    if not os.path.exists(SCAN_RESULTS_FILE):
+        return False
+    try:
+        df = pd.read_csv(SCAN_RESULTS_FILE)
+        df = df[~df['Ticker'].isin(tickers_to_delete)]
+        df.to_csv(SCAN_RESULTS_FILE, index=False)
+        return True
+    except Exception:
+        return False
+
+def clear_saved_results():
+    """מוחק את כל קובץ התוצאות השמורות"""
+    if os.path.exists(SCAN_RESULTS_FILE):
+        try:
+            os.remove(SCAN_RESULTS_FILE)
+            return True
+        except Exception:
+            return False
+    return True
+
+# ============================
 # גרף מפורט
 # ============================
 
@@ -328,7 +373,7 @@ def show_buttons(ticker):
 # ממשק משתמש — טאבים
 # ============================
 
-tab1, tab2 = st.tabs(["📊 סורק פריצה משופר", "💼 תיק השקעות"])
+tab1, tab2, tab3 = st.tabs(["📊 סורק פריצה משופר", "💼 תיק השקעות", "💾 תוצאות שמורות"])
 
 # --- טאב הסורק ---
 with tab1:
@@ -399,7 +444,7 @@ with tab1:
                     st.write(f"בודק {ticker} ({i+1}/{total})")
                     df = load_history(ticker, period="6mo")
                     if df.empty:
-                        results.append({"Ticker": ticker, "Score": 0, "Confidence": 0, "Risk": 100, "Price": np.nan, "Note": "אין נתונים"})
+                        results.append({"Ticker": ticker, "Score": 0, "Confidence": 0, "Risk": 100, "Price": np.nan, "Note": "אין נתונים", "SavedAt": ""})
                         progress.progress((i+1)/total)
                         continue
                     df = add_indicators(df)
@@ -410,11 +455,12 @@ with tab1:
                         "Confidence": res["confidence"],
                         "Risk": res["risk"],
                         "Price": round(float(safe_last(df["Close"])), 2) if not np.isnan(safe_last(df["Close"])) else np.nan,
-                        "Note": res["note"]
+                        "Note": res["note"],
+                        "SavedAt": ""
                     })
                     details[ticker] = {"res": res, "df_tail": df.tail(60)}
                 except Exception as e:
-                    results.append({"Ticker": ticker, "Score": 0, "Confidence": 0, "Risk": 100, "Price": np.nan, "Note": "שגיאה"})
+                    results.append({"Ticker": ticker, "Score": 0, "Confidence": 0, "Risk": 100, "Price": np.nan, "Note": "שגיאה", "SavedAt": ""})
                 progress.progress((i+1)/total)
 
             df_res = pd.DataFrame(results).sort_values("Score", ascending=False).reset_index(drop=True)
@@ -425,6 +471,24 @@ with tab1:
             else:
                 st.subheader("תוצאות סריקה")
                 st.dataframe(df_res, use_container_width=True)
+
+                # שמירת תוצאות: כפתור ושדה שם קובץ אופציונלי
+                st.divider()
+                col_save1, col_save2 = st.columns([3,1])
+                with col_save1:
+                    save_note = st.text_input("הערה לשמירה (אופציונלי):", "")
+                with col_save2:
+                    if st.button("שמור תוצאות"):
+                        # הוספת עמודת SavedAt ושמירת תוצאות
+                        df_to_save = df_res.copy()
+                        df_to_save["SavedAt"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                        if save_note:
+                            df_to_save["Note"] = df_to_save["Note"].astype(str) + " | " + save_note
+                        saved = save_scan_results(df_to_save)
+                        if saved:
+                            st.success("תוצאות נשמרו בהצלחה")
+                        else:
+                            st.error("שגיאה בשמירת התוצאות")
 
                 st.divider()
                 col_select, col_buttons = st.columns([2, 1])
@@ -493,3 +557,41 @@ with tab2:
             st.experimental_rerun()
     else:
         st.info("התיק ריק.")
+
+# --- טאב תוצאות שמורות ---
+with tab3:
+    st.header("תוצאות סריקה שמורות")
+    saved = load_saved_results()
+    if saved.empty:
+        st.info("אין תוצאות שמורות כרגע.")
+    else:
+        st.dataframe(saved, use_container_width=True)
+
+        st.divider()
+        col_del1, col_del2 = st.columns([3,1])
+        with col_del1:
+            to_delete = st.multiselect("בחר טיקרים למחיקה מהתוצאות השמורות:", options=sorted(saved['Ticker'].unique().tolist()))
+        with col_del2:
+            if st.button("מחק נבחרים"):
+                if not to_delete:
+                    st.warning("לא נבחרו טיקרים למחיקה")
+                else:
+                    ok = delete_saved_tickers(to_delete)
+                    if ok:
+                        st.success("הפריטים נמחקו מהקובץ השמור")
+                        st.experimental_rerun()
+                    else:
+                        st.error("שגיאה במחיקה")
+
+        st.divider()
+        if st.button("נקה את כל התוצאות השמורות"):
+            ok = clear_saved_results()
+            if ok:
+                st.success("כל התוצאות השמורות נמחקו")
+                st.experimental_rerun()
+            else:
+                st.error("שגיאה בניקוי הקובץ השמור")
+
+        # אפשרות להוריד את כל התוצאות השמורות כקובץ CSV
+        csv_all = saved.to_csv(index=False).encode('utf-8')
+        st.download_button("הורד את כל התוצאות השמורות כ־CSV", csv_all, file_name="saved_scan_results.csv", mime="text/csv")
