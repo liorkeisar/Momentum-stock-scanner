@@ -1,4 +1,3 @@
-# app.py - KEISAR Pro Hunter (with PreBreakouts tab + AgGrid lazy load)
 import streamlit as st
 import yfinance as yf
 import pandas as pd
@@ -12,24 +11,22 @@ from plotly.subplots import make_subplots
 import plotly.graph_objects as go
 import plotly.express as px
 
-# נסיון לטעון AgGrid - אם לא מותקן, נטפל בזה בריצה
-try:
-    from st_aggrid import AgGrid, GridOptionsBuilder, GridUpdateMode, DataReturnMode
-    AGGRID_AVAILABLE = True
-except Exception:
-    AGGRID_AVAILABLE = False
-
 # -------------------------
-# עיצוב קל ו‑config
+# עיצוב CSS קל
 # -------------------------
 st.set_page_config(page_title="KEISAR Pro Hunter", layout="wide")
 st.markdown(
     """
     <style>
+    /* כותרת קטנה ומעודנת */
     .app-title {font-size:20px; font-weight:700; margin-bottom:0px;}
     .app-sub {font-size:12px; color: #6c757d; margin-top:2px; margin-bottom:12px;}
+    /* כפתורים וצפיפות */
     .stButton>button {padding:6px 10px;}
+    .metric {padding:6px;}
+    /* טבלה קומפקטית */
     .dataframe td, .dataframe th {padding:6px 8px;}
+    /* קונטיינרים */
     .section {padding:8px 12px; border-radius:6px; background:#ffffff; box-shadow: 0 1px 2px rgba(0,0,0,0.04);}
     </style>
     """,
@@ -317,6 +314,7 @@ st.markdown('<div class="app-sub">סריקה טכנית מתקדמת לזיהו�
 # -------------------------
 with st.sidebar:
     st.header("הגדרות סריקה")
+    # Basic settings
     with st.expander("Basic settings", expanded=True):
         pct_from_low = st.number_input("אחוז מקירוב לשפל 52 שבועות (%)", value=3.0, min_value=0.0, max_value=50.0) / 100.0
         if 'bb_width_thresh' not in st.session_state:
@@ -335,13 +333,14 @@ with st.sidebar:
             st.session_state['min_avg_vol'] = 150_000
         min_avg_vol = st.number_input("ממוצע נפח מינימלי (20 יום)", value=st.session_state['min_avg_vol'], step=10_000, key="avgvol_widget")
 
+    # Advanced settings
     with st.expander("Advanced settings", expanded=False):
         if 'chunk_size' not in st.session_state:
             st.session_state['chunk_size'] = 25
         chunk_size = st.number_input("גודל קבוצה לסריקה (chunk size)", min_value=5, max_value=200, value=st.session_state['chunk_size'], step=5, key="chunk_widget")
         DEBUG_MODE = st.checkbox("מצב Debug - הצג Warnings (אל תדחה אוטומטית)", value=False, key="debug_widget")
-        enable_intraday = st.checkbox("הפעל בדיקות אינטרדייליות (איטי)", value=False, help="הפעל רק אם רוצים RVOL אינטרדיילי; עלול להאט")
 
+    # PreBreakout settings
     with st.expander("PreBreakout / Intraday", expanded=False):
         prebreak_squeeze_lookback = st.number_input("ימים לחיפוש squeeze (PreBreakout)", min_value=5, max_value=120, value=14, step=1)
         intraday_rvol_thresh = st.number_input("סף RVOL אינטרדיילי לזיהוי spike", min_value=1.0, max_value=5.0, value=1.3, step=0.1)
@@ -394,15 +393,18 @@ with col_left:
 
 with col_right:
     st.markdown("**סיכום מהיר**")
+    # Metrics placeholders
     m1, m2, m3 = st.columns(3)
     m1.metric("טיקרים לניתוח", "—")
     m2.metric("תוצאות (עברו סינון)", "—")
     m3.metric("PreBreakouts", "—")
 
 # -------------------------
-# טעינת טיקרים כללית
+# טעינת טיקרים כללית (אם לא משתמשים בסריקה על קובץ יחיד)
 # -------------------------
+# אם המשתמש העלה קבצים דרך ה‑sidebar או הבלוק הראשי, נקרא אותם; אחרת נקרא את כל הקבצים בתיקייה
 tickers = []
+# קבצים מה‑sidebar uploader
 if uploaded_sidebar:
     for f in uploaded_sidebar:
         try:
@@ -412,11 +414,14 @@ if uploaded_sidebar:
             tickers.extend(normalized)
         except Exception:
             continue
+# קובץ יחיד מהבלוק המרכזי
 elif uploaded_single:
     tickers = read_tickers_from_fileobj(uploaded_single)
+# קובץ מקומי נבחר
 elif selected_local:
     tickers = read_tickers_from_fileobj(selected_local)
 else:
+    # קריאה מכל הקבצים בתיקייה (ברירת מחדל)
     local_files = [f for f in os.listdir('.') if f.endswith('.csv') and f not in [SCAN_RESULTS_FILE, REJECTIONS_FILE, PORTFOLIO_FILE]]
     for file in local_files:
         try:
@@ -430,14 +435,16 @@ else:
 tickers = [t for t in tickers if t]
 tickers = dedupe_preserve_order(tickers)
 st.session_state['tickers'] = tickers
+# עדכון metrics
 st.session_state['last_ticker_count'] = len(tickers)
+# עדכון תצוגת metrics בצד ימין
 with col_right:
     m1.metric("טיקרים לניתוח", f"{len(tickers)}")
 
 # -------------------------
-# פונקציית סריקה (עם תמיכה ב‑enable_intraday)
+# פונקציית סריקה (כמו קודם) - שמרתי את הלוגיקה, רק ארוזה יפה
 # -------------------------
-def run_scan_on_list(tickers_list, chunk_size=25, enable_intraday_flag=False):
+def run_scan_on_list(tickers_list, chunk_size=25):
     total = len(tickers_list)
     progress = st.progress(0)
     results = []
@@ -448,8 +455,6 @@ def run_scan_on_list(tickers_list, chunk_size=25, enable_intraday_flag=False):
         for t in batch:
             reasons = []
             prebreak_flag = False
-            intraday_spike = False
-            intraday_rvol = None
             info = fetch_info(t)
             hist = fetch_history(t, period="1y", interval="1d")
             if hist.empty or len(hist) < 60:
@@ -504,9 +509,7 @@ def run_scan_on_list(tickers_list, chunk_size=25, enable_intraday_flag=False):
                 days_since_squeeze = None
                 if squeeze_date is not None:
                     days_since_squeeze = (df.index[-1].date() - squeeze_date.date()).days
-                if enable_intraday_flag:
-                    intraday_spike, intraday_rvol = intraday_rvol_spike(t, rvol_thresh=intraday_rvol_thresh)
-                # תנאי PreBreakout: squeeze קרוב, OBV עולה, RVOL מתחיל לעלות או spike אינטרדיילי
+                intraday_spike, intraday_rvol = intraday_rvol_spike(t, rvol_thresh=intraday_rvol_thresh)
                 if squeeze_date is not None and days_since_squeeze is not None and days_since_squeeze <= prebreak_squeeze_lookback:
                     if obv_ok and (rvol_now >= max(1.05, rvol_threshold*0.8) or intraday_spike):
                         prebreak_flag = True
@@ -561,20 +564,17 @@ def run_scan_on_list(tickers_list, chunk_size=25, enable_intraday_flag=False):
     return results, rejections, prebreak_count
 
 # -------------------------
-# כפתורי הפעלה מרכזיים
+# הפעלת סריקה לפי כפתורים (sidebar או מרכז)
 # -------------------------
+# כפתור מרכזי
 run_scan_main = st.button("הפעל סריקה (מרכז)", key="run_scan_main")
 scan_single_main = st.button("סרוק קובץ נבחר (מרכז)", key="scan_single_main")
 
 do_scan = run_scan_btn or run_scan_main
 do_scan_single = scan_single_btn or scan_single_main
 
-# -------------------------
-# ביצוע סריקה לפי בחירה
-# -------------------------
-df_res = pd.DataFrame()
-df_rej = pd.DataFrame()
 if do_scan_single:
+    # בחר מקור טיקרים
     if uploaded_single:
         tickers_to_scan = read_tickers_from_fileobj(uploaded_single)
     elif selected_local:
@@ -585,7 +585,7 @@ if do_scan_single:
 
     if tickers_to_scan:
         st.info(f"מריץ סריקה על {len(tickers_to_scan)} טיקרים מהקובץ הנבחר...")
-        results, rejections, prebreak_count = run_scan_on_list(tickers_to_scan, chunk_size=int(chunk_size), enable_intraday_flag=enable_intraday)
+        results, rejections, prebreak_count = run_scan_on_list(tickers_to_scan, chunk_size=int(chunk_size))
         # הסרת כפילויות בתוצאות
         seen = set()
         unique_results = []
@@ -598,52 +598,13 @@ if do_scan_single:
             unique_results.append(r)
         df_res = pd.DataFrame(unique_results).sort_values(by=['PreBreakout','OBV_change_10d','RVOL'], ascending=[False,False,False], na_position='last')
         df_res.to_csv(SCAN_RESULTS_FILE, index=False)
+        # עדכון metrics
         with col_right:
             m2.metric("תוצאות (עברו סינון)", f"{len(df_res)}")
-            pre_count = int(df_res['PreBreakout'].sum()) if 'PreBreakout' in df_res.columns else 0
-            m3.metric("PreBreakouts", f"{pre_count}")
+            m3.metric("PreBreakouts", f"{df_res['PreBreakout'].sum() if 'PreBreakout' in df_res.columns else 0}")
         st.subheader("תוצאות סריקה (קובץ נבחר)")
-        # טאב להצגה: All / PreBreakouts / AgGrid
-        tab_all, tab_pre, tab_ag = st.tabs(["All results", "PreBreakouts", "AgGrid (Interactive)"])
-        with tab_all:
-            st.dataframe(df_res, use_container_width=True)
-        with tab_pre:
-            if 'PreBreakout' in df_res.columns:
-                df_pre = df_res[df_res['PreBreakout'] == True]
-                st.write(f"נמצאו {len(df_pre)} PreBreakouts")
-                st.dataframe(df_pre, use_container_width=True)
-            else:
-                st.info("אין שדה PreBreakout בתוצאות.")
-        with tab_ag:
-            if not AGGRID_AVAILABLE:
-                st.warning("AgGrid לא מותקן. להרצה אינטראקטיבית התקן: pip install streamlit-aggrid")
-            else:
-                if df_res.empty:
-                    st.info("אין תוצאות להצגה ב‑AgGrid.")
-                else:
-                    gb = GridOptionsBuilder.from_dataframe(df_res)
-                    gb.configure_default_column(filterable=True, sortable=True, resizable=True)
-                    gb.configure_selection(selection_mode="single", use_checkbox=True)
-                    grid_options = gb.build()
-                    AgGrid(df_res, gridOptions=grid_options, enable_enterprise_modules=False, fit_columns_on_grid_load=True)
-
-        if rejections:
-            rej_norm = []
-            seen_r = set()
-            for rr in rejections:
-                t = normalize_ticker(rr.get('Ticker', ''))
-                if not t:
-                    continue
-                if t in seen_r:
-                    continue
-                seen_r.add(t)
-                rej_norm.append({"Ticker": t, "Reasons": rr.get('Reasons', '')})
-            df_rej = pd.DataFrame(rej_norm)
-            df_rej['PrimaryReason'] = df_rej['Reasons'].apply(lambda x: x.split(';')[0] if isinstance(x, str) and x else '')
-            df_rej.to_csv(REJECTIONS_FILE, index=False)
-            st.subheader("טיקרים שנדחו וסיבות")
-            st.dataframe(df_rej, use_container_width=True)
-            st.download_button("⬇️ הורד דחיות CSV", data=df_rej.to_csv(index=False), file_name=REJECTIONS_FILE, mime='text/csv')
+        st.dataframe(df_res, use_container_width=True)
+        st.download_button("⬇️ הורד תוצאות CSV", data=df_res.to_csv(index=False), file_name=SCAN_RESULTS_FILE, mime='text/csv')
     else:
         st.info("אין טיקרים לקובץ הנבחר.")
 
@@ -652,7 +613,7 @@ elif do_scan:
         st.warning("אין טיקרים להרצה. העלה קובץ CSV או הנח קבצי CSV בתיקייה.")
     else:
         st.info(f"מריץ סריקה על {len(st.session_state['tickers'])} טיקרים...")
-        results, rejections, prebreak_count = run_scan_on_list(st.session_state['tickers'], chunk_size=int(chunk_size), enable_intraday_flag=enable_intraday)
+        results, rejections, prebreak_count = run_scan_on_list(st.session_state['tickers'], chunk_size=int(chunk_size))
         seen = set()
         unique_results = []
         for r in results:
@@ -666,33 +627,13 @@ elif do_scan:
         df_res.to_csv(SCAN_RESULTS_FILE, index=False)
         with col_right:
             m2.metric("תוצאות (עברו סינון)", f"{len(df_res)}")
-            pre_count = int(df_res['PreBreakout'].sum()) if 'PreBreakout' in df_res.columns else 0
-            m3.metric("PreBreakouts", f"{pre_count}")
+            m3.metric("PreBreakouts", f"{df_res['PreBreakout'].sum() if 'PreBreakout' in df_res.columns else 0}")
         st.subheader("תוצאות סריקה")
-        tab_all, tab_pre, tab_ag = st.tabs(["All results", "PreBreakouts", "AgGrid (Interactive)"])
-        with tab_all:
-            st.dataframe(df_res, use_container_width=True)
-        with tab_pre:
-            if 'PreBreakout' in df_res.columns:
-                df_pre = df_res[df_res['PreBreakout'] == True]
-                st.write(f"נמצאו {len(df_pre)} PreBreakouts")
-                st.dataframe(df_pre, use_container_width=True)
-            else:
-                st.info("אין שדה PreBreakout בתוצאות.")
-        with tab_ag:
-            if not AGGRID_AVAILABLE:
-                st.warning("AgGrid לא מותקן. להרצה אינטראקטיבית התקן: pip install streamlit-aggrid")
-            else:
-                if df_res.empty:
-                    st.info("אין תוצאות להצגה ב‑AgGrid.")
-                else:
-                    gb = GridOptionsBuilder.from_dataframe(df_res)
-                    gb.configure_default_column(filterable=True, sortable=True, resizable=True)
-                    gb.configure_selection(selection_mode="single", use_checkbox=True)
-                    grid_options = gb.build()
-                    AgGrid(df_res, gridOptions=grid_options, enable_enterprise_modules=False, fit_columns_on_grid_load=True)
+        st.dataframe(df_res, use_container_width=True)
+        st.download_button("⬇️ הורד תוצאות CSV", data=df_res.to_csv(index=False), file_name=SCAN_RESULTS_FILE, mime='text/csv')
 
         if rejections:
+            # נרמול דחיות והסרת כפילויות
             rej_norm = []
             seen_r = set()
             for rr in rejections:
