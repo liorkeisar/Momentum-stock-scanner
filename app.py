@@ -867,12 +867,11 @@ with tab1:
 
             for i, ticker in enumerate(tickers):
                 try:
-                    st.write(f"בודק {ticker} ({i+1}/{total})")
                     df = load_history(ticker, period="12mo")
                     if df.empty:
                         results.append({"Ticker": ticker, "Score": 0, "Confidence": 0, "Risk": 100,
                                          "Price": np.nan, "Note": "אין נתונים", "SavedAt": ""})
-                        progress.progress((i + 1) / total)
+                        progress.progress((i + 1) / total, text=f"נסרקו {i+1}/{total} מניות")
                         continue
 
                     # סינון נזילות/איכות - לפני חישוב ציון, כדי לא לבזבז ציון גבוה על מניה לא סחירה
@@ -886,14 +885,14 @@ with tab1:
                             "Price": round(float(last_close_raw), 2) if not is_bad_number(last_close_raw) else np.nan,
                             "Note": f"סונן: {liquid_reason}", "SavedAt": ""
                         })
-                        progress.progress((i + 1) / total)
+                        progress.progress((i + 1) / total, text=f"נסרקו {i+1}/{total} מניות")
                         continue
 
                     df = add_indicators(df)
                     res = compute_breakout_decision(df, benchmark_df=benchmark_df)
 
                     if use_rs_filter and res["components"].get("relative_strength", 0) < 40:
-                        progress.progress((i + 1) / total)
+                        progress.progress((i + 1) / total, text=f"נסרקו {i+1}/{total} מניות")
                         continue
 
                     last_close = safe_last(df["Close"])
@@ -910,10 +909,12 @@ with tab1:
                 except Exception:
                     results.append({"Ticker": ticker, "Score": 0, "Confidence": 0, "Risk": 100,
                                      "Price": np.nan, "Note": "שגיאה", "SavedAt": ""})
-                progress.progress((i + 1) / total)
+                progress.progress((i + 1) / total, text=f"נסרקו {i+1}/{total} מניות")
 
             st.session_state["scan_results"] = results
             st.session_state["scan_details"] = details
+            progress.progress(1.0, text=f"הסריקה הושלמה — {total} מניות נבדקו")
+            st.success(f"סריקה הושלמה: {total} מניות נבדקו")
 
     # שימוש בתוצאות שמורות ב-session_state כדי לשרוד בין אינטראקציות (טפסים וכו')
     results = st.session_state.get("scan_results", [])
