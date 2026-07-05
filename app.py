@@ -193,7 +193,54 @@ def score_component(value, low, high, invert=False):
     except Exception:
         return 0
 
-def compute_breakout_decision(df):
+BENCHMARK_TICKER = "SPY"
+
+@st.cache_data(ttl=900)
+def load_benchmark_history(period="12mo"):
+    return load_history(BENCHMARK_TICKER, period=period)
+
+def compute_relative_strength(df, benchmark_df, lookback=63):
+    """
+    עוצמה יחסית מול מדד ייחוס (ברירת מחדל SPY): משווה את התשואה של המניה
+    לתשואת המדד על פני אותו טווח (ברירת מחדל כ-3 חודשי מסחר).
+    מחזיר יחס: >1 אומר שהמניה חזקה מהמדד, <1 חלשה ממנו.
+    """
+    try:
+        if df is None or benchmark_df is None or df.empty or benchmark_df.empty:
+            return np.nan
+        n = min(lookback, len(df) - 1, len(benchmark_df) - 1)
+        if n < 5:
+            return np.nan
+        stock_ret = safe_div(df["Close"].iloc[-1], df["Close"].iloc[-n - 1], default=np.nan) - 1
+        bench_ret = safe_div(benchmark_df["Close"].iloc[-1], benchmark_df["Close"].iloc[-n - 1], default=np.nan) - 1
+        if is_bad_number(stock_ret) or is_bad_number(bench_ret):
+            return np.nan
+        return (1 + stock_ret) / (1 + bench_ret) if (1 + bench_ret) != 0 else np.nan
+    except Exception:
+        return np.nan
+
+def compute_avg_dollar_volume(df, lookback=20):
+    """מחזור מסחר ממוצע בדולרים - סינון נזילות בסיסי."""
+    try:
+        if df is None or df.empty or "Volume" not in df.columns or "Close" not in df.columns:
+            return np.nan
+        tail = df.tail(lookback)
+        dollar_vol = (tail["Close"] * tail["Volume"]).mean()
+        return float(dollar_vol) if not is_bad_number(dollar_vol) else np.nan
+    except Exception:
+        return np.nan
+
+def passes_liquidity_filter(df, min_price=5.0, min_avg_dollar_volume=5_000_000.0):
+    """בודק שהטיקר עומד בסף נזילות ומחיר מינימלי לפני שהוא בכלל מקבל ציון."""
+    last_close = safe_last(df["Close"]) if df is not None and "Close" in df.columns else np.nan
+    if is_bad_number(last_close) or last_close < min_price:
+        return False, f"מחיר מתחת לסף ({min_price})"
+    adv = compute_avg_dollar_volume(df)
+    if is_bad_number(adv) or adv < min_avg_dollar_volume:
+        return False, f"מחזור מסחר ממוצע נמוך מהסף ({min_avg_dollar_volume:,.0f}$)"
+    return True, None
+
+def compute_breakout_decision(df, benchmark_df=None):
     ok, msg = validate_df(df, ["High", "Low", "Close", "Volume", "EMA20", "EMA50", "ATR", "STD20",
                                 "OBV", "AD_Cum", "MACD", "Signal", "RSI", "MA20", "UpperBB",
                                 "LowerBB", "UpperKC", "LowerKC", "VOL_MA20"])
@@ -239,9 +286,15 @@ def compute_breakout_decision(df):
           and ubb < ukc and lbb > lkc)
     comps["squeeze"] = 100 if sq else 0
 
+    # עוצמה יחסית מול השוק (SPY) - מניה שמתחזקת יחסית למדד היא אות חזק יותר
+    # מ"פריצה" שהיא בעצם רק תזוזה כללית של השוק כולו.
+    rs_ratio = compute_relative_strength(df, benchmark_df) if benchmark_df is not None else np.nan
+    comps["relative_strength"] = score_component(rs_ratio, 0.9, 1.25)
+
     weights = {
-        "compression": 0.20, "rvol": 0.20, "trend": 0.15, "macd": 0.10, "rsi": 0.05,
-        "institutional": 0.10, "proximity": 0.10, "squeeze": 0.05, "risk": 0.05
+        "compression": 0.17, "rvol": 0.17, "trend": 0.13, "macd": 0.08, "rsi": 0.05,
+        "institutional": 0.08, "proximity": 0.08, "squeeze": 0.04, "risk": 0.05,
+        "relative_strength": 0.15
     }
 
     final_score = sum(comps.get(k, 0) * w for k, w in weights.items())
@@ -258,6 +311,8 @@ def compute_breakout_decision(df):
     if comps.get("trend", 0) >= 70: notes.append("טרנד עולה")
     if comps.get("institutional", 0) >= 60: notes.append("כסף מוסדי נכנס")
     if comps.get("squeeze", 0) == 100: notes.append("Squeeze פעיל")
+    if comps.get("relative_strength", 0) >= 70: notes.append("חזקה יחסית לשוק (RS)")
+    elif comps.get("relative_strength", 0) <= 20: notes.append("חלשה יחסית לשוק — זהירות")
     if prox < 0.95: notes.append("עדיין רחוק מהפריצה")
     note = ", ".join(notes) if notes else "אין אותות חזקים"
 
@@ -718,6 +773,15 @@ with tab1:
     max_tickers = st.sidebar.number_input("מקסימום טיקרים לסריקה:", min_value=10, max_value=1000, value=200, step=10)
 
     st.sidebar.markdown("---")
+    st.sidebar.subheader("סינון נזילות ואיכות")
+    min_price_filter = st.sidebar.number_input("מחיר מינימלי ($):", min_value=0.0, value=5.0, step=1.0)
+    min_dollar_vol_filter = st.sidebar.number_input(
+        "מחזור מסחר ממוצע יומי מינימלי ($):", min_value=0.0, value=5_000_000.0, step=500_000.0, format="%.0f"
+    )
+    use_rs_filter = st.sidebar.checkbox("סנן החוצה מניות חלשות מהשוק (RS)", value=False,
+                                         help="אם מסומן, מניות עם עוצמה יחסית חלשה מ-SPY לא יופיעו בתוצאות כלל.")
+
+    st.sidebar.markdown("---")
     st.sidebar.markdown("**הערה**: כלי תמיכה בהחלטה בלבד, לא ייעוץ השקעות.")
 
     if st.sidebar.button("הרץ סריקת פריצה"):
@@ -730,6 +794,11 @@ with tab1:
             progress = st.progress(0)
             total = len(tickers)
 
+            benchmark_df = load_benchmark_history(period="12mo")
+            if benchmark_df.empty:
+                st.warning(f"לא ניתן היה לטעון נתוני מדד ייחוס ({BENCHMARK_TICKER}) — ציון העוצמה היחסית (RS) יידלג.")
+                benchmark_df = None
+
             for i, ticker in enumerate(tickers):
                 try:
                     st.write(f"בודק {ticker} ({i+1}/{total})")
@@ -739,8 +808,28 @@ with tab1:
                                          "Price": np.nan, "Note": "אין נתונים", "SavedAt": ""})
                         progress.progress((i + 1) / total)
                         continue
+
+                    # סינון נזילות/איכות - לפני חישוב ציון, כדי לא לבזבז ציון גבוה על מניה לא סחירה
+                    liquid_ok, liquid_reason = passes_liquidity_filter(
+                        df, min_price=min_price_filter, min_avg_dollar_volume=min_dollar_vol_filter
+                    )
+                    if not liquid_ok:
+                        last_close_raw = safe_last(df["Close"])
+                        results.append({
+                            "Ticker": ticker, "Score": 0, "Confidence": 0, "Risk": 100,
+                            "Price": round(float(last_close_raw), 2) if not is_bad_number(last_close_raw) else np.nan,
+                            "Note": f"סונן: {liquid_reason}", "SavedAt": ""
+                        })
+                        progress.progress((i + 1) / total)
+                        continue
+
                     df = add_indicators(df)
-                    res = compute_breakout_decision(df)
+                    res = compute_breakout_decision(df, benchmark_df=benchmark_df)
+
+                    if use_rs_filter and res["components"].get("relative_strength", 0) < 40:
+                        progress.progress((i + 1) / total)
+                        continue
+
                     last_close = safe_last(df["Close"])
                     results.append({
                         "Ticker": ticker,
