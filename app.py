@@ -5,6 +5,7 @@ import pandas as pd
 import numpy as np
 import os
 import glob
+import time
 from datetime import datetime
 from plotly.subplots import make_subplots
 import plotly.graph_objects as go
@@ -117,12 +118,26 @@ def load_tickers_from_folder(folder_path):
 
 @st.cache_data(ttl=900)
 def load_history(ticker, period="12mo"):
-    try:
-        df = yf.Ticker(ticker).history(period=period)
-        df.dropna(inplace=True)
-        return df
-    except Exception:
-        return pd.DataFrame()
+    """
+    שים לב: הפונקציה מקוישת (cache) ל-15 דקות. הבאג המקורי כאן היה ש-כל
+    כשל (גם תקלת רשת חולפת/rate-limit רגעי מול Yahoo) נתפס ב-except והחזיר
+    DataFrame ריק — וה-cache "נעל" את התוצאה הריקה הזו ל-15 דקות, כאילו
+    לטיקר אין נתונים בכלל. עכשיו יש 2 ניסיונות חוזרים לפני שמוותרים, כדי
+    שתקלה חד-פעמית לא "תיתקע" כ"אין נתונים" למניה תקינה כמו RMAX.
+    """
+    last_exc = None
+    for attempt in range(3):
+        try:
+            df = yf.Ticker(ticker).history(period=period)
+            if df is not None and not df.empty:
+                df = df.dropna()
+                return df
+            last_exc = None
+        except Exception as e:
+            last_exc = e
+        if attempt < 2:
+            time.sleep(1.2)
+    return pd.DataFrame()
 
 def add_indicators(df):
     df = df.copy()
@@ -844,6 +859,10 @@ with tab1:
 
     min_score = st.sidebar.slider("ציון מינימלי להצגה:", 0, 100, 60)
     max_tickers = st.sidebar.number_input("מקסימום טיקרים לסריקה:", min_value=10, max_value=1000, value=200, step=10)
+
+    if st.sidebar.button("🔄 נקה מטמון נתונים ונסה שוב"):
+        st.cache_data.clear()
+        st.sidebar.success("המטמון נוקה — הרץ סריקה מחדש כדי לטעון נתונים עדכניים.")
 
     st.sidebar.markdown("---")
     st.sidebar.subheader("סינון נזילות ואיכות")
