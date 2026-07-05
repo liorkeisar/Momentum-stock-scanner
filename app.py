@@ -355,7 +355,14 @@ def render_breakout_summary(res):
     # עוצמה יחסית מול השוק (SPY) - מניה שמתחזקת יחסית למדד היא אות חזק יותר
     # מ"פריצה" שהיא בעצם רק תזוזה כללית של השוק כולו.
     rs_ratio = compute_relative_strength(df, benchmark_df) if benchmark_df is not None else np.nan
-    comps["relative_strength"] = score_component(rs_ratio, 0.9, 1.25)
+    # תיקון: הגבולות הקודמים (0.9-1.25) היו קשוחים מדי - מניה שהיכתה את SPY
+    # ב-10-15% תוך 3 חודשים כבר נחשבת מצוינת, לא ממוצעת. גם NaN (למשל אם
+    # לא הצלחנו לטעון בנצ'מארק) מקבל ציון ניטרלי (50) ולא 0, כדי שלא "יעניש"
+    # מניה טובה רק בגלל שחסר נתון השוואה.
+    if is_bad_number(rs_ratio):
+        comps["relative_strength"] = 50
+    else:
+        comps["relative_strength"] = score_component(rs_ratio, 0.85, 1.15)
 
     weights = {
         "compression": 0.17, "rvol": 0.17, "trend": 0.13, "macd": 0.08, "rsi": 0.05,
@@ -865,12 +872,15 @@ with tab1:
                 st.warning(f"לא ניתן היה לטעון נתוני מדד ייחוס ({BENCHMARK_TICKER}) — ציון העוצמה היחסית (RS) יידלג.")
                 benchmark_df = None
 
+            filter_stats = {"no_data": 0, "liquidity": 0, "rs_filter": 0, "error": 0, "scored": 0}
+
             for i, ticker in enumerate(tickers):
                 try:
                     df = load_history(ticker, period="12mo")
                     if df.empty:
                         results.append({"Ticker": ticker, "Score": 0, "Confidence": 0, "Risk": 100,
                                          "Price": np.nan, "Note": "אין נתונים", "SavedAt": ""})
+                        filter_stats["no_data"] += 1
                         progress.progress((i + 1) / total, text=f"נסרקו {i+1}/{total} מניות")
                         continue
 
@@ -885,6 +895,7 @@ with tab1:
                             "Price": round(float(last_close_raw), 2) if not is_bad_number(last_close_raw) else np.nan,
                             "Note": f"סונן: {liquid_reason}", "SavedAt": ""
                         })
+                        filter_stats["liquidity"] += 1
                         progress.progress((i + 1) / total, text=f"נסרקו {i+1}/{total} מניות")
                         continue
 
@@ -892,6 +903,7 @@ with tab1:
                     res = compute_breakout_decision(df, benchmark_df=benchmark_df)
 
                     if use_rs_filter and res["components"].get("relative_strength", 0) < 40:
+                        filter_stats["rs_filter"] += 1
                         progress.progress((i + 1) / total, text=f"נסרקו {i+1}/{total} מניות")
                         continue
 
@@ -906,15 +918,25 @@ with tab1:
                         "SavedAt": ""
                     })
                     details[ticker] = {"res": res, "df_tail": df.tail(120)}
+                    filter_stats["scored"] += 1
                 except Exception:
                     results.append({"Ticker": ticker, "Score": 0, "Confidence": 0, "Risk": 100,
                                      "Price": np.nan, "Note": "שגיאה", "SavedAt": ""})
+                    filter_stats["error"] += 1
                 progress.progress((i + 1) / total, text=f"נסרקו {i+1}/{total} מניות")
 
             st.session_state["scan_results"] = results
             st.session_state["scan_details"] = details
+            st.session_state["filter_stats"] = filter_stats
             progress.progress(1.0, text=f"הסריקה הושלמה — {total} מניות נבדקו")
             st.success(f"סריקה הושלמה: {total} מניות נבדקו")
+            st.info(
+                f"📊 סוכם: {filter_stats['scored']} קיבלו ציון | "
+                f"{filter_stats['liquidity']} נחסמו בסינון נזילות | "
+                f"{filter_stats['rs_filter']} נחסמו בסינון RS | "
+                f"{filter_stats['no_data']} ללא נתונים | "
+                f"{filter_stats['error']} שגיאות"
+            )
 
     # שימוש בתוצאות שמורות ב-session_state כדי לשרוד בין אינטראקציות (טפסים וכו')
     results = st.session_state.get("scan_results", [])
@@ -925,7 +947,12 @@ with tab1:
         df_res = df_res[df_res["Score"] >= min_score]
 
         if df_res.empty:
-            st.info("לא נמצאו מניות מתאימות לפי הקריטריונים.")
+            all_res = pd.DataFrame(results)
+            max_score_seen = all_res["Score"].max() if not all_res.empty else 0
+            st.info(
+                f"לא נמצאו מניות מעל ציון {min_score}. הציון הגבוה ביותר שהתקבל בסריקה: {max_score_seen}. "
+                f"נסה להוריד את סף הציון בסיידבר, או להקל על סינון הנזילות."
+            )
         else:
             st.subheader("תוצאות סריקה")
             df_res_display = df_res.copy()
