@@ -240,7 +240,73 @@ def passes_liquidity_filter(df, min_price=5.0, min_avg_dollar_volume=5_000_000.0
         return False, f"מחזור מסחר ממוצע נמוך מהסף ({min_avg_dollar_volume:,.0f}$)"
     return True, None
 
-def compute_breakout_decision(df, benchmark_df=None):
+COMPONENT_LABELS_HE = {
+    "compression": "דחיסת מחיר (Squeeze)",
+    "rvol": "נפח יחסי (RVOL)",
+    "trend": "מגמה (EMA20/50)",
+    "macd": "מומנטום (MACD)",
+    "rsi": "RSI",
+    "institutional": "כסף מוסדי (OBV/AD)",
+    "proximity": "קרבה לפריצה (52W High)",
+    "squeeze": "Squeeze (BB/KC)",
+    "risk": "רמת סיכון (ATR%)",
+    "relative_strength": "עוצמה יחסית לשוק (RS)"
+}
+
+def traffic_light(value, green_th=70, yellow_th=40):
+    """ממיר ציון 0-100 לרמזור: ירוק (טוב) / צהוב (בינוני) / אדום (חלש)."""
+    try:
+        v = float(value)
+        if is_bad_number(v):
+            return "⚪", "לא זמין"
+    except Exception:
+        return "⚪", "לא זמין"
+    if v >= green_th:
+        return "🟢", "טוב"
+    elif v >= yellow_th:
+        return "🟡", "בינוני"
+    else:
+        return "🔴", "חלש"
+
+def overall_traffic_badge(score, label_prefix="מצב כללי"):
+    emoji, label = traffic_light(score)
+    st.markdown(f"#### {emoji} {label_prefix}: **{label}** (ציון {score}/100)")
+
+def render_component_traffic_lights(components):
+    """מציג את רכיבי הניקוד כרמזור צבעוני, כדי לאפשר סריקה מהירה במקום טבלת מספרים גולמית."""
+    rows = sorted(components.items(), key=lambda x: x[1], reverse=True)
+    html = "<table style='width:100%; border-collapse: collapse;'>"
+    for key, val in rows:
+        emoji, label = traffic_light(val)
+        name = COMPONENT_LABELS_HE.get(key, key)
+        html += (
+            "<tr style='border-bottom:1px solid rgba(128,128,128,0.3);'>"
+            f"<td style='padding:6px 10px; font-size:20px; width:40px;'>{emoji}</td>"
+            f"<td style='padding:6px 10px;'>{name}</td>"
+            f"<td style='padding:6px 10px; text-align:left; opacity:0.65; width:70px;'>{int(val)}/100</td>"
+            f"<td style='padding:6px 10px; text-align:left; width:70px;'>{label}</td>"
+            "</tr>"
+        )
+    html += "</table>"
+    st.markdown(html, unsafe_allow_html=True)
+
+def render_breakout_summary(res):
+    """תצוגה מרוכזת: רמזור כללי + ביטחון/סיכון + טבלת רכיבים כרמזור."""
+    overall_traffic_badge(res["score"], label_prefix="מצב כללי לפריצה")
+    col1, col2 = st.columns(2)
+    with col1:
+        conf_emoji, conf_label = traffic_light(res["confidence"])
+        st.markdown(f"**ביטחון בסיגנל:** {conf_emoji} {conf_label} ({res['confidence']}/100)")
+    with col2:
+        risk_emoji, risk_label = traffic_light(res["risk"])
+        st.markdown(f"**רמת בטיחות (ATR):** {risk_emoji} {risk_label} ({res['risk']}/100)")
+    st.write("**רכיבי ניקוד**")
+    render_component_traffic_lights(res["components"])
+    with st.expander("הצג ערכים גולמיים (למשתמשים מתקדמים)"):
+        comp_df = pd.DataFrame.from_dict(res["components"], orient="index", columns=["Value"]).sort_values("Value", ascending=False)
+        st.table(comp_df)
+
+
     ok, msg = validate_df(df, ["High", "Low", "Close", "Volume", "EMA20", "EMA50", "ATR", "STD20",
                                 "OBV", "AD_Cum", "MACD", "Signal", "RSI", "MA20", "UpperBB",
                                 "LowerBB", "UpperKC", "LowerKC", "VOL_MA20"])
@@ -861,7 +927,9 @@ with tab1:
             st.info("לא נמצאו מניות מתאימות לפי הקריטריונים.")
         else:
             st.subheader("תוצאות סריקה")
-            st.dataframe(df_res, use_container_width=True)
+            df_res_display = df_res.copy()
+            df_res_display.insert(1, "מצב", df_res_display["Score"].apply(lambda s: traffic_light(s)[0]))
+            st.dataframe(df_res_display, use_container_width=True)
 
             st.divider()
             col_save1, col_save2 = st.columns([3, 1])
@@ -885,12 +953,7 @@ with tab1:
             info = details.get(sel)
             if info:
                 res = info["res"]
-                st.metric("ציון פריצה", res["score"])
-                st.metric("ביטחון", res["confidence"])
-                st.metric("מדד סיכון", res["risk"])
-                st.write("**רכיבי ניקוד**")
-                comp_df = pd.DataFrame.from_dict(res["components"], orient="index", columns=["Value"]).sort_values("Value", ascending=False)
-                st.table(comp_df)
+                render_breakout_summary(res)
                 st.write("**הערות**")
                 st.info(res["note"])
 
