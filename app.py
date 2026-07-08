@@ -609,37 +609,78 @@ def show_buttons(ticker):
 # גרף מפורט
 # ============================
 
-def plot_advanced(df, ticker):
-    fig = make_subplots(
-        rows=4, cols=1, shared_xaxes=True, vertical_spacing=0.02,
-        row_heights=[0.5, 0.12, 0.18, 0.2]
-    )
-    fig.add_trace(go.Candlestick(x=df.index, open=df["Open"], high=df["High"], low=df["Low"], close=df["Close"],
-                                  name="Price", increasing_line_color="#1fc46a", decreasing_line_color="#e2543b"), row=1, col=1)
+def plot_advanced(df, ticker, show_macd=False, show_obv=False, show_bands=False, days=90):
+    """
+    גרף נקי בברירת מחדל: מחיר + MA20 + נפח בלבד.
+    MACD / OBV / רצועות בולינגר הם אופציונליים כדי למנוע עומס ויזואלי.
+    days: כמות ימי המסחר האחרונים שיוצגו (זום פנימי - מונע גרף "דחוס").
+    """
+    df = df.tail(days).copy()
+
+    panels = ["price", "volume"]
+    if show_macd:
+        panels.append("macd")
+    if show_obv:
+        panels.append("obv")
+
+    heights = {"price": 0.62, "volume": 0.18, "macd": 0.20, "obv": 0.20}
+    total = sum(heights[p] for p in panels)
+    row_heights = [heights[p] / total for p in panels]
+
+    fig = make_subplots(rows=len(panels), cols=1, shared_xaxes=True,
+                         vertical_spacing=0.04, row_heights=row_heights)
+    row_of = {p: i + 1 for i, p in enumerate(panels)}
+
+    # --- מחיר ---
+    fig.add_trace(go.Candlestick(
+        x=df.index, open=df["Open"], high=df["High"], low=df["Low"], close=df["Close"],
+        name="מחיר", increasing_line_color="#1fc46a", decreasing_line_color="#e2543b",
+        increasing_fillcolor="#1fc46a", decreasing_fillcolor="#e2543b", line_width=1
+    ), row=row_of["price"], col=1)
+
     if "MA20" in df.columns:
-        fig.add_trace(go.Scatter(x=df.index, y=df["MA20"], line=dict(color="#6c8cff", width=1.4), name="MA20"), row=1, col=1)
-    if "UpperBB" in df.columns:
-        fig.add_trace(go.Scatter(x=df.index, y=df["UpperBB"], line=dict(color="#3d4a68", width=1), name="UpperBB"), row=1, col=1)
-    if "LowerBB" in df.columns:
-        fig.add_trace(go.Scatter(x=df.index, y=df["LowerBB"], line=dict(color="#3d4a68", width=1), name="LowerBB",
-                                  fill='tonexty', fillcolor='rgba(108,140,255,0.05)'), row=1, col=1)
+        fig.add_trace(go.Scatter(x=df.index, y=df["MA20"], line=dict(color="#f2c94c", width=1.6),
+                                  name="ממוצע נע 20"), row=row_of["price"], col=1)
 
-    vol_colors = np.where(df["Close"] >= df["Open"], "#1fc46a", "#e2543b")
-    fig.add_trace(go.Bar(x=df.index, y=df["Volume"], name="Volume", marker_color=vol_colors), row=2, col=1)
+    if show_bands and "UpperBB" in df.columns and "LowerBB" in df.columns:
+        fig.add_trace(go.Scatter(x=df.index, y=df["UpperBB"], line=dict(color="#3d4a68", width=1),
+                                  name="רצועה עליונה", showlegend=False), row=row_of["price"], col=1)
+        fig.add_trace(go.Scatter(x=df.index, y=df["LowerBB"], line=dict(color="#3d4a68", width=1),
+                                  name="רצועות בולינגר", fill='tonexty', fillcolor='rgba(108,140,255,0.06)'),
+                      row=row_of["price"], col=1)
 
-    if "OBV" in df.columns:
-        fig.add_trace(go.Scatter(x=df.index, y=df["OBV"], name="OBV", line=dict(color="#c88cff")), row=3, col=1)
-    if "MACD" in df.columns:
-        fig.add_trace(go.Scatter(x=df.index, y=df["MACD"], name="MACD", line=dict(color="#6c8cff")), row=4, col=1)
-    if "Signal" in df.columns:
-        fig.add_trace(go.Scatter(x=df.index, y=df["Signal"], name="Signal", line=dict(color="#e2b93b")), row=4, col=1)
+    # --- נפח ---
+    vol_colors = np.where(df["Close"] >= df["Open"], "rgba(31,196,106,0.55)", "rgba(226,84,59,0.55)")
+    fig.add_trace(go.Bar(x=df.index, y=df["Volume"], name="נפח", marker_color=vol_colors, showlegend=False),
+                  row=row_of["volume"], col=1)
+
+    # --- MACD (אופציונלי) ---
+    if show_macd and "MACD" in df.columns:
+        fig.add_trace(go.Scatter(x=df.index, y=df["MACD"], name="MACD", line=dict(color="#6c8cff", width=1.4)),
+                      row=row_of["macd"], col=1)
+        fig.add_trace(go.Scatter(x=df.index, y=df["Signal"], name="Signal", line=dict(color="#e2b93b", width=1.4)),
+                      row=row_of["macd"], col=1)
+
+    # --- OBV (אופציונלי) ---
+    if show_obv and "OBV" in df.columns:
+        fig.add_trace(go.Scatter(x=df.index, y=df["OBV"], name="OBV", line=dict(color="#c88cff", width=1.4)),
+                      row=row_of["obv"], col=1)
 
     fig.update_layout(
-        height=850, title=f"{ticker} — Decision Chart",
+        height=460 + 130 * (len(panels) - 2),
         template="plotly_dark", paper_bgcolor="#131722", plot_bgcolor="#131722",
-        legend=dict(orientation="h", y=1.02), margin=dict(t=60, b=20, l=10, r=10),
-        xaxis_rangeslider_visible=False
+        font=dict(size=12, color="#c7cede"),
+        legend=dict(orientation="h", y=1.05, x=0, bgcolor="rgba(0,0,0,0)"),
+        margin=dict(t=30, b=10, l=10, r=10),
+        xaxis_rangeslider_visible=False,
+        hovermode="x unified",
+        bargap=0.15,
     )
+    fig.update_xaxes(showgrid=False)
+    fig.update_yaxes(showgrid=True, gridcolor="rgba(255,255,255,0.05)", zeroline=False)
+    fig.update_yaxes(title_text="מחיר", row=row_of["price"], col=1)
+    fig.update_yaxes(title_text="נפח", row=row_of["volume"], col=1)
+
     return fig
 
 # ============================
@@ -828,7 +869,16 @@ with tab1:
                 st.info(f"**הערות:** {res['note']}")
 
                 df_plot = info["df_tail"].copy()
-                st.plotly_chart(plot_advanced(df_plot, to_view), use_container_width=True)
+                gc1, gc2, gc3, gc4 = st.columns(4)
+                days_view = gc1.select_slider("טווח ימים בגרף", options=[30, 60, 90, 120], value=90, key=f"days_{to_view}")
+                show_bands = gc2.checkbox("רצועות בולינגר", value=False, key=f"bands_{to_view}")
+                show_macd = gc3.checkbox("MACD", value=False, key=f"macd_{to_view}")
+                show_obv = gc4.checkbox("OBV", value=False, key=f"obv_{to_view}")
+                st.plotly_chart(
+                    plot_advanced(df_plot, to_view, show_macd=show_macd, show_obv=show_obv,
+                                  show_bands=show_bands, days=days_view),
+                    use_container_width=True
+                )
 
                 show_buttons(to_view)
 
