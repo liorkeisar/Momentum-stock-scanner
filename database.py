@@ -3,63 +3,18 @@ database.py
 Wyckoff Pro v3
 """
 
+import os
 import pandas as pd
-import sqlite3
 
-from settings import (
-    DATABASE_FILE,
-    SCAN_RESULTS_FILE
-)
+from settings import SCAN_RESULTS_FILE
 
-
-
-# ==========================
-# SQLite
-# ==========================
-
-def get_connection():
-
-    return sqlite3.connect(
-        DATABASE_FILE
-    )
-
-
-
-def init_database():
-
-    conn = get_connection()
-
-    cursor = conn.cursor()
-
-    cursor.execute(
-        """
-        CREATE TABLE IF NOT EXISTS scans
-        (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            ticker TEXT,
-            score REAL,
-            date TEXT
-        )
-        """
-    )
-
-    conn.commit()
-
-    conn.close()
-
-
-
-# ==========================
-# Save scan results
-# ==========================
 
 def save_scan_results(df):
 
-    if df is None or df.empty:
-        return False
-
-
     try:
+
+        if df is None or df.empty:
+            return False
 
         df.to_csv(
             SCAN_RESULTS_FILE,
@@ -68,63 +23,45 @@ def save_scan_results(df):
 
         return True
 
-    except Exception:
+    except Exception as e:
+
+        print("Database save error:", e)
 
         return False
 
 
 
-# ==========================
-# Load scan results
-# ==========================
-
 def load_scan_results():
 
     try:
+
+        if not os.path.exists(SCAN_RESULTS_FILE):
+            return pd.DataFrame()
 
         return pd.read_csv(
             SCAN_RESULTS_FILE
         )
 
-    except Exception:
+    except Exception as e:
+
+        print("Database load error:", e)
 
         return pd.DataFrame()
 
 
 
-# ==========================
-# Add single scan
-# ==========================
+def clear_scan_results():
 
-def add_scan(
-    ticker,
-    score,
-    date
-):
+    try:
 
-    conn=get_connection()
+        if os.path.exists(SCAN_RESULTS_FILE):
 
-    cursor=conn.cursor()
+            os.remove(
+                SCAN_RESULTS_FILE
+            )
 
+        return True
 
-    cursor.execute(
+    except:
 
-        """
-        INSERT INTO scans
-        (ticker,score,date)
-
-        VALUES (?,?,?)
-        """,
-
-        (
-            ticker,
-            score,
-            date
-        )
-
-    )
-
-
-    conn.commit()
-
-    conn.close()
+        return False
