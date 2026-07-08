@@ -19,68 +19,215 @@ except Exception:
 # ============================
 # הגדרות דף + עיצוב מודרני
 # ============================
-st.set_page_config(page_title="מערכת וייקוף Pro — עם חיזוי", layout="wide", page_icon="◈")
+st.set_page_config(page_title="Wyckoff Pro — Swing Scanner", layout="wide", page_icon="◈")
 
-st.markdown("""
+ACCENT = "#00e08f"      # ירוק מנטה — צבע אקסנט ראשי
+ACCENT_DARK = "#00c47d"
+BG = "#0b0f17"          # רקע ראשי כהה
+PANEL = "#12161f"       # רקע כרטיסים/פאנלים
+PANEL_ALT = "#171c28"   # רקע שדות קלט
+BORDER = "#242a38"      # גבולות עדינים
+TEXT_MUTED = "#8891a5"
+
+st.markdown(f"""
 <style>
-    html, body, [class*="css"]  { font-family: 'Segoe UI', 'Rubik', sans-serif; }
+    html, body, [class*="css"] {{ font-family: 'Segoe UI', 'Rubik', sans-serif; }}
 
-    .main .block-container { padding-top: 1.5rem; }
+    /* ---------- רקע כללי ---------- */
+    .stApp {{
+        background: {BG} !important;
+    }}
+    .main .block-container {{
+        padding-top: 1rem;
+        padding-bottom: 3rem;
+        max-width: 1300px;
+    }}
 
-    h1 { font-weight: 800; letter-spacing: -0.5px; }
+    /* ---------- סרגל צד ---------- */
+    section[data-testid="stSidebar"] {{
+        background: {PANEL} !important;
+        border-right: 1px solid {BORDER};
+    }}
+    section[data-testid="stSidebar"] .block-container {{ padding-top: 1.2rem; }}
+    section[data-testid="stSidebar"] h2, section[data-testid="stSidebar"] h3 {{
+        font-size: 15px; text-transform: uppercase; letter-spacing: 0.5px; color: {TEXT_MUTED};
+    }}
 
-    /* כרטיסי מדדים */
-    div[data-testid="stMetric"] {
-        background: linear-gradient(135deg, #1f2430 0%, #2a3142 100%);
-        border: 1px solid #3a4256;
-        border-radius: 14px;
-        padding: 14px 16px;
-        box-shadow: 0 2px 8px rgba(0,0,0,0.25);
-    }
-    div[data-testid="stMetric"] label { color: #9aa4bd !important; }
+    /* ---------- כותרת עליונה ---------- */
+    .app-header {{
+        display: flex; align-items: center; justify-content: space-between;
+        background: {PANEL};
+        border: 1px solid {BORDER};
+        border-radius: 16px;
+        padding: 16px 22px;
+        margin-bottom: 18px;
+    }}
+    .app-header .title {{
+        font-size: 24px; font-weight: 800; color: #f2f4f8; letter-spacing: -0.3px;
+        display: flex; align-items: center; gap: 10px;
+    }}
+    .app-header .title .accent {{ color: {ACCENT}; }}
+    .app-header .subtitle {{ color: {TEXT_MUTED}; font-size: 13px; margin-top: 2px; }}
+    .status-chip {{
+        background: rgba(0,224,143,0.10);
+        border: 1px solid rgba(0,224,143,0.35);
+        color: {ACCENT};
+        padding: 7px 16px;
+        border-radius: 30px;
+        font-weight: 700;
+        font-size: 13px;
+        white-space: nowrap;
+    }}
 
-    /* טאבים */
-    button[data-baseweb="tab"] {
-        font-size: 16px;
-        font-weight: 600;
-        padding: 10px 18px;
-    }
-
-    /* כפתורים */
-    div.stButton > button {
+    /* ---------- באנר אזהרה ---------- */
+    .top-banner {{
+        background: {PANEL_ALT};
+        border: 1px solid {BORDER};
+        border-right: 3px solid {ACCENT};
         border-radius: 10px;
-        font-weight: 600;
-        border: 1px solid #3a4256;
-        transition: all 0.15s ease-in-out;
-    }
-    div.stButton > button:hover {
-        border-color: #6c8cff;
-        color: #6c8cff;
-    }
-
-    /* תיבת הערה עליונה */
-    .top-banner {
-        background: linear-gradient(90deg, #1c2333, #232b40);
-        border: 1px solid #333d55;
-        border-radius: 12px;
         padding: 10px 16px;
-        margin-bottom: 14px;
+        margin-bottom: 18px;
         color: #b7c0d8;
-        font-size: 14px;
-    }
+        font-size: 13.5px;
+    }}
 
-    /* badge לציון */
-    .score-badge {
+    /* ---------- כותרות פנימיות ---------- */
+    h1 {{ font-weight: 800; letter-spacing: -0.5px; color: #f2f4f8; }}
+    h2, h3 {{ color: #e6e9f0; font-weight: 700; }}
+
+    /* ---------- כרטיסי מדדים (st.metric) ---------- */
+    div[data-testid="stMetric"] {{
+        background: {PANEL};
+        border: 1px solid {BORDER};
+        border-radius: 14px;
+        padding: 14px 18px;
+        box-shadow: 0 2px 10px rgba(0,0,0,0.25);
+    }}
+    div[data-testid="stMetric"] label {{ color: {TEXT_MUTED} !important; font-size: 12.5px !important; }}
+    div[data-testid="stMetricValue"] {{ color: #f2f4f8 !important; font-weight: 800 !important; }}
+
+    /* ---------- טאבים בסגנון pill ---------- */
+    .stTabs [data-baseweb="tab-list"] {{
+        gap: 6px;
+        background: {PANEL};
+        padding: 6px;
+        border-radius: 14px;
+        border: 1px solid {BORDER};
+    }}
+    .stTabs [data-baseweb="tab"] {{
+        height: 42px;
+        border-radius: 10px;
+        font-size: 14.5px;
+        font-weight: 600;
+        color: {TEXT_MUTED};
+        background: transparent;
+        padding: 0 18px;
+    }}
+    .stTabs [aria-selected="true"] {{
+        background: rgba(0,224,143,0.12) !important;
+        color: {ACCENT} !important;
+        border: 1px solid rgba(0,224,143,0.35);
+    }}
+    .stTabs [data-baseweb="tab-highlight"] {{ background-color: transparent !important; }}
+    .stTabs [data-baseweb="tab-border"] {{ display: none !important; }}
+
+    /* ---------- כפתורים ---------- */
+    div.stButton > button {{
+        border-radius: 10px;
+        font-weight: 700;
+        border: 1px solid {BORDER};
+        background: {PANEL_ALT};
+        color: #e6e9f0;
+        transition: all 0.15s ease-in-out;
+    }}
+    div.stButton > button:hover {{
+        border-color: {ACCENT};
+        color: {ACCENT};
+    }}
+    div.stButton > button[kind="primary"] {{
+        background: {ACCENT} !important;
+        color: #06120c !important;
+        border: none !important;
+        box-shadow: 0 4px 14px rgba(0,224,143,0.25);
+    }}
+    div.stButton > button[kind="primary"]:hover {{
+        background: {ACCENT_DARK} !important;
+        color: #06120c !important;
+    }}
+    a[data-testid="stBaseLinkButton-secondary"] {{
+        border-radius: 10px; border: 1px solid {BORDER}; background: {PANEL_ALT};
+    }}
+
+    /* ---------- שדות קלט ---------- */
+    .stTextInput input, .stNumberInput input, .stDateInput input, .stTextArea textarea {{
+        background: {PANEL_ALT} !important;
+        border: 1px solid {BORDER} !important;
+        border-radius: 10px !important;
+        color: #e6e9f0 !important;
+    }}
+    .stSelectbox div[data-baseweb="select"] > div, .stMultiSelect div[data-baseweb="select"] > div {{
+        background: {PANEL_ALT} !important;
+        border: 1px solid {BORDER} !important;
+        border-radius: 10px !important;
+    }}
+    .stTextInput input:focus, .stNumberInput input:focus {{
+        border-color: {ACCENT} !important;
+        box-shadow: 0 0 0 1px {ACCENT} !important;
+    }}
+
+    /* ---------- כרטיסים / expander ---------- */
+    div[data-testid="stExpander"] {{
+        background: {PANEL};
+        border: 1px solid {BORDER} !important;
+        border-radius: 14px !important;
+        overflow: hidden;
+    }}
+    div[data-testid="stExpander"] summary {{ font-weight: 600; color: #e6e9f0; }}
+
+    /* ---------- containers עם border ---------- */
+    div[data-testid="stVerticalBlockBorderWrapper"] {{
+        background: {PANEL};
+        border: 1px solid {BORDER} !important;
+        border-radius: 14px !important;
+    }}
+
+    /* ---------- טבלאות ---------- */
+    div[data-testid="stDataFrame"] {{
+        border: 1px solid {BORDER};
+        border-radius: 12px;
+        overflow: hidden;
+    }}
+
+    /* ---------- progress bar כללי ---------- */
+    div[data-testid="stProgress"] > div > div {{ background-color: {ACCENT} !important; }}
+
+    /* ---------- badge לציון ---------- */
+    .score-badge {{
         display: inline-block;
-        padding: 3px 10px;
+        padding: 4px 14px;
         border-radius: 20px;
         font-weight: 700;
         font-size: 13px;
-    }
+    }}
+
+    /* ---------- info/success/warning boxes ---------- */
+    div[data-testid="stAlertContainer"] {{
+        border-radius: 12px !important;
+        border: 1px solid {BORDER} !important;
+    }}
 </style>
 """, unsafe_allow_html=True)
 
-st.title("◈ מערכת השקעות מבוססת וייקוף — סורק פריצה משופר + חיזוי")
+st.markdown(f"""
+<div class="app-header">
+    <div>
+        <div class="title">◈ Wyckoff Pro <span class="accent">Swing Scanner</span></div>
+        <div class="subtitle">סורק פריצה מבוסס וייקוף · אינדיקטורים טכניים · חיזוי סטטיסטי</div>
+    </div>
+    <div class="status-chip">⚡ כלי תמיכה בהחלטה</div>
+</div>
+""", unsafe_allow_html=True)
+
 st.markdown(
     '<div class="top-banner">⚠️ כלי תמיכה בהחלטה בלבד — אינו מהווה ייעוץ השקעות. '
     'כל החלטת מסחר היא באחריות המשתמש בלבד.</div>',
