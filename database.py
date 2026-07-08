@@ -62,6 +62,8 @@ def clear_scan_results():
 
         return True
 
-    except:
+    except Exception as e:
+
+        print("Database clear error:", e)
 
         return False
