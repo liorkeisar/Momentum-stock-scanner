@@ -338,7 +338,14 @@ def load_history(ticker, period="12mo"):
     except Exception:
         return pd.DataFrame()
 
-def add_indicators(df):
+BENCHMARK_TICKER = "SPY"
+
+@st.cache_data(ttl=300, show_spinner=False)
+def load_benchmark(period="24mo"):
+    """טעינת מדד ייחוס (SPY) לחישוב חוזק יחסי."""
+    return load_history(BENCHMARK_TICKER, period=period)
+
+def add_indicators(df, benchmark_df=None):
     df = df.copy()
     if df.empty:
         return df
@@ -386,7 +393,37 @@ def add_indicators(df):
     df["VOL_MA20"] = df["Volume"].rolling(20).mean()
     df["RVOL"] = df["Volume"] / df["VOL_MA20"].replace(0, np.nan)
 
+    # --- מגמת-על (Stage 2 לפי Weinstein/Minervini): SMA150/SMA200 ---
+    df["SMA50"] = df["Close"].rolling(50).mean()
+    df["SMA150"] = df["Close"].rolling(150).mean()
+    df["SMA200"] = df["Close"].rolling(200).mean()
+    df["SMA200_slope"] = df["SMA200"].diff(20)  # שיפוע ב-20 הימים האחרונים
+
+    # --- איכות נפח: יחס נפח-עולה/נפח-יורד על פני 20 יום ---
+    up_day = df["Close"] > df["Close"].shift(1)
+    down_day = df["Close"] < df["Close"].shift(1)
+    up_vol = df["Volume"].where(up_day, 0).rolling(20).sum()
+    down_vol = df["Volume"].where(down_day, 0).rolling(20).sum().replace(0, np.nan)
+    df["UpDownVolRatio"] = up_vol / down_vol
+
+    # --- משך ה-Squeeze (כמה ימים רצופים הרצועות בתוך הערוץ) ---
+    squeeze_active = (df["UpperBB"] < df["UpperKC"]) & (df["LowerBB"] > df["LowerKC"])
+    grp = (~squeeze_active).cumsum()
+    df["SqueezeActive"] = squeeze_active
+    df["SqueezeStreak"] = squeeze_active.groupby(grp).cumsum()
+
+    # --- חוזק יחסי מול מדד ייחוס (RS Line) ---
+    if benchmark_df is not None and not benchmark_df.empty:
+        bench = benchmark_df["Close"].reindex(df.index).ffill()
+        rs_line = df["Close"] / bench.replace(0, np.nan)
+        df["RS_Line"] = rs_line
+        df["RS_MA20"] = rs_line.rolling(20).mean()
+    else:
+        df["RS_Line"] = np.nan
+        df["RS_MA20"] = np.nan
+
     return df
+
 
 # ============================
 # מנוע החלטה לפני פריצה
@@ -452,13 +489,44 @@ def compute_breakout_decision(df):
           and ubb < ukc and lbb > lkc)
     comps["squeeze"] = 100 if sq else 0
 
+    # --- משך ה-Squeeze: כמה זמן רצוף המניה בכיווץ (ככל שיותר, יותר אנרגיה לפריצה) ---
+    streak = safe_last(df["SqueezeStreak"]) if "SqueezeStreak" in df.columns else 0
+    comps["squeeze_duration"] = score_component(streak, 0, 15)
+
+    # --- Stage 2 (Weinstein/Minervini): מחיר מעל SMA150/200 עולה = מגמת-על בריאה ---
+    close_now = safe_last(df["Close"])
+    sma150 = safe_last(df["SMA150"]) if "SMA150" in df.columns else np.nan
+    sma200 = safe_last(df["SMA200"]) if "SMA200" in df.columns else np.nan
+    sma200_slope = safe_last(df["SMA200_slope"]) if "SMA200_slope" in df.columns else np.nan
+    stage2_ok = (not is_bad(close_now) and not is_bad(sma150) and not is_bad(sma200)
+                 and close_now > sma150 > sma200 and (is_bad(sma200_slope) or sma200_slope > 0))
+    comps["stage2"] = 100 if stage2_ok else (40 if (not is_bad(close_now) and not is_bad(sma150) and close_now > sma150) else 0)
+
+    # --- חוזק יחסי מול מדד ייחוס (RS Line) ---
+    rs_now = safe_last(df["RS_Line"]) if "RS_Line" in df.columns else np.nan
+    rs_prev = safe_last(df["RS_Line"].shift(20)) if "RS_Line" in df.columns else np.nan
+    rs_change = safe_div(rs_now - rs_prev, abs(rs_prev) if not is_bad(rs_prev) else np.nan, default=np.nan) if not is_bad(rs_now) else np.nan
+    comps["relative_strength"] = score_component(rs_change, -0.05, 0.10) if not is_bad(rs_change) else 50
+
+    # --- איכות נפח: יחס נפח-עולה/נפח-יורד ---
+    updown = safe_last(df["UpDownVolRatio"]) if "UpDownVolRatio" in df.columns else np.nan
+    comps["volume_quality"] = score_component(updown, 0.6, 2.0) if not is_bad(updown) else 50
+
     weights = {
-        "compression": 0.20, "rvol": 0.20, "trend": 0.15, "macd": 0.10, "rsi": 0.05,
-        "institutional": 0.10, "proximity": 0.10, "squeeze": 0.05, "risk": 0.05
+        "compression": 0.12, "rvol": 0.08, "trend": 0.06, "macd": 0.05, "rsi": 0.04,
+        "institutional": 0.06, "proximity": 0.08, "squeeze": 0.04, "squeeze_duration": 0.06,
+        "risk": 0.04, "stage2": 0.13, "relative_strength": 0.14, "volume_quality": 0.10
     }
 
     final_score = sum(comps.get(k, 0) * w for k, w in weights.items())
     final_score = int(round(final_score))
+
+    # וטו קשיח: אם מגמת-העל שבורה לגמרי (מתחת ל-SMA200 יורד), נכסה משמעותית את הציון
+    # כדי למנוע false positive על מניה שנמצאת בטרנד יורד ארוך-טווח
+    hard_downtrend = (not is_bad(close_now) and not is_bad(sma200) and not is_bad(sma200_slope)
+                       and close_now < sma200 and sma200_slope < 0)
+    if hard_downtrend:
+        final_score = min(final_score, 35)
 
     strong = sum(1 for v in comps.values() if v >= 70)
     confidence = int(round((strong / len(comps)) * 100)) if len(comps) > 0 else 0
@@ -471,6 +539,11 @@ def compute_breakout_decision(df):
     if comps.get("trend", 0) >= 70: notes.append("טרנד עולה")
     if comps.get("institutional", 0) >= 60: notes.append("כסף מוסדי נכנס")
     if comps.get("squeeze", 0) == 100: notes.append("Squeeze פעיל")
+    if comps.get("squeeze_duration", 0) >= 60: notes.append("כיווץ ממושך")
+    if comps.get("stage2", 0) == 100: notes.append("מגמת-על בריאה (Stage 2)")
+    if comps.get("relative_strength", 0) >= 70: notes.append("חוזק יחסי למדד")
+    if comps.get("volume_quality", 0) >= 70: notes.append("נפח קונים דומיננטי")
+    if hard_downtrend: notes.append("⚠️ מגמת-על יורדת — סיכון גבוה")
     if not is_bad(prox) and prox < 0.95: notes.append("עדיין רחוק מהפריצה")
     note = ", ".join(notes) if notes else "אין אותות חזקים"
 
@@ -503,9 +576,14 @@ def compute_features_for_ml(df, window=20):
         feat = {
             "close_last": w["Close"].iloc[-1],
             "std20": w["Close"].rolling(20).std().iloc[-1] if len(w) >= 20 else np.nan,
+            "std20_pct": safe_div(w["Close"].rolling(20).std().iloc[-1] if len(w) >= 20 else np.nan, w["Close"].iloc[-1], default=np.nan),
             "rvol": safe_div(w["Volume"].iloc[-1], vol_ma, default=1.0),
             "ema20_ema50": safe_div(ema20, ema50, default=1.0),
             "macd_diff": w["Close"].ewm(span=12, adjust=False).mean().iloc[-1] - w["Close"].ewm(span=26, adjust=False).mean().iloc[-1],
+            "macd_diff_pct": safe_div(
+                w["Close"].ewm(span=12, adjust=False).mean().iloc[-1] - w["Close"].ewm(span=26, adjust=False).mean().iloc[-1],
+                w["Close"].iloc[-1], default=np.nan
+            ),
             "rsi": rsi_val,
             "atr_pct": safe_div(true_range, w["Close"].iloc[-1], default=0.0),
             "obv": (np.sign(w["Close"].diff()) * w["Volume"]).fillna(0).cumsum().iloc[-1]
@@ -551,37 +629,89 @@ def logistic_predict_probability(model, df):
     except Exception:
         return None
 
+def backtest_score_calibration(df_full, lookahead=5, step=3, min_history=250):
+    """
+    Backtest פשוט לכיול הציון: מריץ את מנוע ההחלטה (compute_breakout_decision)
+    על כל נקודה היסטורית (בצעדים של 'step' ימים כדי לחסוך זמן ריצה), ובודק אם
+    בפועל התרחשה פריצה מעל שיא 20 הימים הקודמים תוך 'lookahead' ימי מסחר.
+    מחזיר טבלת סיכום לפי דלי-ציון (score bucket) עם שיעור ההצלחה בפועל.
+    שימו לב: זהו backtest פשוט (ללא עמלות/סליפג'), נועד לכיול הציון בלבד ולא לבדיקת אסטרטגיית מסחר מלאה.
+    """
+    try:
+        n = len(df_full)
+        if n < min_history + lookahead + 10:
+            return None, None
+
+        scores, outcomes, dates = [], [], []
+        for i in range(min_history, n - lookahead, step):
+            slice_df = df_full.iloc[:i + 1]
+            res = compute_breakout_decision(slice_df)
+            score = res["score"]
+
+            window_high = df_full["High"].iloc[max(0, i - 19):i + 1].max()
+            future = df_full["Close"].iloc[i + 1:i + 1 + lookahead]
+            if future.empty or is_bad(window_high):
+                continue
+            broke = bool(future.max() > window_high * 1.005)
+
+            scores.append(score)
+            outcomes.append(1 if broke else 0)
+            dates.append(df_full.index[i])
+
+        if not scores:
+            return None, None
+
+        bt_df = pd.DataFrame({"date": dates, "score": scores, "outcome": outcomes})
+        bins = [0, 40, 55, 70, 85, 101]
+        labels = ["0-39 (חלש)", "40-54 (בינוני)", "55-69 (טוב)", "70-84 (חזק)", "85-100 (מצוין)"]
+        bt_df["bucket"] = pd.cut(bt_df["score"], bins=bins, labels=labels, right=False)
+
+        summary = bt_df.groupby("bucket", observed=True).agg(
+            מקרים=("outcome", "size"),
+            שיעור_הצלחה=("outcome", "mean")
+        ).reset_index()
+        summary["שיעור_הצלחה"] = (summary["שיעור_הצלחה"] * 100).round(1)
+        summary = summary.rename(columns={"bucket": "טווח ציון"})
+        return summary, bt_df
+    except Exception:
+        return None, None
+
 def statistical_similarity_prediction(df, tolerance=0.15, lookahead=5):
+    """
+    מחפש חלונות היסטוריים 'דומים' להיום ובודק כמה מהם פרצו בעבר.
+    שימוש בנרמול z-score (במקום השוואת % גולמי) כדי שהמדדים לא יוטו
+    ע"י סקאלת המחיר של המניה (macd_diff, std20 בדולרים משתנים לפי מחיר המניה).
+    """
     try:
         feats = compute_features_for_ml(df, window=20)
         if feats.empty:
             return {"count": 0, "successes": 0, "rate": 0.0}
         clean = feats.dropna()
-        if clean.empty or len(clean) < 2:
+        if clean.empty or len(clean) < 5:
             return {"count": 0, "successes": 0, "rate": 0.0}
+
+        feature_keys = ["std20_pct", "rvol", "ema20_ema50", "macd_diff_pct", "rsi"]
+        feature_keys = [k for k in feature_keys if k in clean.columns]
+
         target = clean.iloc[-1]
         candidates = clean.iloc[:-1]
         if candidates.empty:
             return {"count": 0, "successes": 0, "rate": 0.0}
 
-        def similar(row):
-            try:
-                for k in ["std20", "rvol", "ema20_ema50", "macd_diff", "rsi"]:
-                    if k not in row or k not in target:
-                        continue
-                    a = float(row[k])
-                    b = float(target[k])
-                    if b == 0:
-                        if abs(a - b) > 1e-6:
-                            return False
-                        continue
-                    if abs(a - b) / (abs(b) + 1e-9) > tolerance:
-                        return False
-                return True
-            except Exception:
-                return False
+        means = candidates[feature_keys].mean()
+        stds = candidates[feature_keys].std().replace(0, np.nan).fillna(1.0)
 
-        sim = candidates[candidates.apply(similar, axis=1)]
+        target_z = (target[feature_keys] - means) / stds
+        cand_z = (candidates[feature_keys] - means) / stds
+
+        # מרחק אוקלידי מנורמל בין כל חלון היסטורי לבין המצב הנוכחי
+        dist = np.sqrt(((cand_z - target_z) ** 2).sum(axis=1))
+
+        # סף מרחק נגזר מסליידר הטולרנס (0.05-0.5) → סקאלת z-score סבירה
+        distance_threshold = tolerance * np.sqrt(len(feature_keys)) * 2.5
+
+        sim_mask = dist <= distance_threshold
+        sim = candidates[sim_mask]
         count = len(sim)
         successes = int(sim['label'].sum()) if 'label' in sim.columns else 0
         rate = (successes / count) if count > 0 else 0.0
@@ -589,36 +719,82 @@ def statistical_similarity_prediction(df, tolerance=0.15, lookahead=5):
     except Exception:
         return {"count": 0, "successes": 0, "rate": 0.0}
 
+def find_swing_points(df, order=3, window=60):
+    """
+    זיהוי נקודות תפנית אמיתיות (fractals) - נקודה נחשבת שיא/שפל מקומי
+    אם היא הגבוהה/הנמוכה ביותר ב-'order' ימים לפני ואחריה משני הצדדים.
+    מחזיר רשימות של (אינדקס, מחיר) לשיאים ולשפלים בטווח האחרון.
+    """
+    w = df.tail(window)
+    highs = w["High"].values
+    lows = w["Low"].values
+    n = len(w)
+    swing_highs, swing_lows = [], []
+    for i in range(order, n - order):
+        h_window = highs[i - order:i + order + 1]
+        l_window = lows[i - order:i + order + 1]
+        if highs[i] == h_window.max():
+            swing_highs.append((i, highs[i]))
+        if lows[i] == l_window.min():
+            swing_lows.append((i, lows[i]))
+    return swing_highs, swing_lows
+
 def pattern_detection_vcp_like(df):
+    """
+    זיהוי VCP (Volatility Contraction Pattern) מבוסס נקודות תפנית אמיתיות,
+    במקום דגימה גסה כל שליש מהחלון. בודק: שיאים יורדים, שפלים עולים,
+    וכיווץ מתקדם (כל תנודה קטנה מקודמתה - התבנית האמיתית של VCP).
+    """
     try:
-        window = 30
+        window = 60
         if len(df) < window:
-            return {"match": False, "desc": "לא מספיק נתונים לתבנית"}
+            return {"match": False, "desc": "לא מספיק נתונים לתבנית", "contractions": 0}
+
+        swing_highs, swing_lows = find_swing_points(df, order=3, window=window)
+
+        if len(swing_highs) < 2 or len(swing_lows) < 2:
+            return {"match": False, "desc": "לא נמצאו מספיק נקודות תפנית", "contractions": 0}
+
+        recent_highs = [p for _, p in swing_highs[-4:]]
+        recent_lows = [p for _, p in swing_lows[-4:]]
+
+        lower_highs = len(recent_highs) >= 2 and all(
+            recent_highs[i] >= recent_highs[i + 1] for i in range(len(recent_highs) - 1)
+        )
+        higher_lows = len(recent_lows) >= 2 and all(
+            recent_lows[i] <= recent_lows[i + 1] for i in range(len(recent_lows) - 1)
+        )
+
+        # מדידת כיווץ אמיתי: טווח (high-low) של כל "גל" בין שיא לשפל עוקבים,
+        # ובודקים שהטווחים הולכים ומצטמצמים - זהו הליבה של VCP אמיתי.
+        swings = sorted(swing_highs + swing_lows, key=lambda x: x[0])
+        wave_ranges = []
+        for i in range(1, len(swings)):
+            wave_ranges.append(abs(swings[i][1] - swings[i - 1][1]))
+        contractions = 0
+        if len(wave_ranges) >= 2:
+            for i in range(1, len(wave_ranges)):
+                if wave_ranges[i] < wave_ranges[i - 1]:
+                    contractions += 1
+        contraction_ratio = contractions / max(1, len(wave_ranges) - 1) if wave_ranges else 0
+        compression = contraction_ratio >= 0.5
+
         w = df.tail(window)
-        highs = w["High"].values
-        lows = w["Low"].values
-        step_h = max(1, len(highs) // 3)
-        step_l = max(1, len(lows) // 3)
-        peaks = [highs[i] for i in range(0, len(highs), step_h)]
-        troughs = [lows[i] for i in range(0, len(lows), step_l)]
-
-        lower_highs = len(peaks) >= 2 and all(peaks[i] > peaks[i + 1] for i in range(len(peaks) - 1))
-        higher_lows = len(troughs) >= 2 and all(troughs[i] < troughs[i + 1] for i in range(len(troughs) - 1))
-
         std_vals = w["Close"].rolling(10).std().dropna()
         std_trend = np.polyfit(range(len(std_vals)), std_vals, 1)[0] if len(std_vals) > 2 else 0
-        compression = std_trend < 0
+        std_declining = std_trend < 0
 
-        match = lower_highs and higher_lows and compression
+        match = lower_highs and higher_lows and compression and std_declining
         desc = []
-        if lower_highs: desc.append("Lower highs")
-        if higher_lows: desc.append("Higher lows")
-        if compression: desc.append("STD יורד (דחיסה)")
+        if lower_highs: desc.append("שיאים יורדים")
+        if higher_lows: desc.append("שפלים עולים")
+        if compression: desc.append(f"{contractions} כיווצים עוקבים")
+        if std_declining: desc.append("סטיית תקן יורדת")
         if not desc:
             desc = ["לא נמצאו סימני VCP ברורים"]
-        return {"match": bool(match), "desc": "; ".join(desc)}
+        return {"match": bool(match), "desc": "; ".join(desc), "contractions": contractions}
     except Exception:
-        return {"match": False, "desc": "שגיאה בזיהוי תבנית"}
+        return {"match": False, "desc": "שגיאה בזיהוי תבנית", "contractions": 0}
 
 # ============================
 # שמירת תחזיות ופעולות מחיקה
@@ -886,9 +1062,15 @@ with tab1:
 
     min_score = st.sidebar.slider("ציון מינימלי להצגה:", 0, 100, 60)
     max_tickers = st.sidebar.number_input("מקסימום טיקרים לסריקה:", min_value=10, max_value=1000, value=200, step=10)
+    min_dollar_vol = st.sidebar.number_input(
+        "מינימום מחזור מסחר יומי ($):", min_value=0, max_value=100_000_000,
+        value=2_000_000, step=500_000,
+        help="מניות עם מחזור מסחר דולרי (מחיר × נפח ממוצע) נמוך מהסף יסוננו — נמנע מנזילות דלה שמעוותת אותות."
+    )
 
     if st.sidebar.button("🗑️ נקה מטמון מחירים (רענון נתונים)"):
         load_history.clear()
+        load_benchmark.clear()
         st.sidebar.success("המטמון נוקה — הריצה הבאה תביא נתונים עדכניים")
 
     st.sidebar.markdown("---")
@@ -904,6 +1086,9 @@ with tab1:
             progress = st.progress(0, text="מתחיל סריקה...")
             total = len(tickers)
             errors = []
+            skipped_liquidity = []
+
+            benchmark_df = load_benchmark(period="12mo")
 
             for i, ticker in enumerate(tickers):
                 progress.progress((i + 1) / total, text=f"בודק {ticker} ({i+1}/{total})")
@@ -913,7 +1098,16 @@ with tab1:
                         results.append({"Ticker": ticker, "Score": 0, "Confidence": 0, "Risk": 100,
                                          "Price": np.nan, "Note": "אין נתונים", "SavedAt": ""})
                         continue
-                    df = add_indicators(df)
+
+                    # --- סינון נזילות: מחזור מסחר דולרי ממוצע מתחת לסף לא ייכלל בתוצאות ---
+                    avg_vol_20 = df["Volume"].tail(20).mean()
+                    last_price_raw = safe_last(df["Close"])
+                    dollar_vol = (avg_vol_20 * last_price_raw) if not is_bad(last_price_raw) else 0
+                    if min_dollar_vol > 0 and dollar_vol < min_dollar_vol:
+                        skipped_liquidity.append(ticker)
+                        continue
+
+                    df = add_indicators(df, benchmark_df=benchmark_df)
                     res = compute_breakout_decision(df)
                     last_close = safe_last(df["Close"])
                     results.append({
@@ -932,6 +1126,9 @@ with tab1:
                     errors.append(f"{ticker}: {e}")
 
             progress.empty()
+            if skipped_liquidity:
+                st.caption(f"💧 {len(skipped_liquidity)} טיקרים סוננו בשל נזילות נמוכה מהסף שהוגדר: "
+                            f"{', '.join(skipped_liquidity[:15])}{' ...' if len(skipped_liquidity) > 15 else ''}")
             if errors:
                 with st.expander(f"⚠️ {len(errors)} טיקרים נכשלו בסריקה — לחץ לפרטים"):
                     for e in errors:
@@ -1009,7 +1206,23 @@ with tab1:
                 st.markdown(f"**סטטוס:** {score_badge_html(res['score'])}", unsafe_allow_html=True)
 
                 with st.expander("📊 רכיבי ניקוד מפורטים"):
-                    comp_df = pd.DataFrame.from_dict(res["components"], orient="index", columns=["ערך"]).sort_values("ערך", ascending=False)
+                    comp_labels = {
+                        "compression": "דחיסת מחיר (Squeeze)",
+                        "rvol": "נפח יחסי (RVOL)",
+                        "trend": "טרנד EMA20/50",
+                        "macd": "MACD",
+                        "rsi": "RSI",
+                        "institutional": "כסף מוסדי (OBV/AD)",
+                        "proximity": "קרבה לשיא 20 יום",
+                        "squeeze": "Squeeze פעיל כרגע",
+                        "squeeze_duration": "משך ה-Squeeze",
+                        "risk": "ניקוד סיכון (נמוך=טוב)",
+                        "stage2": "מגמת-על (Stage 2)",
+                        "relative_strength": "חוזק יחסי מול SPY",
+                        "volume_quality": "איכות נפח (קונים/מוכרים)",
+                    }
+                    comps_named = {comp_labels.get(k, k): v for k, v in res["components"].items()}
+                    comp_df = pd.DataFrame.from_dict(comps_named, orient="index", columns=["ערך"]).sort_values("ערך", ascending=False)
                     st.dataframe(comp_df, use_container_width=True,
                                  column_config={"ערך": st.column_config.ProgressColumn("ערך", min_value=0, max_value=100, format="%d")})
 
@@ -1047,7 +1260,8 @@ with tab1:
                             if hist_full.empty:
                                 st.error("אין היסטוריית מחירים מספקת לחיזוי")
                             else:
-                                hist_full = add_indicators(hist_full)
+                                bench_full = load_benchmark(period="24mo")
+                                hist_full = add_indicators(hist_full, benchmark_df=bench_full)
                                 stat = statistical_similarity_prediction(hist_full, tolerance=stat_tol / 100.0, lookahead=lookahead)
                                 pat = pattern_detection_vcp_like(hist_full)
                                 model = train_logistic_model(hist_full)
@@ -1086,6 +1300,43 @@ with tab1:
                                 save_single_scan_result(scan_row)
                         except Exception as e:
                             st.error(f"שגיאה בהרצת חיזוי: {e}")
+
+                # ---------- Backtest לכיול הציון ----------
+                st.markdown("---")
+                st.markdown("### 🧪 Backtest — האם הציון באמת עובד?")
+                st.caption("בודק היסטורית: כשהמניה קיבלה ציון מסוים, כמה פעמים היא באמת פרצה תוך כמה ימים. "
+                           "עוזר לכייל את 'ציון מינימלי להצגה' בסיידבר לספי ציון שבאמת מתאמים להצלחה.")
+                bt_col1, bt_col2 = st.columns([3, 1])
+                with bt_col1:
+                    bt_lookahead = st.select_slider("חלון בדיקת פריצה (ימים):", options=[3, 5, 7, 10], value=5, key=f"bt_look_{to_view}")
+                with bt_col2:
+                    st.write("")
+                    run_bt = st.button("הרץ Backtest", key=f"bt_btn_{to_view}", use_container_width=True)
+
+                if run_bt:
+                    with st.spinner("מריץ Backtest היסטורי... (עשוי לקחת כמה שניות)"):
+                        bt_hist = load_history(to_view, period="5y")
+                        if bt_hist.empty or len(bt_hist) < 300:
+                            st.warning("אין מספיק היסטוריה (נדרשים לפחות ~300 ימי מסחר) להרצת Backtest אמין.")
+                        else:
+                            bt_bench = load_benchmark(period="5y")
+                            bt_hist_full = add_indicators(bt_hist, benchmark_df=bt_bench)
+                            summary, raw_bt = backtest_score_calibration(bt_hist_full, lookahead=bt_lookahead, step=3)
+                            if summary is None or summary.empty:
+                                st.warning("לא הצלחנו להריץ Backtest עבור טיקר זה (ייתכן חוסר בנתונים).")
+                            else:
+                                st.dataframe(
+                                    summary, use_container_width=True, hide_index=True,
+                                    column_config={
+                                        "שיעור_הצלחה": st.column_config.ProgressColumn("שיעור הצלחה (%)", min_value=0, max_value=100, format="%.1f%%"),
+                                        "מקרים": st.column_config.NumberColumn("מס' מקרים היסטוריים"),
+                                    }
+                                )
+                                overall_rate = round(raw_bt["outcome"].mean() * 100, 1)
+                                st.caption(f"שיעור פריצה כללי (בסיס להשוואה, ללא תלות בציון): **{overall_rate}%** "
+                                           f"מתוך {len(raw_bt)} נקודות היסטוריות שנבדקו.")
+                                st.info("💡 אם שיעור ההצלחה בדליים הגבוהים (70+) גבוה משמעותית מהשיעור הכללי — "
+                                        "סימן שהציון אכן מוסיף ערך חיזוי עבור המניה הזו.")
             else:
                 st.warning("אין פרטים לטיקר זה")
 
