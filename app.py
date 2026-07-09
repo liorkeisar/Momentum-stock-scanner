@@ -5,7 +5,9 @@ import pandas as pd
 import numpy as np
 import os
 import glob
-from datetime import datetime
+import requests
+import xml.etree.ElementTree as ET
+from datetime import datetime, timedelta
 from plotly.subplots import make_subplots
 import plotly.graph_objects as go
 
@@ -273,6 +275,14 @@ def safe_div(a, b, default=1.0):
     except Exception:
         return default
 
+def safe_div_series(numerator, denominator):
+    """חילוק בטוח בין שני Series - מחליף מכנה 0/NaN ב-NaN במקום לזרוק שגיאה."""
+    try:
+        denom = denominator.replace(0, np.nan)
+        return numerator / denom
+    except Exception:
+        return pd.Series(np.nan, index=numerator.index if hasattr(numerator, "index") else None)
+
 def validate_df(df, required_cols=None):
     if df is None or df.empty:
         return False, "DataFrame ריק"
@@ -345,6 +355,152 @@ def load_benchmark(period="24mo"):
     """טעינת מדד ייחוס (SPY) לחישוב חוזק יחסי."""
     return load_history(BENCHMARK_TICKER, period=period)
 
+# ============================
+# איתור קניות/מכירות Insider — SEC EDGAR (Form 4)
+# ============================
+# זהו המקור הכי "חד משמעי" שאפשר לשלב בחינם: Form 4 הוא גילוי רגולטורי מחייב
+# (SEC) על כל עסקת קנייה/מכירה של דירקטורים ומנהלים בכירים, מוגש תוך יומיים
+# עסקים. זה לא "מוסדי" במובן של קרנות גדולות (לזה יש 13F/13D, ברבעון/בפיגור),
+# אבל זו העסקה הכי קרובה ל"מישהו בפנים קונה במזומן משלו" שיש בציבור.
+#
+# ⚠️ הערה חשובה: SEC דורשת User-Agent מזוהה עם פרטי קשר אמיתיים (מדיניות
+# Fair Access). יש לעדכן את הכתובת למטה לכתובת מייל אמיתית שלך לפני שימוש
+# מסחרי/תכוף, אחרת הבקשות עלולות להיחסם.
+SEC_USER_AGENT = "WyckoffProScanner/1.0 (contact: your-email@example.com)"
+
+@st.cache_data(ttl=86400, show_spinner=False)
+def load_sec_ticker_cik_map():
+    """טוען מיפוי טיקר -> CIK (מזהה חברה ב-SEC). מתעדכן פעם ביום - הקובץ עצמו משתנה לעיתים רחוקות."""
+    try:
+        headers = {"User-Agent": SEC_USER_AGENT}
+        resp = requests.get("https://www.sec.gov/files/company_tickers.json", headers=headers, timeout=10)
+        resp.raise_for_status()
+        data = resp.json()
+        mapping = {}
+        for row in data.values():
+            try:
+                mapping[str(row["ticker"]).upper()] = str(row["cik_str"]).zfill(10)
+            except Exception:
+                continue
+        return mapping
+    except Exception:
+        return {}
+
+@st.cache_data(ttl=3600, show_spinner=False)
+def fetch_insider_transactions(ticker, lookback_days=90, max_filings=15):
+    """
+    שולף עסקאות Form 4 (קנייה/מכירה בשוק הפתוח ע"י דירקטורים/מנהלים) עבור טיקר,
+    ישירות מ-SEC EDGAR. מחזיר dict עם סיכום קניות/מכירות ורשימת עסקאות בודדות.
+    בכוונה לא נכלל בתוך הסריקה המרוכזת (bulk scan) - מדובר בכמה בקשות רשת
+    לכל טיקר, וזה עלול להיות איטי מדי ולחרוג ממדיניות השימוש ההוגן של SEC
+    כשסורקים מאות טיקרים. משתמשים בזה רק לפי דרישה (כפתור) בדוח המפורט לטיקר בודד.
+    """
+    result = {"buys": 0, "sells": 0, "buy_value": 0.0, "sell_value": 0.0, "transactions": [], "error": None}
+    try:
+        cik_map = load_sec_ticker_cik_map()
+        if not cik_map:
+            result["error"] = "לא ניתן להתחבר ל-SEC EDGAR כרגע (בעיית רשת או חסימה זמנית)"
+            return result
+
+        cik = cik_map.get(ticker.upper())
+        if not cik:
+            result["error"] = "לא נמצא מזהה CIK עבור טיקר זה ב-SEC (ייתכן שזו לא חברה אמריקאית רשומה)"
+            return result
+
+        headers = {"User-Agent": SEC_USER_AGENT}
+        subs_resp = requests.get(f"https://data.sec.gov/submissions/CIK{cik}.json", headers=headers, timeout=10)
+        subs_resp.raise_for_status()
+        subs = subs_resp.json()
+
+        recent = subs.get("filings", {}).get("recent", {})
+        forms = recent.get("form", [])
+        dates = recent.get("filingDate", [])
+        accessions = recent.get("accessionNumber", [])
+        docs = recent.get("primaryDocument", [])
+
+        cutoff = datetime.now() - timedelta(days=lookback_days)
+        candidates = []
+        for i, form in enumerate(forms):
+            if form != "4":
+                continue
+            try:
+                fdate = datetime.strptime(dates[i], "%Y-%m-%d")
+            except Exception:
+                continue
+            if fdate < cutoff:
+                continue
+            candidates.append((fdate, accessions[i], docs[i]))
+
+        candidates.sort(key=lambda x: x[0], reverse=True)
+        candidates = candidates[:max_filings]
+
+        cik_int = int(cik)
+        for fdate, accession, doc in candidates:
+            try:
+                acc_nodash = accession.replace("-", "")
+                url = f"https://www.sec.gov/Archives/edgar/data/{cik_int}/{acc_nodash}/{doc}"
+                r = requests.get(url, headers=headers, timeout=10)
+                if r.status_code != 200 or not r.content:
+                    continue
+                root = ET.fromstring(r.content)
+
+                owner_name = ""
+                owner_el = root.find(".//reportingOwner/reportingOwnerId/rptOwnerName")
+                if owner_el is not None and owner_el.text:
+                    owner_name = owner_el.text
+
+                is_director = root.find(".//reportingOwner/reportingOwnerRelationship/isDirector")
+                is_officer = root.find(".//reportingOwner/reportingOwnerRelationship/isOfficer")
+                role_parts = []
+                if is_director is not None and is_director.text == "1":
+                    role_parts.append("דירקטור")
+                if is_officer is not None and is_officer.text == "1":
+                    role_parts.append("מנהל בכיר")
+                role_str = "/".join(role_parts) if role_parts else "בעל עניין"
+
+                for tx in root.findall(".//nonDerivativeTransaction"):
+                    code_el = tx.find(".//transactionCoding/transactionCode")
+                    shares_el = tx.find(".//transactionAmounts/transactionShares/value")
+                    price_el = tx.find(".//transactionAmounts/transactionPricePerShare/value")
+                    ad_el = tx.find(".//transactionAmounts/transactionAcquiredDisposedCode/value")
+                    if code_el is None or code_el.text is None or shares_el is None or shares_el.text is None:
+                        continue
+
+                    code = code_el.text
+                    try:
+                        shares = float(shares_el.text)
+                    except Exception:
+                        continue
+                    try:
+                        price = float(price_el.text) if (price_el is not None and price_el.text) else 0.0
+                    except Exception:
+                        price = 0.0
+                    ad = ad_el.text if (ad_el is not None and ad_el.text) else ""
+                    value = shares * price
+
+                    # P = רכישה בשוק הפתוח, S = מכירה בשוק הפתוח (קודי עסקה תקניים של SEC)
+                    if code == "P" and ad == "A":
+                        result["buys"] += 1
+                        result["buy_value"] += value
+                        result["transactions"].append({
+                            "date": fdate.strftime("%Y-%m-%d"), "owner": owner_name, "role": role_str,
+                            "type": "קנייה", "shares": shares, "value": value
+                        })
+                    elif code == "S" and ad == "D":
+                        result["sells"] += 1
+                        result["sell_value"] += value
+                        result["transactions"].append({
+                            "date": fdate.strftime("%Y-%m-%d"), "owner": owner_name, "role": role_str,
+                            "type": "מכירה", "shares": shares, "value": value
+                        })
+            except Exception:
+                continue
+
+        return result
+    except Exception as e:
+        result["error"] = f"שגיאה בשליפת נתונים מ-SEC: {e}"
+        return result
+
 def add_indicators(df, benchmark_df=None):
     df = df.copy()
     if df.empty:
@@ -406,11 +562,41 @@ def add_indicators(df, benchmark_df=None):
     down_vol = df["Volume"].where(down_day, 0).rolling(20).sum().replace(0, np.nan)
     df["UpDownVolRatio"] = up_vol / down_vol
 
+    # --- איסוף/ספיגה בזמן ירידה (Wyckoff absorption): איפה הסגירה ביחס לטווח היום,
+    # ממוצע רק על ימים אדומים. CLV חיובי בימי ירידה = קונים נכנסים וסופגים היצע
+    # למרות שהיום נסגר במינוס - זה בדיוק סימן האיסוף השקט שמבקשים לאתר.
+    day_range = (df["High"] - df["Low"]).replace(0, np.nan)
+    clv = ((df["Close"] - df["Low"]) - (df["High"] - df["Close"])) / day_range  # טווח -1 עד 1
+    df["CLV"] = clv
+    df["CLV_DownDays"] = clv.where(down_day)
+    df["AbsorptionScore"] = df["CLV_DownDays"].rolling(30, min_periods=5).mean()
+
+    # --- תנועה "הצידה" בפועל: שיפוע EMA50 מנורמל ב-ATR. ערך קרוב ל-0 = טווח אמיתי
+    # (לא טרנד), בניגוד לכיווץ שקורה בתוך טרנד עולה חד (שגם הוא לגיטימי אבל שונה) ---
+    ema50_change_15d = df["EMA50"] - df["EMA50"].shift(15)
+    df["SidewaysSlope"] = safe_div_series(ema50_change_15d, df["ATR"])
+
     # --- משך ה-Squeeze (כמה ימים רצופים הרצועות בתוך הערוץ) ---
     squeeze_active = (df["UpperBB"] < df["UpperKC"]) & (df["LowerBB"] > df["LowerKC"])
     grp = (~squeeze_active).cumsum()
     df["SqueezeActive"] = squeeze_active
     df["SqueezeStreak"] = squeeze_active.groupby(grp).cumsum()
+
+    # --- "התנגדות ישנה" (Base High) — שיא הבסיס *לפני* הריצה האחרונה ---
+    # תוקן באג: שימוש בשיא 20 יום גולמי ("High20") גורם למניה שכבר פרצה
+    # להראות תמיד "קרובה לשיא" כי החלון הנע פשוט רודף אחרי המחיר החדש.
+    # כאן משתמשים בשיא של חלון ישן יותר (BASE_WINDOW) שמוזז אחורה (RECENT_EXCLUDE)
+    # כדי לשקף את רמת ההתנגדות שנוצרה *לפני* תנועת המחיר האחרונה.
+    BASE_WINDOW, RECENT_EXCLUDE = 50, 12
+    df["BaseHigh"] = df["High"].rolling(BASE_WINDOW).max().shift(RECENT_EXCLUDE)
+
+    # --- מדד "התרחקות" (Extension) ממוצע נע 20 יום, ביחידות ATR ---
+    # מניה שכבר עשתה תנועה חדה ורחוקה מה-EMA20 שלה (במונחי ATR) כבר "רצה" -
+    # זה ההפך מתבנית קדם-פריצה שבה המחיר מהודק ליד הממוצעים.
+    df["ExtensionATR"] = safe_div_series(df["Close"] - df["EMA20"], df["ATR"])
+
+    # --- תשואת 20 יום — אם המניה כבר עלתה חזק לאחרונה, כנראה שהפריצה כבר קרתה ---
+    df["Return20D"] = df["Close"] / df["Close"].shift(20) - 1
 
     # --- חוזק יחסי מול מדד ייחוס (RS Line) ---
     if benchmark_df is not None and not benchmark_df.empty:
@@ -425,9 +611,39 @@ def add_indicators(df, benchmark_df=None):
     return df
 
 
+
 # ============================
 # מנוע החלטה לפני פריצה
 # ============================
+
+def days_since_last_breakout(df, base_window=60, threshold=0.03, search_window=130):
+    """
+    סורק אחורה עד search_window ימים ומאתר את הפעם האחרונה שבה המחיר חצה
+    מעל השיא של base_window הימים שלפניו ביותר מ-threshold. מחזיר כמה ימי מסחר
+    עברו מאז (0 = פרצה היום). זהו האיתור הישיר והאמין ביותר ל"כבר פרצה לפני זמן",
+    בניגוד למדדים רגעיים (extension/proximity) שיכולים "לפספס" פריצה ישנה אם
+    המניה ממשיכה לזחול מעלה בהדרגה בלי לתקן.
+
+    הערה טכנית: החישוב הגלגלי (rolling) מתבצע על כל ההיסטוריה הזמינה ולא רק על
+    חלון חתוך, כדי שלכל יום בטווח החיפוש תמיד יהיה מספיק היסטוריה מאחוריו לחישוב
+    השיא הקודם - חיתוך מוקדם מדי היה עלול "לפספס" בדיוק פריצות שקרו קרוב לקצה החלון.
+    """
+    try:
+        if len(df) < base_window + 5:
+            return None
+        closes = df["Close"]
+        prior_high = closes.rolling(base_window).max().shift(1)
+        breakout_mask = (closes > prior_high * (1 + threshold)) & prior_high.notna()
+
+        recent_mask = breakout_mask.tail(min(search_window, len(breakout_mask)))
+        if not recent_mask.any():
+            return None
+        true_positions = np.where(recent_mask.values)[0]
+        last_true_pos = true_positions[-1]
+        days_since = (len(recent_mask) - 1) - last_true_pos
+        return int(days_since)
+    except Exception:
+        return None
 
 def score_component(value, low, high, invert=False):
     try:
@@ -477,9 +693,20 @@ def compute_breakout_decision(df):
     ad_gain = 1 if (not is_bad(ad_now) and not is_bad(ad_prev) and ad_now > ad_prev) else 0
     comps["institutional"] = int(round(((obv_gain + ad_gain) / 2) * 100))
 
-    high20 = df["High"].rolling(20).max()
-    prox = safe_div(safe_last(df["Close"]), safe_last(high20), default=0.0)
-    comps["proximity"] = score_component(prox, 0.9, 1.02)
+    # --- קרבה לפריצה מול "התנגדות ישנה" (BaseHigh), לא מול שיא 20 יום שרודף אחרי המחיר ---
+    # תוקן באג: קודם נעשה שימוש בשיא 20 יום גולמי, שגורם למניה שכבר פרצה להראות
+    # תמיד "בדיוק בשיא" (כי המחיר עצמו קובע את השיא של החלון הנע). כעת ההשוואה היא
+    # מול רמת ההתנגדות שנוצרה *לפני* התנועה האחרונה - ציון שיא רק כשקרובים אליה
+    # מלמטה, וקנס הולך וגדל ככל שכבר התרחקנו ממנה כלפי מעלה (כלומר כבר פרצנו).
+    base_high = safe_last(df["BaseHigh"]) if "BaseHigh" in df.columns else np.nan
+    prox = safe_div(safe_last(df["Close"]), base_high, default=0.0)
+    if is_bad(prox) or prox <= 0:
+        comps["proximity"] = 0
+    elif prox <= 1.00:
+        comps["proximity"] = score_component(prox, 0.85, 1.00)
+    else:
+        # מעל ההתנגדות הישנה: 100 מיד מעל, יורד לינארית ל-0 ב-15%+ מעליה (כבר פרצה משמעותית)
+        comps["proximity"] = max(0, int(round(100 - ((prox - 1.00) / 0.15) * 100)))
 
     atr_pct = safe_div(safe_last(df["ATR"]), safe_last(df["Close"]), default=0.0)
     comps["risk"] = score_component(atr_pct, 0.0, 0.06, invert=True)
@@ -512,21 +739,49 @@ def compute_breakout_decision(df):
     updown = safe_last(df["UpDownVolRatio"]) if "UpDownVolRatio" in df.columns else np.nan
     comps["volume_quality"] = score_component(updown, 0.6, 2.0) if not is_bad(updown) else 50
 
+    # --- מדד התרחקות (Extension): כמה ATR המחיר רחוק מ-EMA20 ---
+    extension = safe_last(df["ExtensionATR"]) if "ExtensionATR" in df.columns else np.nan
+    comps["extension"] = score_component(extension, 0.5, 4.0, invert=True) if not is_bad(extension) else 50
+
+    # --- איסוף/ספיגה בזמן ירידה (Wyckoff absorption) - הרכיב המרכזי המבוקש:
+    # CLV ממוצע חיובי בימי ירידה = המחיר נסגר קרוב לשיא הטווח היומי למרות יום אדום,
+    # כלומר יש קונים שסופגים היצע בזמן חולשה - זהו איתות איסוף שקט אמיתי. ---
+    absorption = safe_last(df["AbsorptionScore"]) if "AbsorptionScore" in df.columns else np.nan
+    comps["absorption"] = score_component(absorption, -0.3, 0.3) if not is_bad(absorption) else 50
+
+    # --- תנועה "הצידה" בפועל (לא טרנד) - שיפוע EMA50 מנורמל ב-ATR קרוב ל-0 ---
+    sideways_slope = safe_last(df["SidewaysSlope"]) if "SidewaysSlope" in df.columns else np.nan
+    comps["sideways"] = score_component(abs(sideways_slope) if not is_bad(sideways_slope) else np.nan, 0, 2.5, invert=True) if not is_bad(sideways_slope) else 50
+
     weights = {
-        "compression": 0.12, "rvol": 0.08, "trend": 0.06, "macd": 0.05, "rsi": 0.04,
-        "institutional": 0.06, "proximity": 0.08, "squeeze": 0.04, "squeeze_duration": 0.06,
-        "risk": 0.04, "stage2": 0.13, "relative_strength": 0.14, "volume_quality": 0.10
+        "compression": 0.08, "rvol": 0.05, "trend": 0.04, "macd": 0.03, "rsi": 0.03,
+        "institutional": 0.04, "proximity": 0.06, "squeeze": 0.02, "squeeze_duration": 0.04,
+        "risk": 0.03, "stage2": 0.11, "relative_strength": 0.11, "volume_quality": 0.06,
+        "extension": 0.08, "absorption": 0.12, "sideways": 0.10
     }
 
     final_score = sum(comps.get(k, 0) * w for k, w in weights.items())
     final_score = int(round(final_score))
 
-    # וטו קשיח: אם מגמת-העל שבורה לגמרי (מתחת ל-SMA200 יורד), נכסה משמעותית את הציון
-    # כדי למנוע false positive על מניה שנמצאת בטרנד יורד ארוך-טווח
+    # וטו קשיח #1: מגמת-על שבורה (מתחת ל-SMA200 יורד)
     hard_downtrend = (not is_bad(close_now) and not is_bad(sma200) and not is_bad(sma200_slope)
                        and close_now < sma200 and sma200_slope < 0)
     if hard_downtrend:
         final_score = min(final_score, 35)
+
+    # וטו קשיח #2: המניה כבר פרצה משמעותית מעל ההתנגדות הישנה ו/או רחוקה מדי מהממוצעים,
+    # ו/או שהפריצה בפועל כבר קרתה לפני יותר מ-2 שבועות (גם אם היא ממשיכה לזחול מעלה בהדרגה) -
+    # זו כבר לא "קדם-פריצה", היא פריצה שכבר קרתה. זה הבאג הספציפי שדווח (למשל CCO).
+    ret20 = safe_last(df["Return20D"]) if "Return20D" in df.columns else np.nan
+    days_since_bo = days_since_last_breakout(df, base_window=60, threshold=0.03, search_window=130)
+    already_broken_out = (
+        (not is_bad(prox) and prox > 1.10) or
+        (not is_bad(extension) and extension > 4.0) or
+        (not is_bad(ret20) and ret20 > 0.25) or
+        (days_since_bo is not None and days_since_bo > 10)
+    )
+    if already_broken_out:
+        final_score = min(final_score, 30)
 
     strong = sum(1 for v in comps.values() if v >= 70)
     confidence = int(round((strong / len(comps)) * 100)) if len(comps) > 0 else 0
@@ -543,8 +798,15 @@ def compute_breakout_decision(df):
     if comps.get("stage2", 0) == 100: notes.append("מגמת-על בריאה (Stage 2)")
     if comps.get("relative_strength", 0) >= 70: notes.append("חוזק יחסי למדד")
     if comps.get("volume_quality", 0) >= 70: notes.append("נפח קונים דומיננטי")
+    if comps.get("absorption", 0) >= 70: notes.append("איסוף שקט בזמן ירידה (ספיגת היצע)")
+    if comps.get("sideways", 0) >= 75: notes.append("מגמה הצידה (טווח אמיתי)")
     if hard_downtrend: notes.append("⚠️ מגמת-על יורדת — סיכון גבוה")
-    if not is_bad(prox) and prox < 0.95: notes.append("עדיין רחוק מהפריצה")
+    if already_broken_out:
+        if days_since_bo is not None and days_since_bo > 10:
+            notes.append(f"⚠️ המניה כבר פרצה לפני כ-{days_since_bo} ימי מסחר — לא קדם-פריצה")
+        else:
+            notes.append("⚠️ נראה שהמניה כבר פרצה/מורחקת מהבסיס — לא אידיאלית לכניסה כ'קדם-פריצה'")
+    if not already_broken_out and not is_bad(prox) and prox < 0.95: notes.append("עדיין רחוק מהפריצה")
     note = ", ".join(notes) if notes else "אין אותות חזקים"
 
     return {"score": final_score, "confidence": confidence, "risk": risk_metric, "components": comps, "note": note}
@@ -1213,13 +1475,16 @@ with tab1:
                         "macd": "MACD",
                         "rsi": "RSI",
                         "institutional": "כסף מוסדי (OBV/AD)",
-                        "proximity": "קרבה לשיא 20 יום",
+                        "proximity": "קרבה להתנגדות ישנה (לפני הריצה)",
                         "squeeze": "Squeeze פעיל כרגע",
                         "squeeze_duration": "משך ה-Squeeze",
                         "risk": "ניקוד סיכון (נמוך=טוב)",
                         "stage2": "מגמת-על (Stage 2)",
                         "relative_strength": "חוזק יחסי מול SPY",
                         "volume_quality": "איכות נפח (קונים/מוכרים)",
+                        "extension": "התרחקות מהממוצע (Extension)",
+                        "absorption": "איסוף בזמן ירידה (Wyckoff Absorption)",
+                        "sideways": "תנועה הצידה (טווח, לא טרנד)",
                     }
                     comps_named = {comp_labels.get(k, k): v for k, v in res["components"].items()}
                     comp_df = pd.DataFrame.from_dict(comps_named, orient="index", columns=["ערך"]).sort_values("ערך", ascending=False)
@@ -1337,6 +1602,47 @@ with tab1:
                                            f"מתוך {len(raw_bt)} נקודות היסטוריות שנבדקו.")
                                 st.info("💡 אם שיעור ההצלחה בדליים הגבוהים (70+) גבוה משמעותית מהשיעור הכללי — "
                                         "סימן שהציון אכן מוסיף ערך חיזוי עבור המניה הזו.")
+
+                # ---------- אימות Insider Buying (SEC EDGAR) ----------
+                st.markdown("---")
+                st.markdown("### 🕵️ אימות קניות/מכירות Insider (SEC EDGAR)")
+                st.caption("Form 4 הוא גילוי רגולטורי מחייב על עסקאות דירקטורים/מנהלים בכירים - "
+                           "האות הכי 'חד משמעי' שאפשר לקבל בחינם על מישהו שקונה בכסף אמיתי משלו. "
+                           "לא מבוצע אוטומטית בסריקה (כדי לא להעמיס על שרתי SEC) - רק לפי דרישה כאן.")
+                run_insider = st.button("בדוק עסקאות Insider ב-90 הימים האחרונים", key=f"insider_btn_{to_view}")
+
+                if run_insider:
+                    with st.spinner("שולף נתונים מ-SEC EDGAR..."):
+                        ins = fetch_insider_transactions(to_view, lookback_days=90, max_filings=15)
+
+                    if ins.get("error"):
+                        st.warning(f"⚠️ {ins['error']}")
+                    elif ins["buys"] == 0 and ins["sells"] == 0:
+                        st.info("לא נמצאו עסקאות Insider בשוק הפתוח ב-90 הימים האחרונים עבור טיקר זה.")
+                    else:
+                        ic1, ic2, ic3 = st.columns(3)
+                        ic1.metric("קניות Insider", ins["buys"], f"${ins['buy_value']:,.0f}")
+                        ic2.metric("מכירות Insider", ins["sells"], f"${ins['sell_value']:,.0f}")
+                        net = ins["buy_value"] - ins["sell_value"]
+                        ic3.metric("נטו (קנייה מינוס מכירה)", f"${net:,.0f}")
+
+                        if ins["buys"] > 0 and ins["buy_value"] > ins["sell_value"]:
+                            st.success("✅ קנייה נטו ע\"י אנשי פנים ב-90 הימים האחרונים — אישוש חיובי לתזה.")
+                        elif ins["sells"] > ins["buys"] * 2:
+                            st.caption("ℹ️ יש יותר מכירות מקניות - שים לב שמכירות insider הן לרוב שגרתיות "
+                                       "(תוכניות 10b5-1, מימוש אופציות) ולא בהכרח סימן שלילי, בניגוד לקנייה "
+                                       "בשוק הפתוח שהיא כמעט תמיד יזומה ומכוונת.")
+
+                        tx_df = pd.DataFrame(ins["transactions"]).sort_values("date", ascending=False)
+                        st.dataframe(
+                            tx_df, use_container_width=True, hide_index=True,
+                            column_config={
+                                "date": "תאריך", "owner": "שם", "role": "תפקיד", "type": "סוג עסקה",
+                                "shares": st.column_config.NumberColumn("מניות", format="%d"),
+                                "value": st.column_config.NumberColumn("שווי ($)", format="$%.0f"),
+                            }
+                        )
+
             else:
                 st.warning("אין פרטים לטיקר זה")
 
