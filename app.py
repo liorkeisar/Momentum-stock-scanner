@@ -23,13 +23,15 @@ except Exception:
 # ============================
 st.set_page_config(page_title="Wyckoff Pro — Swing Scanner", layout="wide", page_icon="◈")
 
-ACCENT = "#00e08f"      # ירוק מנטה — צבע אקסנט ראשי
-ACCENT_DARK = "#00c47d"
+ACCENT = "#f2a93b"      # כתום-ענבר — צבע אקסנט ראשי (בהשראת עיצוב SwingAI)
+ACCENT_DARK = "#d98f1f"
 BG = "#0b0f17"          # רקע ראשי כהה
 PANEL = "#12161f"       # רקע כרטיסים/פאנלים
 PANEL_ALT = "#171c28"   # רקע שדות קלט
 BORDER = "#242a38"      # גבולות עדינים
 TEXT_MUTED = "#8891a5"
+BUY_COLOR = "#22c55e"   # ירוק - קנייה
+SELL_COLOR = "#ef4444"  # אדום - מכירה
 
 st.markdown(f"""
 <style>
@@ -71,8 +73,8 @@ st.markdown(f"""
     .app-header .title .accent {{ color: {ACCENT}; }}
     .app-header .subtitle {{ color: {TEXT_MUTED}; font-size: 13px; margin-top: 2px; }}
     .status-chip {{
-        background: rgba(0,224,143,0.10);
-        border: 1px solid rgba(0,224,143,0.35);
+        background: rgba(242,169,59,0.12);
+        border: 1px solid rgba(242,169,59,0.35);
         color: {ACCENT};
         padding: 7px 16px;
         border-radius: 30px;
@@ -80,6 +82,68 @@ st.markdown(f"""
         font-size: 13px;
         white-space: nowrap;
     }}
+
+    /* ---------- שורת מדדי שוק (Ticker) ---------- */
+    .ticker-row {{
+        display: flex; gap: 10px; overflow-x: auto; padding: 4px 2px 14px 2px;
+        margin-bottom: 4px;
+    }}
+    .ticker-card {{
+        flex: 0 0 auto;
+        background: {PANEL};
+        border: 1px solid {BORDER};
+        border-radius: 12px;
+        padding: 10px 16px;
+        min-width: 108px;
+        text-align: center;
+    }}
+    .ticker-name {{ font-size: 11px; color: {TEXT_MUTED}; font-weight: 700; letter-spacing: 0.4px; }}
+    .ticker-val {{ font-size: 17px; font-weight: 800; color: #f2f4f8; margin-top: 2px; }}
+    .ticker-chg {{ font-size: 12px; font-weight: 700; margin-top: 2px; }}
+
+    /* ---------- שורת סטטיסטיקות (Pills) ---------- */
+    .stat-pill-row {{ display: flex; gap: 10px; margin: 6px 0 16px 0; flex-wrap: wrap; }}
+    .stat-pill {{
+        flex: 1; min-width: 90px; text-align: center;
+        background: {PANEL}; border: 1px solid {BORDER}; border-radius: 12px; padding: 12px 8px;
+    }}
+    .stat-pill .num {{ font-size: 22px; font-weight: 800; }}
+    .stat-pill .lbl {{ font-size: 11.5px; color: {TEXT_MUTED}; margin-top: 2px; }}
+
+    /* ---------- כרטיס מניה בפיד ---------- */
+    .stock-card {{
+        background: {PANEL}; border: 1px solid {BORDER}; border-radius: 16px;
+        padding: 16px 18px; margin-bottom: 12px;
+    }}
+    .stock-card-top {{ display: flex; justify-content: space-between; align-items: flex-start; }}
+    .stock-ticker {{ font-size: 19px; font-weight: 800; color: #f2f4f8; }}
+    .stock-sub {{ font-size: 12.5px; color: {TEXT_MUTED}; margin-top: 2px; }}
+    .tag {{
+        display: inline-block; padding: 3px 10px; border-radius: 20px;
+        font-size: 11.5px; font-weight: 700; margin-inline-end: 6px;
+    }}
+    .tag-buy {{ background: rgba(34,197,94,0.14); color: {BUY_COLOR}; border: 1px solid rgba(34,197,94,0.35); }}
+    .tag-sell {{ background: rgba(239,68,68,0.14); color: {SELL_COLOR}; border: 1px solid rgba(239,68,68,0.35); }}
+    .tag-neutral {{ background: rgba(148,163,184,0.14); color: #94a3b8; border: 1px solid rgba(148,163,184,0.30); }}
+    .tag-strength {{ background: {PANEL_ALT}; color: #cbd5e1; border: 1px solid {BORDER}; }}
+
+    .stock-note {{ color: #b7c0d8; font-size: 13px; margin: 10px 0 12px 0; line-height: 1.6; }}
+
+    .stat-grid {{ display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; }}
+    .stat-box {{ background: {PANEL_ALT}; border: 1px solid {BORDER}; border-radius: 10px; padding: 8px 6px; text-align: center; }}
+    .stat-box .lbl {{ font-size: 10.5px; color: {TEXT_MUTED}; }}
+    .stat-box .val {{ font-size: 14px; font-weight: 800; margin-top: 2px; }}
+
+    .ai-gauge {{
+        width: 58px; height: 58px; border-radius: 50%; flex-shrink: 0;
+        display: flex; align-items: center; justify-content: center;
+    }}
+    .ai-gauge-inner {{
+        width: 46px; height: 46px; border-radius: 50%; background: {PANEL};
+        display: flex; flex-direction: column; align-items: center; justify-content: center;
+    }}
+    .ai-gauge-inner .score {{ font-size: 15px; font-weight: 800; line-height: 1; }}
+    .ai-gauge-inner .lbl {{ font-size: 8px; color: {TEXT_MUTED}; margin-top: 1px; letter-spacing: 0.5px; }}
 
     /* ---------- באנר אזהרה ---------- */
     .top-banner {{
@@ -354,6 +418,44 @@ BENCHMARK_TICKER = "SPY"
 def load_benchmark(period="24mo"):
     """טעינת מדד ייחוס (SPY) לחישוב חוזק יחסי."""
     return load_history(BENCHMARK_TICKER, period=period)
+
+@st.cache_data(ttl=300, show_spinner=False)
+def load_market_indices():
+    """
+    טוען מדדי שוק מרכזיים לשורת הטיקר העליונה (בהשראת עיצוב SwingAI).
+    כל מדד: (מחיר אחרון, שינוי יומי ב-%). כשל בטיקר בודד לא מפיל את כל השורה.
+    """
+    indices = {"S&P 500": "^GSPC", "NASDAQ": "^IXIC", "DOW": "^DJI", "VIX": "^VIX", "USD/ILS": "ILS=X"}
+    out = {}
+    for name, ticker in indices.items():
+        try:
+            hist = yf.Ticker(ticker).history(period="5d")
+            if len(hist) >= 2:
+                last = float(hist["Close"].iloc[-1])
+                prev = float(hist["Close"].iloc[-2])
+                chg_pct = ((last - prev) / prev * 100) if prev != 0 else 0.0
+                out[name] = (last, chg_pct)
+        except Exception:
+            continue
+    return out
+
+def render_market_ticker():
+    """מציג שורת כרטיסי מדדים עליונה, בסגנון SwingAI."""
+    idx = load_market_indices()
+    if not idx:
+        return
+    cards_html = ""
+    for name, (val, chg) in idx.items():
+        color = BUY_COLOR if chg >= 0 else SELL_COLOR
+        sign = "+" if chg >= 0 else ""
+        val_fmt = f"{val:,.2f}" if val < 100 else f"{val:,.0f}"
+        cards_html += f"""
+        <div class="ticker-card">
+            <div class="ticker-name">{name}</div>
+            <div class="ticker-val">{val_fmt}</div>
+            <div class="ticker-chg" style="color:{color};">{sign}{chg:.2f}%</div>
+        </div>"""
+    st.markdown(f'<div class="ticker-row">{cards_html}</div>', unsafe_allow_html=True)
 
 # ============================
 # איתור קניות/מכירות Insider — SEC EDGAR (Form 4)
@@ -1174,14 +1276,105 @@ def add_to_portfolio(ticker, price):
 
 def score_color(score):
     if score >= 75:
-        return "#1fc46a"
+        return BUY_COLOR
     if score >= 55:
-        return "#e2b93b"
-    return "#e2543b"
+        return ACCENT
+    return SELL_COLOR
 
 def score_badge_html(score):
     color = score_color(score)
     return f'<span class="score-badge" style="background:{color}22; color:{color}; border:1px solid {color}55;">{score}</span>'
+
+def ai_gauge_html(score):
+    """טבעת ניקוד AI עגולה (conic-gradient) בסגנון SwingAI - ללא תלות בספריית גרפים חיצונית."""
+    color = score_color(score)
+    return f"""
+    <div class="ai-gauge" style="background: conic-gradient({color} {score * 3.6}deg, {BORDER} 0deg);">
+        <div class="ai-gauge-inner">
+            <span class="score" style="color:{color};">{score}</span>
+            <span class="lbl">AI</span>
+        </div>
+    </div>"""
+
+def classify_signal(score):
+    """מסווג ציון לתגית קנייה/מכירה/המתן + רמת עוצמה, לתצוגת הכרטיס."""
+    if score >= 70:
+        return "buy", "קנייה", ("גבוהה" if score >= 85 else "בינונית")
+    if score <= 35:
+        return "sell", "הימנעות", "גבוהה"
+    return "neutral", "המתן", "נמוכה"
+
+def compute_trade_levels(df_tail):
+    """
+    מחשב הערכת כניסה/סטופ/יעד/יחס סיכוי-סיכון להצגה בכרטיס.
+    ⚠️ זוהי הערכה טכנית גסה (מבוססת ATR + שפל אחרון), לא המלצת מסחר.
+    """
+    try:
+        entry = float(safe_last(df_tail["Close"]))
+        atr = float(safe_last(df_tail["ATR"])) if "ATR" in df_tail.columns else np.nan
+        recent_low = float(df_tail["Low"].tail(10).min())
+        if is_bad(atr) or atr <= 0:
+            stop = recent_low
+        else:
+            stop = min(recent_low, entry - 1.5 * atr)
+        risk = entry - stop
+        if is_bad(risk) or risk <= 0:
+            return None
+        target = entry + risk * 2.0
+        rr = round((target - entry) / risk, 1)
+        return {"entry": entry, "stop": stop, "target": target, "rr": rr}
+    except Exception:
+        return None
+
+def render_stock_card(ticker, res, df_tail):
+    """מציג כרטיס מניה יחיד בסגנון פיד (טבעת AI, תגיות, הערות, כניסה/סטופ/יעד/R:R)."""
+    score = res["score"]
+    sig_class, sig_label, strength_label = classify_signal(score)
+    tag_class = f"tag-{sig_class}"
+
+    notes_list = [n.strip() for n in res["note"].split(",") if n.strip()]
+    notes_html = "".join(f"<div>• {n}</div>" for n in notes_list[:4])
+
+    levels = compute_trade_levels(df_tail)
+    if levels:
+        stat_html = f"""
+        <div class="stat-grid">
+            <div class="stat-box"><div class="lbl">כניסה</div><div class="val">${levels['entry']:.2f}</div></div>
+            <div class="stat-box"><div class="lbl">סטופ</div><div class="val" style="color:{SELL_COLOR};">${levels['stop']:.2f}</div></div>
+            <div class="stat-box"><div class="lbl">יעד</div><div class="val" style="color:{BUY_COLOR};">${levels['target']:.2f}</div></div>
+            <div class="stat-box"><div class="lbl">R/R</div><div class="val" style="color:{ACCENT};">1:{levels['rr']}</div></div>
+        </div>"""
+    else:
+        stat_html = ""
+
+    card_html = f"""
+    <div class="stock-card">
+        <div class="stock-card-top">
+            <div>
+                <span class="stock-ticker">{ticker}</span>
+                <div style="margin-top:6px;">
+                    <span class="tag {tag_class}">{sig_label}</span>
+                    <span class="tag tag-strength">עוצמה: {strength_label}</span>
+                </div>
+            </div>
+            {ai_gauge_html(score)}
+        </div>
+        <div class="stock-note">{notes_html if notes_html else "אין אותות חזקים"}</div>
+        {stat_html}
+    </div>"""
+    st.markdown(card_html, unsafe_allow_html=True)
+
+def render_stat_pills(df_res):
+    """שורת פילים סטטיסטית מעל הפיד (קנייה/מכירה/סה"כ), בסגנון SwingAI."""
+    buy_count = int((df_res["Score"] >= 70).sum())
+    sell_count = int((df_res["Score"] <= 35).sum())
+    total = len(df_res)
+    st.markdown(f"""
+    <div class="stat-pill-row">
+        <div class="stat-pill"><div class="num" style="color:{BUY_COLOR};">{buy_count}</div><div class="lbl">קנייה</div></div>
+        <div class="stat-pill"><div class="num" style="color:{SELL_COLOR};">{sell_count}</div><div class="lbl">הימנעות</div></div>
+        <div class="stat-pill"><div class="num" style="color:{ACCENT};">{total}</div><div class="lbl">איתותים</div></div>
+    </div>""", unsafe_allow_html=True)
 
 def show_buttons(ticker):
     c1, c2, c3, c4 = st.columns(4)
@@ -1271,6 +1464,8 @@ def plot_advanced(df, ticker, show_macd=False, show_obv=False, show_bands=False,
 # ============================
 # ממשק משתמש — טאבים
 # ============================
+
+render_market_ticker()
 
 tab1, tab2, tab3, tab4 = st.tabs(["📊 סורק פריצה משופר", "💼 תיק השקעות", "🔮 תחזיות שמורות", "🗂️ ניהול סריקות שמורות"])
 
@@ -1413,18 +1608,31 @@ with tab1:
             c2.metric("עומדים בסף", len(df_res))
             c3.metric("ציון ממוצע (עומדים בסף)", round(df_res["Score"].mean(), 1))
 
-            st.subheader("📋 תוצאות סריקה")
-            st.dataframe(
-                df_res,
-                use_container_width=True,
-                hide_index=True,
-                column_config={
-                    "Score": st.column_config.ProgressColumn("ציון", min_value=0, max_value=100, format="%d"),
-                    "Confidence": st.column_config.ProgressColumn("ביטחון", min_value=0, max_value=100, format="%d"),
-                    "Risk": st.column_config.ProgressColumn("סיכון (נמוך=טוב)", min_value=0, max_value=100, format="%d"),
-                    "Price": st.column_config.NumberColumn("מחיר", format="$%.2f"),
-                }
-            )
+            render_stat_pills(df_res)
+
+            view_mode = st.radio("תצוגה:", ["🗂️ פיד", "📋 טבלה"], horizontal=True, label_visibility="collapsed")
+
+            if view_mode == "🗂️ פיד":
+                for _, row in df_res.iterrows():
+                    t = row["Ticker"]
+                    info = details.get(t)
+                    if info:
+                        render_stock_card(t, info["res"], info["df_tail"])
+                    else:
+                        # טיקר בלי נתונים מפורטים (למשל "אין נתונים") - כרטיס מינימלי
+                        render_stock_card(t, {"score": int(row["Score"]), "note": str(row["Note"])}, pd.DataFrame())
+            else:
+                st.dataframe(
+                    df_res,
+                    use_container_width=True,
+                    hide_index=True,
+                    column_config={
+                        "Score": st.column_config.ProgressColumn("ציון", min_value=0, max_value=100, format="%d"),
+                        "Confidence": st.column_config.ProgressColumn("ביטחון", min_value=0, max_value=100, format="%d"),
+                        "Risk": st.column_config.ProgressColumn("סיכון (נמוך=טוב)", min_value=0, max_value=100, format="%d"),
+                        "Price": st.column_config.NumberColumn("מחיר", format="$%.2f"),
+                    }
+                )
 
             st.divider()
             col_save1, col_save2 = st.columns([3, 1])
