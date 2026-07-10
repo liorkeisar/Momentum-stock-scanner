@@ -465,10 +465,10 @@ def render_market_ticker():
 # עסקים. זה לא "מוסדי" במובן של קרנות גדולות (לזה יש 13F/13D, ברבעון/בפיגור),
 # אבל זו העסקה הכי קרובה ל"מישהו בפנים קונה במזומן משלו" שיש בציבור.
 #
-# ⚠️ הערה חשובה: SEC דורשת User-Agent מזוהה עם פרטי קשר אמיתיים (מדיניות
-# Fair Access). יש לעדכן את הכתובת למטה לכתובת מייל אמיתית שלך לפני שימוש
-# מסחרי/תכוף, אחרת הבקשות עלולות להיחסם.
-SEC_USER_AGENT = "WyckoffProScanner/1.0 (contact: your-email@example.com)"
+# ⚠️ SEC דורשת User-Agent מזוהה עם פרטי קשר אמיתיים (מדיניות Fair Access).
+# בקשות עם UA גנרי/placeholder (כמו example.com) נחסמות/מוזנחות - זה היה
+# הבאג שגרם לכל תוצאה להראות "לא נמצא" גם כשהיו עסקאות בפועל.
+SEC_USER_AGENT = "WyckoffProScanner/1.0 (contact: liorkeisar@gmail.com)"
 
 @st.cache_data(ttl=86400, show_spinner=False)
 def load_sec_ticker_cik_map():
@@ -685,10 +685,10 @@ def add_indicators(df, benchmark_df=None):
     df["SqueezeStreak"] = squeeze_active.groupby(grp).cumsum()
 
     # --- "התנגדות ישנה" (Base High) — שיא הבסיס *לפני* הריצה האחרונה ---
-    # תוקן באג: שימוש בשיא 20 יום גולמי ("High20") גורם למניה שכבר פרצה
-    # להראות תמיד "קרובה לשיא" כי החלון הנע פשוט רודף אחרי המחיר החדש.
-    # כאן משתמשים בשיא של חלון ישן יותר (BASE_WINDOW) שמוזז אחורה (RECENT_EXCLUDE)
-    # כדי לשקף את רמת ההתנגדות שנוצרה *לפני* תנועת המחיר האחרונה.
+    # שימוש בשיא 20 יום גולמי ("High20") גורם למניה שכבר פרצה להראות תמיד
+    # "קרובה לשיא" כי החלון הנע פשוט רודף אחרי המחיר החדש. כאן משתמשים בשיא
+    # של חלון ישן יותר (BASE_WINDOW) שמוזז אחורה (RECENT_EXCLUDE) כדי לשקף
+    # את רמת ההתנגדות שנוצרה *לפני* תנועת המחיר האחרונה.
     BASE_WINDOW, RECENT_EXCLUDE = 50, 12
     df["BaseHigh"] = df["High"].rolling(BASE_WINDOW).max().shift(RECENT_EXCLUDE)
 
@@ -796,10 +796,6 @@ def compute_breakout_decision(df):
     comps["institutional"] = int(round(((obv_gain + ad_gain) / 2) * 100))
 
     # --- קרבה לפריצה מול "התנגדות ישנה" (BaseHigh), לא מול שיא 20 יום שרודף אחרי המחיר ---
-    # תוקן באג: קודם נעשה שימוש בשיא 20 יום גולמי, שגורם למניה שכבר פרצה להראות
-    # תמיד "בדיוק בשיא" (כי המחיר עצמו קובע את השיא של החלון הנע). כעת ההשוואה היא
-    # מול רמת ההתנגדות שנוצרה *לפני* התנועה האחרונה - ציון שיא רק כשקרובים אליה
-    # מלמטה, וקנס הולך וגדל ככל שכבר התרחקנו ממנה כלפי מעלה (כלומר כבר פרצנו).
     base_high = safe_last(df["BaseHigh"]) if "BaseHigh" in df.columns else np.nan
     prox = safe_div(safe_last(df["Close"]), base_high, default=0.0)
     if is_bad(prox) or prox <= 0:
@@ -873,7 +869,7 @@ def compute_breakout_decision(df):
 
     # וטו קשיח #2: המניה כבר פרצה משמעותית מעל ההתנגדות הישנה ו/או רחוקה מדי מהממוצעים,
     # ו/או שהפריצה בפועל כבר קרתה לפני יותר מ-2 שבועות (גם אם היא ממשיכה לזחול מעלה בהדרגה) -
-    # זו כבר לא "קדם-פריצה", היא פריצה שכבר קרתה. זה הבאג הספציפי שדווח (למשל CCO).
+    # זו כבר לא "קדם-פריצה", היא פריצה שכבר קרתה.
     ret20 = safe_last(df["Return20D"]) if "Return20D" in df.columns else np.nan
     days_since_bo = days_since_last_breakout(df, base_window=60, threshold=0.03, search_window=130)
     already_broken_out = (
@@ -911,7 +907,11 @@ def compute_breakout_decision(df):
     if not already_broken_out and not is_bad(prox) and prox < 0.95: notes.append("עדיין רחוק מהפריצה")
     note = ", ".join(notes) if notes else "אין אותות חזקים"
 
-    return {"score": final_score, "confidence": confidence, "risk": risk_metric, "components": comps, "note": note}
+    return {"score": final_score, "confidence": confidence, "risk": risk_metric, "components": comps, "note": note,
+            "rsi_last": safe_last(df["RSI"]) if "RSI" in df.columns else np.nan,
+            "rvol_last": rvol, "atr_pct": atr_pct, "stage2_ok": stage2_ok,
+            "already_broken_out": already_broken_out, "hard_downtrend": hard_downtrend,
+            "days_since_breakout": days_since_bo}
 
 # ============================
 # חיזוי — פונקציות עיקריות
@@ -1517,7 +1517,52 @@ with tab1:
         txt = st.sidebar.text_area("טיקרים (מופרדים בפסיק):", "AAPL, MSFT, NVDA")
         tickers = [t.strip().upper() for t in txt.split(",") if t.strip()]
 
-    min_score = st.sidebar.slider("ציון מינימלי להצגה:", 0, 100, 60)
+    st.sidebar.markdown("---")
+    st.sidebar.subheader("🎯 סינון ציון")
+    score_range = st.sidebar.slider(
+        "טווח ציון להצגה:", 0, 100, (60, 100),
+        help="רק מניות עם ציון בטווח הזה יוצגו בתוצאות. הגבל את המקסימום כדי לסנן ציונים 'חשודים' גבוהים מדי, "
+             "או צמצם את המינימום כדי לראות גם מועמדים חלשים יותר."
+    )
+    min_score, max_score = score_range
+
+    min_confidence = st.sidebar.slider(
+        "ביטחון מינימלי (%):", 0, 100, 0,
+        help="אחוז הרכיבים בציון שהגיעו לרף 'חזק' (70+). מסנן איתותים עם ציון גבוה אך נתמכים ברכיב יחיד בלבד."
+    )
+
+    st.sidebar.markdown("---")
+    st.sidebar.subheader("🧪 סינוני איכות נוספים")
+    exclude_broken_out = st.sidebar.checkbox(
+        "הסתר מניות שכבר פרצו (already broken out)", value=True,
+        help="מסנן מניות שקיבלו את דגל הוטו 'כבר פרצה משמעותית' — למניעת False positives כמו CCO."
+    )
+    exclude_downtrend = st.sidebar.checkbox(
+        "הסתר מגמת-על יורדת (SMA200 יורד)", value=True,
+        help="מסנן מניות עם מגמת-על שבורה (מתחת ל-SMA200 יורד) - סיכון גבוה גם אם רכיבים אחרים נראים טוב."
+    )
+    require_stage2 = st.sidebar.checkbox(
+        "דרוש Stage 2 מלא (Weinstein/Minervini)", value=False,
+        help="מציג רק מניות שנמצאות במגמת-על בריאה מלאה: Close > SMA150 > SMA200 עולה."
+    )
+    rsi_range = st.sidebar.slider(
+        "טווח RSI:", 0, 100, (0, 100),
+        help="סנן לפי RSI הנוכחי - לדוגמה 40-70 כדי להימנע ממניות overbought/oversold קיצוניות."
+    )
+    rvol_min = st.sidebar.number_input(
+        "נפח יחסי מינימלי (RVOL):", min_value=0.0, max_value=10.0, value=0.0, step=0.1,
+        help="דורש שהנפח האחרון יהיה לפחות פי X מהממוצע ל-20 יום. 0 = ללא סינון."
+    )
+    atr_pct_range = st.sidebar.slider(
+        "טווח תנודתיות (ATR% מהמחיר):", 0.0, 15.0, (0.0, 15.0), step=0.5,
+        help="מסנן מניות תנודתיות מדי (סיכון גבוה) או שקטות מדי (חסרות פוטנציאל תנועה)."
+    )
+    price_range = st.sidebar.slider(
+        "טווח מחיר ($):", 0, 1000, (0, 1000), step=5,
+        help="הגבל לפי טווח מחיר המניה - לדוגמה כדי להימנע מ-penny stocks או ממניות יקרות מדי."
+    )
+
+    st.sidebar.markdown("---")
     max_tickers = st.sidebar.number_input("מקסימום טיקרים לסריקה:", min_value=10, max_value=1000, value=200, step=10)
     min_dollar_vol = st.sidebar.number_input(
         "מינימום מחזור מסחר יומי ($):", min_value=0, max_value=100_000_000,
@@ -1525,9 +1570,12 @@ with tab1:
         help="מניות עם מחזור מסחר דולרי (מחיר × נפח ממוצע) נמוך מהסף יסוננו — נמנע מנזילות דלה שמעוותת אותות."
     )
 
-    if st.sidebar.button("🗑️ נקה מטמון מחירים (רענון נתונים)"):
+    if st.sidebar.button("🗑️ נקה מטמון (מחירים + SEC + CIK)"):
         load_history.clear()
         load_benchmark.clear()
+        load_market_indices.clear()
+        load_sec_ticker_cik_map.clear()
+        fetch_insider_transactions.clear()
         st.sidebar.success("המטמון נוקה — הריצה הבאה תביא נתונים עדכניים")
 
     st.sidebar.markdown("---")
@@ -1564,8 +1612,33 @@ with tab1:
                         skipped_liquidity.append(ticker)
                         continue
 
+                    # --- סינון טווח מחיר מוקדם, לפני חישוב אינדיקטורים כבד ---
+                    if not is_bad(last_price_raw) and not (price_range[0] <= last_price_raw <= price_range[1]):
+                        continue
+
                     df = add_indicators(df, benchmark_df=benchmark_df)
                     res = compute_breakout_decision(df)
+
+                    # --- סינוני איכות נוספים על תוצאת המנוע ---
+                    if exclude_broken_out and res.get("already_broken_out"):
+                        continue
+                    if exclude_downtrend and res.get("hard_downtrend"):
+                        continue
+                    if require_stage2 and not res.get("stage2_ok"):
+                        continue
+                    rsi_last = res.get("rsi_last")
+                    if not is_bad(rsi_last) and not (rsi_range[0] <= rsi_last <= rsi_range[1]):
+                        continue
+                    rvol_last = res.get("rvol_last")
+                    if rvol_min > 0 and (is_bad(rvol_last) or rvol_last < rvol_min):
+                        continue
+                    atr_pct_last = res.get("atr_pct")
+                    atr_pct_display = atr_pct_last * 100 if not is_bad(atr_pct_last) else np.nan
+                    if not is_bad(atr_pct_display) and not (atr_pct_range[0] <= atr_pct_display <= atr_pct_range[1]):
+                        continue
+                    if res["confidence"] < min_confidence:
+                        continue
+
                     last_close = safe_last(df["Close"])
                     results.append({
                         "Ticker": ticker,
@@ -1593,15 +1666,18 @@ with tab1:
 
             st.session_state["scan_results"] = results
             st.session_state["scan_details"] = details
+            # שומרים את סף הציון האחרון בשימוש כדי שתצוגת session_state הישנה תישאר עקבית אחרי ריענון
+            st.session_state["last_min_score"] = min_score
+            st.session_state["last_max_score"] = max_score
 
     # --- הצגת תוצאות אחרונות (נשמר ב-session_state כדי לשרוד ריענונים) ---
     if "scan_results" in st.session_state and st.session_state["scan_results"]:
         df_res_full = pd.DataFrame(st.session_state["scan_results"]).sort_values("Score", ascending=False).reset_index(drop=True)
-        df_res = df_res_full[df_res_full["Score"] >= min_score]
+        df_res = df_res_full[(df_res_full["Score"] >= min_score) & (df_res_full["Score"] <= max_score)]
         details = st.session_state.get("scan_details", {})
 
         if df_res.empty:
-            st.info("לא נמצאו מניות מתאימות לפי הקריטריונים.")
+            st.info("לא נמצאו מניות מתאימות לפי הקריטריונים. נסה להרחיב את טווח הציון או להקל בסינוני האיכות בסיידבר.")
         else:
             c1, c2, c3 = st.columns(3)
             c1.metric("סה\"כ נסרקו", len(df_res_full))
@@ -1778,7 +1854,7 @@ with tab1:
                 st.markdown("---")
                 st.markdown("### 🧪 Backtest — האם הציון באמת עובד?")
                 st.caption("בודק היסטורית: כשהמניה קיבלה ציון מסוים, כמה פעמים היא באמת פרצה תוך כמה ימים. "
-                           "עוזר לכייל את 'ציון מינימלי להצגה' בסיידבר לספי ציון שבאמת מתאמים להצלחה.")
+                           "עוזר לכייל את 'טווח ציון להצגה' בסיידבר לספי ציון שבאמת מתאמים להצלחה.")
                 bt_col1, bt_col2 = st.columns([3, 1])
                 with bt_col1:
                     bt_lookahead = st.select_slider("חלון בדיקת פריצה (ימים):", options=[3, 5, 7, 10], value=5, key=f"bt_look_{to_view}")
@@ -1817,16 +1893,17 @@ with tab1:
                 st.caption("Form 4 הוא גילוי רגולטורי מחייב על עסקאות דירקטורים/מנהלים בכירים - "
                            "האות הכי 'חד משמעי' שאפשר לקבל בחינם על מישהו שקונה בכסף אמיתי משלו. "
                            "לא מבוצע אוטומטית בסריקה (כדי לא להעמיס על שרתי SEC) - רק לפי דרישה כאן.")
-                run_insider = st.button("בדוק עסקאות Insider ב-90 הימים האחרונים", key=f"insider_btn_{to_view}")
+                ins_lookback = st.slider("טווח ימים לבדיקה:", 30, 365, 90, step=15, key=f"ins_look_{to_view}")
+                run_insider = st.button("בדוק עסקאות Insider", key=f"insider_btn_{to_view}")
 
                 if run_insider:
                     with st.spinner("שולף נתונים מ-SEC EDGAR..."):
-                        ins = fetch_insider_transactions(to_view, lookback_days=90, max_filings=15)
+                        ins = fetch_insider_transactions(to_view, lookback_days=ins_lookback, max_filings=25)
 
                     if ins.get("error"):
                         st.warning(f"⚠️ {ins['error']}")
                     elif ins["buys"] == 0 and ins["sells"] == 0:
-                        st.info("לא נמצאו עסקאות Insider בשוק הפתוח ב-90 הימים האחרונים עבור טיקר זה.")
+                        st.info(f"לא נמצאו עסקאות Insider בשוק הפתוח ב-{ins_lookback} הימים האחרונים עבור טיקר זה.")
                     else:
                         ic1, ic2, ic3 = st.columns(3)
                         ic1.metric("קניות Insider", ins["buys"], f"${ins['buy_value']:,.0f}")
