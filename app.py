@@ -458,6 +458,143 @@ def render_market_ticker():
     st.markdown(f'<div class="ticker-row">{cards_html}</div>', unsafe_allow_html=True)
 
 # ============================
+# מד פחד ותאוות בצע — CNN Fear & Greed Index
+# ============================
+FNG_API_URL = "https://production.dataviz.cnn.io/index/fearandgreed/graphdata"
+FNG_HEADERS = {
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36",
+    "Accept": "application/json",
+}
+FNG_RATING_HE = {
+    "extreme fear": "פחד קיצוני",
+    "fear": "פחד",
+    "neutral": "ניטרלי",
+    "greed": "תאוות בצע",
+    "extreme greed": "תאוות בצע קיצונית",
+}
+FNG_RATING_COLOR = {
+    "extreme fear": "#e0392b",
+    "fear": "#f2994a",
+    "neutral": "#f2d24c",
+    "greed": "#a3c644",
+    "extreme greed": "#27ae60",
+}
+
+@st.cache_data(ttl=1800, show_spinner=False)
+def fetch_fear_greed_index():
+    """שולף את מדד הפחד/תאוות הבצע העדכני של CNN (ציון 0-100 + דירוג + השוואות תקופתיות)."""
+    try:
+        r = requests.get(FNG_API_URL, headers=FNG_HEADERS, timeout=10)
+        r.raise_for_status()
+        data = r.json()
+        fg = data.get("fear_and_greed", {})
+        if not fg or "score" not in fg or fg["score"] is None:
+            return None
+        return {
+            "score": float(fg["score"]),
+            "rating": str(fg.get("rating", "")).lower().strip(),
+            "timestamp": fg.get("timestamp"),
+            "previous_close": float(fg["previous_close"]) if fg.get("previous_close") is not None else None,
+            "previous_1_week": float(fg["previous_1_week"]) if fg.get("previous_1_week") is not None else None,
+            "previous_1_month": float(fg["previous_1_month"]) if fg.get("previous_1_month") is not None else None,
+            "previous_1_year": float(fg["previous_1_year"]) if fg.get("previous_1_year") is not None else None,
+        }
+    except Exception:
+        return None
+
+def render_fear_greed_gauge():
+    """מד-מחוג חצי-עיגולי של מדד הפחד/תאוות הבצע, בסגנון זהה לאפליקציית CNN Business."""
+    fng = fetch_fear_greed_index()
+    if not fng:
+        st.info("⚠️ לא ניתן לטעון כרגע את מדד הפחד/תאוות הבצע (CNN) — ייתכן חסימת רשת זמנית. נסה 'נקה מטמון' בסיידבר.")
+        return
+
+    score = fng["score"]
+    rating = fng["rating"]
+    rating_he = FNG_RATING_HE.get(rating, rating or "—")
+    color = FNG_RATING_COLOR.get(rating, ACCENT)
+
+    fig = go.Figure(go.Indicator(
+        mode="gauge",
+        value=score,
+        domain={"x": [0, 1], "y": [0, 1]},
+        gauge={
+            "axis": {"range": [0, 100], "visible": False},
+            "bar": {"color": "rgba(0,0,0,0)", "thickness": 0},
+            "bgcolor": "rgba(0,0,0,0)",
+            "borderwidth": 0,
+            "steps": [
+                {"range": [0, 20], "color": "#e0392b"},
+                {"range": [20, 40], "color": "#f2994a"},
+                {"range": [40, 60], "color": "#f2d24c"},
+                {"range": [60, 80], "color": "#a3c644"},
+                {"range": [80, 100], "color": "#27ae60"},
+            ],
+            "threshold": {
+                "line": {"color": "white", "width": 5},
+                "thickness": 0.82,
+                "value": score,
+            },
+        }
+    ))
+    fig.update_layout(
+        height=200,
+        margin=dict(t=10, b=0, l=20, r=20),
+        paper_bgcolor="rgba(0,0,0,0)",
+        plot_bgcolor="rgba(0,0,0,0)",
+        font=dict(color="#e6e9f0"),
+    )
+
+    ago_txt = ""
+    try:
+        ts = pd.to_datetime(fng["timestamp"])
+        now = pd.Timestamp.now(tz=ts.tzinfo) if ts.tzinfo is not None else pd.Timestamp.now()
+        diff_sec = (now - ts).total_seconds()
+        hours = int(diff_sec // 3600)
+        minutes = int((diff_sec % 3600) // 60)
+        ago_txt = f"לפני {hours} שעות" if hours >= 1 else f"לפני {max(minutes, 1)} דקות"
+    except Exception:
+        ago_txt = ""
+
+    delta_html = ""
+    prev_close = fng.get("previous_close")
+    if prev_close is not None:
+        delta = score - prev_close
+        d_color = BUY_COLOR if delta >= 0 else SELL_COLOR
+        arrow = "▲" if delta >= 0 else "▼"
+        delta_html = f'<span style="color:{d_color}; font-weight:700;">{arrow} {abs(delta):.1f} נקודות</span>'
+
+    st.markdown(f"""
+    <div style="background:{PANEL}; border:1px solid {BORDER}; border-radius:16px 16px 0 0;
+                padding:14px 18px 0 18px; margin-top:2px;">
+        <div style="display:flex; justify-content:space-between; align-items:center;">
+            <div style="font-weight:800; font-size:15px; color:#f2f4f8;">😨 מדד פחד ותאוות בצע — שוק המניות</div>
+            <div style="font-size:11.5px; color:{TEXT_MUTED};">מקור: CNN</div>
+        </div>
+    </div>
+    """, unsafe_allow_html=True)
+
+    st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False})
+
+    st.markdown(f"""
+    <div style="background:{PANEL}; border:1px solid {BORDER}; border-top:none; border-radius:0 0 16px 16px;
+                text-align:center; padding:0 18px 16px 18px; margin-top:-28px; margin-bottom:18px;">
+        <div style="font-size:42px; font-weight:800; color:#f2f4f8; line-height:1;">{score:.0f}</div>
+        <div style="font-size:18px; font-weight:700; color:{color}; margin-top:2px;">{rating_he}</div>
+        <div style="display:flex; justify-content:center; gap:14px; margin-top:8px; font-size:12.5px; color:{TEXT_MUTED};">
+            <span>{ago_txt}</span>
+            {delta_html}
+        </div>
+    </div>
+    """, unsafe_allow_html=True)
+
+    with st.expander("📊 השוואה לתקופות קודמות"):
+        cols = st.columns(3)
+        for col, (key, label) in zip(cols, [("previous_1_week", "לפני שבוע"), ("previous_1_month", "לפני חודש"), ("previous_1_year", "לפני שנה")]):
+            val = fng.get(key)
+            col.metric(label, f"{val:.0f}" if val is not None else "—")
+
+# ============================
 # איתור קניות/מכירות Insider — SEC EDGAR (Form 4)
 # ============================
 # זהו המקור הכי "חד משמעי" שאפשר לשלב בחינם: Form 4 הוא גילוי רגולטורי מחייב
@@ -1466,6 +1603,7 @@ def plot_advanced(df, ticker, show_macd=False, show_obv=False, show_bands=False,
 # ============================
 
 render_market_ticker()
+render_fear_greed_gauge()
 
 tab1, tab2, tab3, tab4 = st.tabs(["📊 סורק פריצה משופר", "💼 תיק השקעות", "🔮 תחזיות שמורות", "🗂️ ניהול סריקות שמורות"])
 
@@ -1576,6 +1714,7 @@ with tab1:
         load_market_indices.clear()
         load_sec_ticker_cik_map.clear()
         fetch_insider_transactions.clear()
+        fetch_fear_greed_index.clear()
         st.sidebar.success("המטמון נוקה — הריצה הבאה תביא נתונים עדכניים")
 
     st.sidebar.markdown("---")
@@ -2086,17 +2225,4 @@ with tab4:
                 if not to_del:
                     st.warning("לא נבחרו טיקרים")
                 elif delete_saved_scan_tickers(to_del):
-                    st.success("הפריטים נמחקו מקובץ הסריקות")
-                    st.rerun()
-                else:
-                    st.error("שגיאה במחיקה")
-
-        if st.button("נקה את כל קובץ הסריקות"):
-            if clear_all_saved_scans():
-                st.success("קובץ הסריקות נוקה")
-                st.rerun()
-            else:
-                st.error("שגיאה בניקוי הקובץ")
-
-        csv_all_scans = saved_scans.to_csv(index=False).encode('utf-8')
-        st.download_button("⬇️ הורד את כל הסריקות כ-CSV", csv_all_scans, file_name="saved_scans.csv", mime="text/csv")
+                    st.success("הפריטים נמחקו מקוב
