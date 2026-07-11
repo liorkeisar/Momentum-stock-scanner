@@ -2225,4 +2225,21 @@ with tab4:
                 if not to_del:
                     st.warning("לא נבחרו טיקרים")
                 elif delete_saved_scan_tickers(to_del):
-                    st.success("הפריטים נמחקו מקוב
+if st.button("מחק נבחרים מסריקות", use_container_width=True):
+                if not to_del:
+                    st.warning("לא נבחרו טיקרים")
+                elif delete_saved_scan_tickers(to_del):
+                    st.success("הפריטים נמחקו מקובץ הסריקות")
+                    st.rerun()
+                else:
+                    st.error("שגיאה במחיקה")
+
+        if st.button("נקה את כל קובץ הסריקות"):
+            if clear_all_saved_scans():
+                st.success("קובץ הסריקות נוקה")
+                st.rerun()
+            else:
+                st.error("שגיאה בניקוי הקובץ")
+
+        csv_all_scans = saved_scans.to_csv(index=False).encode('utf-8')
+        st.download_button("⬇️ הורד את כל הסריקות כ-
