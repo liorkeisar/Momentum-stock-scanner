@@ -2239,5 +2239,3 @@ with tab4:
 
         csv_all_scans = saved_scans.to_csv(index=False).encode('utf-8')
         st.download_button("⬇️ הורד את כל הסריקות כ-CSV", csv_all_scans, file_name="saved_scans.csv", mime="text/csv")
-
-    
