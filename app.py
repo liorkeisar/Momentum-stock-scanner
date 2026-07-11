@@ -2225,11 +2225,7 @@ with tab4:
                 if not to_del:
                     st.warning("לא נבחרו טיקרים")
                 elif delete_saved_scan_tickers(to_del):
-if st.button("מחק נבחרים מסריקות", use_container_width=True):
-                if not to_del:
-                    st.warning("לא נבחרו טיקרים")
-                elif delete_saved_scan_tickers(to_del):
-                    st.success("הפריטים נמחקו מקובץ הסריקות")
+               st.success("הפריטים נמחקו מקובץ הסריקות")
                     st.rerun()
                 else:
                     st.error("שגיאה במחיקה")
@@ -2242,4 +2238,4 @@ if st.button("מחק נבחרים מסריקות", use_container_width=True):
                 st.error("שגיאה בניקוי הקובץ")
 
         csv_all_scans = saved_scans.to_csv(index=False).encode('utf-8')
-        st.download_button("⬇️ הורד את כל הסריקות כ-
+        st.download_button("⬇️ הורד את כל הסריקות כ-CSV", csv_all_scans, file_name="saved_scans.csv", mime="text/csv")     
