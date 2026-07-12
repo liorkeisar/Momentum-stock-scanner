@@ -2714,7 +2714,6 @@ trend_prediction.py
 price_df: DataFrame עם עמודות Date, Open, High, Low, Close (Volume אופציונלי)
 stock_row: Series/dict עם הפרמטרים המחושבים של המניה (ראה DEFAULTS למטה)
 """
-
 from __future__ import annotations
 
 import numpy as np
