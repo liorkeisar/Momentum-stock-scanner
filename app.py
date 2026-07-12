@@ -2690,3 +2690,342 @@ with tab4:
 
         csv_all_scans = saved_scans.to_csv(index=False).encode('utf-8')
         st.download_button("⬇️ הורד את כל הסריקות כ-CSV", csv_all_scans, file_name="saved_scans.csv", mime="text/csv")
+        # -*- coding: utf-8 -*-
+"""
+trend_prediction.py
+--------------------
+רכיב "חיזוי מגמה" לסורק Wyckoff Pro Swing Scanner.
+
+מציג כפתור שבלחיצה עליו פותח כרטיס עם:
+  - גרף נרות (Candlestick) בסגנון ירוק/אדום
+  - קו מקווקו (dashed) הממשיך מהנר האחרון ומדמה את כיוון המגמה החזויה,
+    בהשראת התצוגה באפליקציית המסחר (חיזוי בקווקו).
+  - מד ביטחון (Confidence) וטבלת נימוקים שקופה.
+  - אזהרה ברורה שזו אינה המלצת השקעה.
+
+הערה חשובה: ה"חיזוי" הוא ייצוג חזותי בלבד של כיוון/עוצמת האות המורכב
+(Composite Score) שכבר מחושב בסורק - הוא אינו מודל חיזוי מחיר אמיתי,
+ואין להציג אותו ככזה.
+
+שילוב בסורק:
+    from trend_prediction import render_trend_prediction
+    render_trend_prediction(price_df, stock_row, symbol="AAPL")
+
+price_df: DataFrame עם עמודות Date, Open, High, Low, Close (Volume אופציונלי)
+stock_row: Series/dict עם הפרמטרים המחושבים של המניה (ראה DEFAULTS למטה)
+"""
+
+from __future__ import annotations
+
+import numpy as np
+import pandas as pd
+import plotly.graph_objects as go
+import streamlit as st
+
+# ---------------------------------------------------------------------------
+# צבעי הבסיס - ירוק/אדום בלבד, כמבוקש
+# ---------------------------------------------------------------------------
+COLOR_BULL = "#00C853"        # ירוק - עלייה
+COLOR_BULL_SOFT = "#69F0AE"
+COLOR_BEAR = "#FF1744"        # אדום - ירידה
+COLOR_BEAR_SOFT = "#FF8A80"
+COLOR_NEUTRAL = "#9E9E9E"     # אפור עדין - דשדוש (לא ירוק/אדום מטעה)
+COLOR_BG = "#0E1117"
+COLOR_GRID = "#262A33"
+COLOR_TEXT = "#E8EAED"
+
+
+def _get(row, key, default=0.0):
+    """גישה בטוחה לעמודה בשורה, עובד גם עם dict וגם עם pandas Series."""
+    try:
+        val = row[key]
+        if val is None or (isinstance(val, float) and np.isnan(val)):
+            return default
+        return val
+    except (KeyError, TypeError):
+        return default
+
+
+# ---------------------------------------------------------------------------
+# 1) לוגיקת סיווג הכיוון
+# ---------------------------------------------------------------------------
+def predict_trend(row) -> dict:
+    """
+    מחזיר dict עם כיוון, אייקון, ציון ביטחון (0-100), צבע, ופירוט נימוקים.
+    מבוסס על הפרמטרים שכבר מחושבים בסורק (Wyckoff + Momentum + Institutional).
+    """
+    composite = float(_get(row, "CompositeScore", 50))
+    rs_slope = float(_get(row, "RS_Line_Slope", 0))
+    absorption = float(_get(row, "AbsorptionScore", 50))
+    updown_vol = float(_get(row, "UpDownVolRatio", 1.0))
+    insider = float(_get(row, "InsiderScore", 0))
+
+    if composite >= 70 and rs_slope > 0 and absorption >= 60:
+        direction = "עלייה סבירה"
+        icon = "⬆️"
+        color = COLOR_BULL
+        confidence = float(min(97, composite + (5 if insider > 0 else 0)))
+    elif composite <= 35 or rs_slope < -0.5:
+        direction = "ירידה סבירה"
+        icon = "⬇️"
+        color = COLOR_BEAR
+        confidence = float(min(95, 100 - composite))
+    else:
+        direction = "דשדוש / לא ברור"
+        icon = "➡️"
+        color = COLOR_NEUTRAL
+        confidence = float(50 - abs(composite - 50) * 0.3)
+
+    confidence = max(5.0, min(99.0, confidence))
+
+    reasons = [
+        {"label": "Wyckoff Absorption Score", "value": f"{absorption:.0f}/100"},
+        {"label": "שיפוע RS Line מול SPY", "value": f"{rs_slope:+.2f}"},
+        {"label": "יחס נפח עולה/יורד", "value": f"{updown_vol:.2f}"},
+        {"label": "אות פעילות בעלי עניין (Form 4)", "value": f"{insider:+.0f}"},
+        {"label": "ציון מורכב (Composite Score)", "value": f"{composite:.0f}/100"},
+    ]
+
+    return {
+        "direction": direction,
+        "icon": icon,
+        "color": color,
+        "confidence": confidence,
+        "reasons": reasons,
+    }
+
+
+# ---------------------------------------------------------------------------
+# 2) בניית קו התחזית המקווקו (ויזואלי בלבד)
+# ---------------------------------------------------------------------------
+def _generate_forecast_curve(last_close: float, direction: str, confidence: float,
+                              atr: float, periods: int = 14, freq_minutes: int = 5,
+                              seed: int | None = None) -> np.ndarray:
+    """
+    יוצר עקומה מקווקוות לצורך המחשה בלבד (לא חיזוי מחיר מדויק).
+    העוצמה/שיפוע העקומה נגזרים מרמת הביטחון, עם רעש קל שנראה טבעי,
+    בדומה לתצוגת ה-Forecast המקווקו בצילום המסך של המשתמש.
+    """
+    rng = np.random.default_rng(seed)
+    strength = (confidence - 50) / 50.0  # בין ~ -0.9 ל- 0.94
+
+    if direction.startswith("עלייה"):
+        drift = abs(strength) * atr * 0.35
+    elif direction.startswith("ירידה"):
+        drift = -abs(strength) * atr * 0.35
+    else:
+        drift = 0.0
+
+    steps = np.linspace(0, 1, periods)
+    trend_component = drift * steps
+    noise = rng.normal(0, atr * 0.08, size=periods)
+    noise = np.cumsum(noise) / np.sqrt(np.arange(1, periods + 1))
+    curve = last_close + trend_component + noise
+    curve[0] = last_close  # מתחיל בדיוק מהנר האחרון
+    return curve
+
+
+# ---------------------------------------------------------------------------
+# 3) בניית הגרף (נרות + קו מקווקו)
+# ---------------------------------------------------------------------------
+def _build_chart(df: pd.DataFrame, prediction: dict, symbol: str,
+                  lookback: int = 60) -> go.Figure:
+    plot_df = df.tail(lookback).copy()
+    plot_df["Date"] = pd.to_datetime(plot_df["Date"])
+
+    last_close = float(plot_df["Close"].iloc[-1])
+    atr = float((plot_df["High"] - plot_df["Low"]).rolling(14).mean().iloc[-1])
+    if not np.isfinite(atr) or atr <= 0:
+        atr = last_close * 0.01
+
+    # תדירות נרות (בדקות) להערכת המשך ציר הזמן
+    diffs = plot_df["Date"].diff().dropna()
+    step = diffs.median() if len(diffs) else pd.Timedelta(minutes=5)
+
+    forecast_periods = 14
+    forecast_prices = _generate_forecast_curve(
+        last_close, prediction["direction"], prediction["confidence"], atr,
+        periods=forecast_periods,
+    )
+    forecast_dates = [plot_df["Date"].iloc[-1] + step * i for i in range(forecast_periods)]
+
+    fig = go.Figure()
+
+    # נרות היסטוריים - ירוק/אדום בלבד
+    fig.add_trace(go.Candlestick(
+        x=plot_df["Date"], open=plot_df["Open"], high=plot_df["High"],
+        low=plot_df["Low"], close=plot_df["Close"],
+        increasing_line_color=COLOR_BULL, increasing_fillcolor=COLOR_BULL,
+        decreasing_line_color=COLOR_BEAR, decreasing_fillcolor=COLOR_BEAR,
+        name=symbol, showlegend=False,
+    ))
+
+    # קו התחזית המקווקו
+    fig.add_trace(go.Scatter(
+        x=forecast_dates, y=forecast_prices,
+        mode="lines",
+        line=dict(color=prediction["color"], width=3, dash="dot"),
+        name="חיזוי מגמה (להמחשה)",
+        showlegend=False,
+    ))
+
+    # נקודת חיבור מודגשת בין ההיסטוריה לתחזית
+    fig.add_trace(go.Scatter(
+        x=[plot_df["Date"].iloc[-1]], y=[last_close],
+        mode="markers",
+        marker=dict(color=prediction["color"], size=9, line=dict(color=COLOR_TEXT, width=1)),
+        showlegend=False,
+    ))
+
+    fig.update_layout(
+        height=420,
+        margin=dict(l=10, r=10, t=30, b=10),
+        paper_bgcolor=COLOR_BG,
+        plot_bgcolor=COLOR_BG,
+        font=dict(color=COLOR_TEXT),
+        xaxis=dict(gridcolor=COLOR_GRID, rangeslider_visible=False),
+        yaxis=dict(gridcolor=COLOR_GRID, side="right"),
+        title=dict(text=f"{symbol} — חיזוי מגמה", x=0.02, font=dict(size=16)),
+    )
+    return fig
+
+
+# ---------------------------------------------------------------------------
+# 4) עיצוב כרטיסי ביטחון / נימוקים (HTML/CSS ירוק-אדום)
+# ---------------------------------------------------------------------------
+def _inject_css():
+    st.markdown(f"""
+    <style>
+    .tp-card {{
+        border-radius: 14px;
+        padding: 18px 20px;
+        margin-top: 8px;
+        margin-bottom: 14px;
+        background: linear-gradient(135deg, #14161C 0%, #1B1E26 100%);
+        border: 1px solid #2A2D36;
+        direction: rtl;
+        text-align: right;
+    }}
+    .tp-direction {{
+        font-size: 26px;
+        font-weight: 800;
+        margin-bottom: 4px;
+    }}
+    .tp-conf-label {{
+        font-size: 13px;
+        color: #B0B3B8;
+        margin-bottom: 6px;
+    }}
+    .tp-bar-bg {{
+        width: 100%;
+        height: 10px;
+        border-radius: 6px;
+        background: #262A33;
+        overflow: hidden;
+        margin-bottom: 4px;
+    }}
+    .tp-bar-fill {{
+        height: 100%;
+        border-radius: 6px;
+    }}
+    .tp-reason-row {{
+        display: flex;
+        justify-content: space-between;
+        padding: 6px 0;
+        border-bottom: 1px solid #262A33;
+        font-size: 14px;
+    }}
+    .tp-reason-row:last-child {{ border-bottom: none; }}
+    .tp-reason-label {{ color: #B0B3B8; }}
+    .tp-reason-value {{ font-weight: 700; color: {COLOR_TEXT}; }}
+    .tp-disclaimer {{
+        margin-top: 14px;
+        padding: 10px 12px;
+        border-radius: 10px;
+        background: #241416;
+        border: 1px solid {COLOR_BEAR};
+        color: #FFB4AB;
+        font-size: 12.5px;
+        line-height: 1.5;
+    }}
+    </style>
+    """, unsafe_allow_html=True)
+
+
+def _render_prediction_card(prediction: dict):
+    color = prediction["color"]
+    conf = prediction["confidence"]
+
+    reasons_html = "".join(
+        f"""<div class="tp-reason-row">
+                <span class="tp-reason-label">{r['label']}</span>
+                <span class="tp-reason-value">{r['value']}</span>
+            </div>"""
+        for r in prediction["reasons"]
+    )
+
+    st.markdown(f"""
+    <div class="tp-card">
+        <div class="tp-direction" style="color:{color};">
+            {prediction['icon']} {prediction['direction']}
+        </div>
+        <div class="tp-conf-label">רמת ביטחון של המודל</div>
+        <div class="tp-bar-bg">
+            <div class="tp-bar-fill" style="width:{conf:.0f}%; background:{color};"></div>
+        </div>
+        <div style="text-align:left; font-size:13px; color:{color}; font-weight:700; margin-bottom:10px;">
+            {conf:.0f}%
+        </div>
+        <div style="font-size:14px; font-weight:700; margin-bottom:4px; color:{COLOR_TEXT};">
+            מבוסס על:
+        </div>
+        {reasons_html}
+        <div class="tp-disclaimer">
+            ⚠️ החיזוי מבוסס על ניתוח סטטיסטי והיסטורי של האינדיקטורים בלבד,
+            אינו מהווה ייעוץ או המלצת השקעה, ואינו מבטיח תוצאה עתידית כלשהי.
+            כל החלטת מסחר היא באחריות המשתמש בלבד.
+        </div>
+    </div>
+    """, unsafe_allow_html=True)
+
+
+# ---------------------------------------------------------------------------
+# 5) פונקציית הכניסה הראשית - כפתור + תצוגה
+# ---------------------------------------------------------------------------
+def render_trend_prediction(price_df: pd.DataFrame, stock_row, symbol: str,
+                             key_prefix: str = "tp"):
+    """
+    מציג כפתור "חיזוי מגמה". בלחיצה - פותח כרטיס עם גרף נרות + קו מקווקו
+    ירוק/אדום, מד ביטחון, נימוקים ואזהרה.
+
+    price_df: DataFrame עם עמודות Date, Open, High, Low, Close (וכן Volume אופציונלי)
+    stock_row: dict / pandas.Series עם השדות הבאים (חסרים -> ברירת מחדל):
+        CompositeScore, AbsorptionScore, RS_Line_Slope, UpDownVolRatio, InsiderScore
+    symbol: סימול המניה, לצורך תווית הגרף
+    key_prefix: prefix ל-session_state key, למניעת התנגשות בין מניות בטבלה
+    """
+    required_cols = {"Date", "Open", "High", "Low", "Close"}
+    btn_key = f"{key_prefix}_predict_btn_{symbol}"
+    show_key = f"{key_prefix}_predict_show_{symbol}"
+
+    if show_key not in st.session_state:
+        st.session_state[show_key] = False
+
+    if st.button(f"🔮 חיזוי מגמה — {symbol}", key=btn_key, use_container_width=True):
+        st.session_state[show_key] = not st.session_state[show_key]
+
+    if not st.session_state[show_key]:
+        return
+
+    if price_df is None or not required_cols.issubset(set(price_df.columns)) or len(price_df) < 15:
+        st.warning("אין מספיק נתוני מחיר (Date/Open/High/Low/Close) להצגת חיזוי מגמה.")
+        return
+
+    _inject_css()
+    prediction = predict_trend(stock_row)
+
+    fig = _build_chart(price_df, prediction, symbol)
+    st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False})
+
+    _render_prediction_card(prediction)
+
