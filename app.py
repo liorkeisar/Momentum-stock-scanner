@@ -2275,8 +2275,9 @@ with tab1:
                     t = row["Ticker"]
                     info = details.get(t)
                     if info:
-                        render_stock_card(t, info["res"], info["df_tail"])
-                    else:
+    render_stock_card(t, info["res"], info["df_tail"])
+    render_trend_prediction(info["df_tail"], info["res"], t)
+else:
                         # טיקר בלי נתונים מפורטים (למשל "אין נתונים") - כרטיס מינימלי
                         render_stock_card(t, {"score": int(row["Score"]), "note": str(row["Note"])}, pd.DataFrame())
             else:
