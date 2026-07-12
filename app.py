@@ -2714,6 +2714,7 @@ trend_prediction.py
 price_df: DataFrame עם עמודות Date, Open, High, Low, Close (Volume אופציונלי)
 stock_row: Series/dict עם הפרמטרים המחושבים של המניה (ראה DEFAULTS למטה)
 """
+
 from __future__ import annotations
 
 import numpy as np
@@ -3027,4 +3028,3 @@ def render_trend_prediction(price_df: pd.DataFrame, stock_row, symbol: str,
     st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False})
 
     _render_prediction_card(prediction)
-
