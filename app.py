@@ -2277,8 +2277,7 @@ with tab1:
                     if info:
     render_stock_card(t, info["res"], info["df_tail"])
     render_trend_prediction(info["df_tail"], info["res"], t)
-else:       
-
+else:
       # טיקר בלי נתונים מפורטים (למשל "אין נתונים") - כרטיס מינימלי
                         render_stock_card(t, {"score": int(row["Score"]), "note": str(row["Note"])}, pd.DataFrame())
             else:
