@@ -2254,8 +2254,7 @@ with tab1:
                 with colp2:
                     st.write("")
                     run_pred = st.button("הרץ חיזוי", key=f"pred_btn_{to_view}", use_container_width=True)
-
-                              if run_pred:
+if run_pred:
                     with st.spinner("מריץ חיזוי..."):
                         try:
                             hist_full = load_history(to_view, period="24mo")
