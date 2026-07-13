@@ -2301,8 +2301,7 @@ if run_pred:
                                 save_single_scan_result(scan_row)
                         except Exception as e:
                             st.error(f"שגיאה בהרצת חיזוי: {e}")
-
-                st.markdown("---")
+  st.markdown("---")
                 st.markdown("### 🧪 Backtest — האם הציון באמת עובד?")
                 st.caption("בודק היסטורית: כשהמניה קיבלה ציון מסוים, כמה פעמים היא באמת פרצה תוך כמה ימים. "
                            "עוזר לכייל את 'טווח ציון להצגה' בסיידבר לספי ציון שבאמת מתאמים להצלחה.")
