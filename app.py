@@ -1,4 +1,4 @@
-# app.py
+7# app.py
 import streamlit as st
 import yfinance as yf
 import pandas as pd
@@ -2276,5 +2276,359 @@ def render_fair_value_screen():
         'זהו כלי תמיכה בהחלטה בלבד ואינו מהווה ייעוץ השקעות.</div>',
         unsafe_allow_html=True
     )
+# ============================
+# ממשק משתמש — טאבים
+# ============================
+
+render_market_ticker()
+render_fear_greed_gauge()
+
+tab1, tab2, tab3, tab4, tab5 = st.tabs(["📊 סורק פריצה משופר", "💼 תיק השקעות", "🔮 תחזיות שמורות", "🗂️ ניהול סריקות שמורות", "💰 שווי הוגן"])
+
+# --- טאב הסורק ---
+with tab1:
+    st.sidebar.header("⚙️ מקורות טיקרים לסורק")
+    mode = st.sidebar.radio(
+        "בחר מקור:",
+        ["קובץ CSV בודד", "תיקיית CSV", "רשימת CSV בתיקייה הנוכחית", "הקלדה ידנית"]
+    )
+
+    tickers = []
+
+    if mode == "קובץ CSV בודד":
+        uploaded = st.sidebar.file_uploader("העלה קובץ CSV עם עמודת Ticker או Symbol", type=["csv"])
+        if uploaded:
+            try:
+                dfu = pd.read_csv(uploaded)
+                cols = [c.strip().lower() for c in dfu.columns]
+                if 'ticker' in cols:
+                    col = [c for c in dfu.columns if c.strip().lower() == 'ticker'][0]
+                    tickers = dfu[col].dropna().astype(str).str.upper().str.strip().tolist()
+                elif 'symbol' in cols:
+                    col = [c for c in dfu.columns if c.strip().lower() == 'symbol'][0]
+                    tickers = dfu[col].dropna().astype(str).str.upper().str.strip().tolist()
+                else:
+                    st.sidebar.error("לא נמצאה עמודת Ticker/Symbol בקובץ")
+            except Exception as e:
+                st.sidebar.error(f"שגיאה בקריאת הקובץ: {e}")
+
+    elif mode == "תיקיית CSV":
+        folder = st.sidebar.text_input("נתיב לתיקיה:", ".")
+        if folder and os.path.isdir(folder):
+            tickers = load_tickers_from_folder(folder)
+            st.sidebar.success(f"נטענו {len(tickers)} טיקרים מהתיקיה")
+        elif folder:
+            st.sidebar.error("התיקיה לא קיימת")
+
+    elif mode == "רשימת CSV בתיקייה הנוכחית":
+        available_lists = get_csv_files_in_cwd()
+        if available_lists:
+            selected_file = st.sidebar.selectbox("בחר קובץ מהרשימה:", available_lists)
+            tickers = tickers_from_csv_file(selected_file)
+            st.sidebar.success(f"נטענו {len(tickers)} טיקרים מהקובץ")
+        else:
+            st.sidebar.info("אין קבצי CSV בתיקייה הנוכחית")
+
+    else:  # הקלדה ידנית
+        txt = st.sidebar.text_area("טיקרים (מופרדים בפסיק):", "AAPL, MSFT, NVDA")
+        tickers = [t.strip().upper() for t in txt.split(",") if t.strip()]
+
+    with st.sidebar.expander("🎯 סינון ציון בסיסי", expanded=True):
+        score_range = st.slider(
+            "טווח ציון להצגה:", 0, 100, (60, 100),
+            help="רק מניות עם ציון בטווח הזה יוצגו בתוצאות. הגבל את המקסימום כדי לסנן ציונים 'חשודים' גבוהים מדי, "
+                 "או צמצם את המינימום כדי לראות גם מועמדים חלשים יותר."
+        )
+        min_score, max_score = score_range
+
+        min_confidence = st.slider(
+            "ביטחון מינימלי (%):", 0, 100, 0,
+            help="אחוז הרכיבים בציון שהגיעו לרף 'חזק' (70+). מסנן איתותים עם ציון גבוה אך נתמכים ברכיב יחיד בלבד."
+        )
+
+    with st.sidebar.expander("🧪 סינוני איכות מתקדמים", expanded=False):
+        exclude_broken_out = st.checkbox(
+            "הסתר מניות שכבר פרצו (already broken out)", value=True,
+            help="מסנן מניות שקיבלו את דגל הוטו 'כבר פרצה משמעותית' — למניעת False positives כמו CCO."
+        )
+        exclude_downtrend = st.checkbox(
+            "הסתר מגמת-על יורדת (SMA200 יורד)", value=True,
+            help="מסנן מניות עם מגמת-על שבורה (מתחת ל-SMA200 יורד) - סיכון גבוה גם אם רכיבים אחרים נראים טוב."
+        )
+        require_stage2 = st.checkbox(
+            "דרוש Stage 2 מלא (Weinstein/Minervini)", value=False,
+            help="מציג רק מניות שנמצאות במגמת-על בריאה מלאה: Close > SMA150 > SMA200 עולה."
+        )
+        rsi_range = st.slider(
+            "טווח RSI:", 0, 100, (0, 100),
+            help="סנן לפי RSI הנוכחי - לדוגמה 40-70 כדי להימנע ממניות overbought/oversold קיצוניות."
+        )
+        rvol_min = st.number_input(
+            "נפח יחסי מינימלי (RVOL):", min_value=0.0, max_value=10.0, value=0.0, step=0.1,
+            help="דורש שהנפח האחרון יהיה לפחות פי X מהממוצע ל-20 יום. 0 = ללא סינון."
+        )
+        atr_pct_range = st.slider(
+            "טווח תנודתיות (ATR% מהמחיר):", 0.0, 15.0, (0.0, 15.0), step=0.5,
+            help="מסנן מניות תנודתיות מדי (סיכון גבוה) או שקטות מדי (חסרות פוטנציאל תנועה)."
+        )
+        price_range = st.slider(
+            "טווח מחיר ($):", 0, 1000, (0, 1000), step=5,
+            help="הגבל לפי טווח מחיר המניה - לדוגמה כדי להימנע מ-penny stocks או ממניות יקרות מדי."
+        )
+
+    with st.sidebar.expander("⚙️ הגדרות סריקה", expanded=False):
+        max_tickers = st.number_input("מקסימום טיקרים לסריקה:", min_value=10, max_value=1000, value=200, step=10)
+        min_dollar_vol = st.number_input(
+            "מינימום מחזור מסחר יומי ($):", min_value=0, max_value=100_000_000,
+            value=2_000_000, step=500_000,
+            help="מניות עם מחזור מסחר דולרי (מחיר × נפח ממוצע) נמוך מהסף יסוננו — נמנע מנזילות דלה שמעוותת אותות."
+        )
+        if st.button("🗑️ נקה מטמון (מחירים + SEC + CIK)", use_container_width=True):
+            load_history.clear()
+            load_benchmark.clear()
+            load_market_indices.clear()
+            load_sec_ticker_cik_map.clear()
+            fetch_insider_transactions.clear()
+            fetch_fear_greed_index.clear()
+            fetch_stock_news.clear()
+            fetch_analyst_data.clear()
+            fetch_fundamentals.clear()
+            st.success("המטמון נוקה — הריצה הבאה תביא נתונים עדכניים")
+
+    st.sidebar.markdown("---")
+    run_scan = st.sidebar.button("🚀 הרץ סריקת פריצה", use_container_width=True, type="primary")
+
+    if run_scan:
+        if not tickers:
+            st.error("לא נבחרו טיקרים")
+        else:
+            tickers = list(dict.fromkeys(tickers))[:int(max_tickers)]  # ייחודיים בלבד + הגבלה
+            results = []
+            details = {}
+            progress = st.progress(0, text="מתחיל סריקה...")
+            total = len(tickers)
+            errors = []
+            skipped_liquidity = []
+
+            benchmark_df = load_benchmark(period="12mo")
+
+            for i, ticker in enumerate(tickers):
+                progress.progress((i + 1) / total, text=f"בודק {ticker} ({i+1}/{total})")
+                try:
+                    df = load_history(ticker, period="12mo")
+                    if df.empty:
+                        results.append({"Ticker": ticker, "Score": 0, "Confidence": 0, "Risk": 100,
+                                         "Price": np.nan, "Note": "אין נתונים", "SavedAt": ""})
+                        continue
+
+                    avg_vol_20 = df["Volume"].tail(20).mean()
+                    last_price_raw = safe_last(df["Close"])
+                    dollar_vol = (avg_vol_20 * last_price_raw) if not is_bad(last_price_raw) else 0
+                    if min_dollar_vol > 0 and dollar_vol < min_dollar_vol:
+                        skipped_liquidity.append(ticker)
+                        continue
+
+                    if not is_bad(last_price_raw) and not (price_range[0] <= last_price_raw <= price_range[1]):
+                        continue
+
+                    df = add_indicators(df, benchmark_df=benchmark_df)
+                    res = compute_breakout_decision(df)
+
+                    if exclude_broken_out and res.get("already_broken_out"):
+                        continue
+                    if exclude_downtrend and res.get("hard_downtrend"):
+                        continue
+                    if require_stage2 and not res.get("stage2_ok"):
+                        continue
+                    rsi_last = res.get("rsi_last")
+                    if not is_bad(rsi_last) and not (rsi_range[0] <= rsi_last <= rsi_range[1]):
+                        continue
+                    rvol_last = res.get("rvol_last")
+                    if rvol_min > 0 and (is_bad(rvol_last) or rvol_last < rvol_min):
+                        continue
+                    atr_pct_last = res.get("atr_pct")
+                    atr_pct_display = atr_pct_last * 100 if not is_bad(atr_pct_last) else np.nan
+                    if not is_bad(atr_pct_display) and not (atr_pct_range[0] <= atr_pct_display <= atr_pct_range[1]):
+                        continue
+                    if res["confidence"] < min_confidence:
+                        continue
+
+                    last_close = safe_last(df["Close"])
+                    results.append({
+                        "Ticker": ticker,
+                        "Score": res["score"],
+                        "Confidence": res["confidence"],
+                        "Risk": res["risk"],
+                        "Price": round(float(last_close), 2) if not is_bad(last_close) else np.nan,
+                        "Note": res["note"],
+                        "SavedAt": ""
+                    })
+                    details[ticker] = {"res": res, "df_tail": df.tail(120)}
+                except Exception as e:
+                    results.append({"Ticker": ticker, "Score": 0, "Confidence": 0, "Risk": 100,
+                                     "Price": np.nan, "Note": "שגיאה", "SavedAt": ""})
+                    errors.append(f"{ticker}: {e}")
+
+            progress.empty()
+            if skipped_liquidity:
+                st.caption(f"💧 {len(skipped_liquidity)} טיקרים סוננו בשל נזילות נמוכה מהסף שהוגדר: "
+                            f"{', '.join(skipped_liquidity[:15])}{' ...' if len(skipped_liquidity) > 15 else ''}")
+            if errors:
+                with st.expander(f"⚠️ {len(errors)} טיקרים נכשלו בסריקה — לחץ לפרטים"):
+                    for e in errors:
+                        st.caption(e)
+
+            st.session_state["scan_results"] = results
+            st.session_state["scan_details"] = details
+            st.session_state["last_min_score"] = min_score
+            st.session_state["last_max_score"] = max_score
+
+    if "scan_results" in st.session_state and st.session_state["scan_results"]:
+        df_res_full = pd.DataFrame(st.session_state["scan_results"]).sort_values("Score", ascending=False).reset_index(drop=True)
+        df_res = df_res_full[(df_res_full["Score"] >= min_score) & (df_res_full["Score"] <= max_score)]
+        details = st.session_state.get("scan_details", {})
+
+        if df_res.empty:
+            st.info("לא נמצאו מניות מתאימות לפי הקריטריונים. נסה להרחיב את טווח הציון או להקל בסינוני האיכות בסיידבר.")
+        else:
+            df_res = df_res.copy()
+
+            def _get_daily_chg(t):
+                info = details.get(t)
+                if info and not info["df_tail"].empty and "DailyChangePct" in info["df_tail"].columns:
+                    v = safe_last(info["df_tail"]["DailyChangePct"])
+                    return v if not is_bad(v) else 0.0
+                return 0.0
+            df_res["ChgPct"] = df_res["Ticker"].apply(_get_daily_chg)
+
+            st.caption(f"נסרקו {len(df_res_full)} טיקרים · {len(df_res)} עומדים בסף הנוכחי")
+            render_top_stat_cards(df_res, details)
+
+            sort_choice = st.radio("מיין לפי:", ["ניקוד", "מחיר", "שינוי%"], horizontal=True, label_visibility="collapsed")
+            if sort_choice == "מחיר":
+                df_res = df_res.sort_values("Price", ascending=False)
+            elif sort_choice == "שינוי%":
+                df_res = df_res.sort_values("ChgPct", ascending=False)
+            else:
+                df_res = df_res.sort_values("Score", ascending=False)
+
+            view_mode = st.radio("תצוגה:", ["🗂️ פיד", "📋 טבלה"], horizontal=True, label_visibility="collapsed")
+
+            if view_mode == "🗂️ פיד":
+                for _, row in df_res.iterrows():
+                    t = row["Ticker"]
+                    info = details.get(t)
+                    if info:
+                        render_stock_card(t, info["res"], info["df_tail"])
+                    else:
+                        render_stock_card(t, {"score": int(row["Score"]), "note": str(row["Note"])}, pd.DataFrame())
+            else:
+                st.dataframe(
+                    df_res,
+                    use_container_width=True,
+                    hide_index=True,
+                    column_config={
+                        "Score": st.column_config.ProgressColumn("ציון", min_value=0, max_value=100, format="%d"),
+                        "Confidence": st.column_config.ProgressColumn("ביטחון", min_value=0, max_value=100, format="%d"),
+                        "Risk": st.column_config.ProgressColumn("סיכון (נמוך=טוב)", min_value=0, max_value=100, format="%d"),
+                        "Price": st.column_config.NumberColumn("מחיר", format="$%.2f"),
+                    }
+                )
+
+            st.divider()
+            col_save1, col_save2 = st.columns([3, 1])
+            with col_save1:
+                save_note = st.text_input("הערה לשמירה (אופציונלי):", "")
+            with col_save2:
+                st.write("")
+                if st.button("💾 שמור תוצאות", use_container_width=True):
+                    df_to_save = df_res.copy()
+                    df_to_save["SavedAt"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                    if save_note:
+                        df_to_save["Note"] = df_to_save["Note"].astype(str) + " | " + save_note
+                    header = not os.path.exists(SCAN_RESULTS_FILE)
+                    df_to_save.to_csv(SCAN_RESULTS_FILE, mode='a', header=header, index=False)
+                    st.success("תוצאות נשמרו בהצלחה")
+
+            st.divider()
+            col_select, col_buttons = st.columns([2, 1])
+            with col_select:
+                to_view = st.selectbox("בחר מניה לניתוח:", df_res['Ticker'].tolist())
+            with col_buttons:
+                st.write("")
+                if st.button("➕ הוסף לתיק ההשקעות", use_container_width=True):
+                    try:
+                        price = df_res[df_res['Ticker'] == to_view]['Price'].values[0]
+                    except Exception:
+                        price = None
+                    ok, msg = add_to_portfolio(to_view, price)
+                    (st.success if ok else st.warning)(f"{to_view}: {msg}")
+
+            st.subheader(f"🔎 דוח מפורט — {to_view}")
+            info = details.get(to_view)
+            if info:
+                res = info["res"]
+                m1, m2, m3 = st.columns(3)
+                m1.metric("ציון פריצה", res["score"])
+                m2.metric("ביטחון", f'{res["confidence"]}%')
+                m3.metric("מדד סיכון", res["risk"])
+
+                st.markdown(f"**סטטוס:** {score_badge_html(res['score'])}", unsafe_allow_html=True)
+
+                with st.expander("📊 רכיבי ניקוד מפורטים"):
+                    comp_labels = {
+                        "compression": "דחיסת מחיר (Squeeze)",
+                        "rvol": "נפח יחסי (RVOL)",
+                        "trend": "טרנד EMA20/50",
+                        "macd": "MACD",
+                        "rsi": "RSI",
+                        "institutional": "כסף מוסדי (OBV/AD)",
+                        "proximity": "קרבה להתנגדות ישנה (לפני הריצה)",
+                        "squeeze": "Squeeze פעיל כרגע",
+                        "squeeze_duration": "משך ה-Squeeze",
+                        "risk": "ניקוד סיכון (נמוך=טוב)",
+                        "stage2": "מגמת-על (Stage 2)",
+                        "relative_strength": "חוזק יחסי מול SPY",
+                        "volume_quality": "איכות נפח (קונים/מוכרים)",
+                        "extension": "התרחקות מהממוצע (Extension)",
+                        "absorption": "איסוף בזמן ירידה (Wyckoff Absorption)",
+                        "sideways": "תנועה הצידה (טווח, לא טרנד)",
+                    }
+                    comps_named = {comp_labels.get(k, k): v for k, v in res["components"].items()}
+                    comp_df = pd.DataFrame.from_dict(comps_named, orient="index", columns=["ערך"]).sort_values("ערך", ascending=False)
+                    st.dataframe(comp_df, use_container_width=True,
+                                 column_config={"ערך": st.column_config.ProgressColumn("ערך", min_value=0, max_value=100, format="%d")})
+
+                st.info(f"**הערות:** {res['note']}")
+
+                with st.expander("🧠 הסבר מורחב — למה המניה קיבלה את הציון הזה? (חינמי, ללא AI בתשלום)", expanded=False):
+                    st.caption("ההסבר נכתב אוטומטית מתוך רכיבי מנוע ההחלטה עצמו - בלי קריאה לשום שירות AI חיצוני/בתשלום.")
+                    st.markdown(generate_rule_based_explanation(to_view, res))
+
+                df_plot = info["df_tail"].copy()
+                gc1, gc2, gc3, gc4 = st.columns(4)
+                days_view = gc1.select_slider("טווח ימים בגרף", options=[30, 60, 90, 120], value=90, key=f"days_{to_view}")
+                show_bands = gc2.checkbox("רצועות בולינגר", value=False, key=f"bands_{to_view}")
+                show_macd = gc3.checkbox("MACD", value=False, key=f"macd_{to_view}")
+                show_obv = gc4.checkbox("OBV", value=False, key=f"obv_{to_view}")
+                st.plotly_chart(
+                    plot_advanced(df_plot, to_view, show_macd=show_macd, show_obv=show_obv,
+                                  show_bands=show_bands, days=days_view),
+                    use_container_width=True
+                )
+
+                show_buttons(to_view)
+
+                # ---------- שווי הוגן: קישור למסך הנפרד ----------
+                st.markdown("---")
+                fv_c1, fv_c2 = st.columns([3, 1])
+                with fv_c1:
+                    st.caption("💰 רוצה לבדוק אם המניה נסחרת מתחת/מעל לשווי ההוגן שלה (Graham / P/E / PEG / P/B / DCF)?")
+                with fv_c2:
+                    if st.button("💰 בדוק שווי הוגן", key=f"fv_btn_{to_view}", use_container_width=True):
+                        st.session_state["fv_selected_ticker"] = to_view
+                        st.session_state["fv_auto_run"] = True
+                        st.success(f"✅ עבור לטאב '💰 שווי הוגן' למעלה כדי לראות את ניתוח השווי ההוגן של {to_view}")
+
    
     
