@@ -1911,7 +1911,7 @@ def plot_advanced(df, ticker, show_macd=False, show_obv=False, show_bands=False,
 # ============================
 # שווי הוגן (Fair Value) — מודל רב-שיטתי ברמה אנליטית
 # ============================
- EQUITY_RISK_PREMIUM = 0.045
+EQUITY_RISK_PREMIUM = 0.045
 DEFAULT_CREDIT_SPREAD = 0.02
 DEFAULT_TAX_RATE = 0.21
 @st.cache_data(ttl=3600, show_spinner=False)
