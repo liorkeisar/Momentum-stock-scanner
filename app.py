@@ -3,6 +3,7 @@ import streamlit as st
 import yfinance as yf
 import pandas as pd
 import numpy as np
+import math
 import os
 import glob
 import requests
@@ -813,14 +814,6 @@ def render_news_and_analysts(ticker):
 # ============================
 # איתור קניות/מכירות Insider — SEC EDGAR (Form 4)
 # ============================
-# זהו המקור הכי "חד משמעי" שאפשר לשלב בחינם: Form 4 הוא גילוי רגולטורי מחייב
-# (SEC) על כל עסקת קנייה/מכירה של דירקטורים ומנהלים בכירים, מוגש תוך יומיים
-# עסקים. זה לא "מוסדי" במובן של קרנות גדולות (לזה יש 13F/13D, ברבעון/בפיגור),
-# אבל זו העסקה הכי קרובה ל"מישהו בפנים קונה במזומן משלו" שיש בציבור.
-#
-# ⚠️ SEC דורשת User-Agent מזוהה עם פרטי קשר אמיתיים (מדיניות Fair Access).
-# בקשות עם UA גנרי/placeholder (כמו example.com) נחסמות/מוזנחות - זה היה
-# הבאג שגרם לכל תוצאה להראות "לא נמצא" גם כשהיו עסקאות בפועל.
 SEC_USER_AGENT = "WyckoffProScanner/1.0 (contact: liorkeisar@gmail.com)"
 
 @st.cache_data(ttl=86400, show_spinner=False)
@@ -846,9 +839,6 @@ def fetch_insider_transactions(ticker, lookback_days=90, max_filings=15):
     """
     שולף עסקאות Form 4 (קנייה/מכירה בשוק הפתוח ע"י דירקטורים/מנהלים) עבור טיקר,
     ישירות מ-SEC EDGAR. מחזיר dict עם סיכום קניות/מכירות ורשימת עסקאות בודדות.
-    בכוונה לא נכלל בתוך הסריקה המרוכזת (bulk scan) - מדובר בכמה בקשות רשת
-    לכל טיקר, וזה עלול להיות איטי מדי ולחרוג ממדיניות השימוש ההוגן של SEC
-    כשסורקים מאות טיקרים. משתמשים בזה רק לפי דרישה (כפתור) בדוח המפורט לטיקר בודד.
     """
     result = {"buys": 0, "sells": 0, "buy_value": 0.0, "sell_value": 0.0, "transactions": [], "error": None}
     try:
@@ -933,7 +923,6 @@ def fetch_insider_transactions(ticker, lookback_days=90, max_filings=15):
                     ad = ad_el.text if (ad_el is not None and ad_el.text) else ""
                     value = shares * price
 
-                    # P = רכישה בשוק הפתוח, S = מכירה בשוק הפתוח (קודי עסקה תקניים של SEC)
                     if code == "P" and ad == "A":
                         result["buys"] += 1
                         result["buy_value"] += value
@@ -1004,56 +993,38 @@ def add_indicators(df, benchmark_df=None):
     df["VOL_MA20"] = df["Volume"].rolling(20).mean()
     df["RVOL"] = df["Volume"] / df["VOL_MA20"].replace(0, np.nan)
 
-    # --- מגמת-על (Stage 2 לפי Weinstein/Minervini): SMA150/SMA200 ---
     df["SMA50"] = df["Close"].rolling(50).mean()
     df["SMA150"] = df["Close"].rolling(150).mean()
     df["SMA200"] = df["Close"].rolling(200).mean()
-    df["SMA200_slope"] = df["SMA200"].diff(20)  # שיפוע ב-20 הימים האחרונים
+    df["SMA200_slope"] = df["SMA200"].diff(20)
 
-    # --- איכות נפח: יחס נפח-עולה/נפח-יורד על פני 20 יום ---
     up_day = df["Close"] > df["Close"].shift(1)
     down_day = df["Close"] < df["Close"].shift(1)
     up_vol = df["Volume"].where(up_day, 0).rolling(20).sum()
     down_vol = df["Volume"].where(down_day, 0).rolling(20).sum().replace(0, np.nan)
     df["UpDownVolRatio"] = up_vol / down_vol
 
-    # --- איסוף/ספיגה בזמן ירידה (Wyckoff absorption): איפה הסגירה ביחס לטווח היום,
-    # ממוצע רק על ימים אדומים. CLV חיובי בימי ירידה = קונים נכנסים וסופגים היצע
-    # למרות שהיום נסגר במינוס - זה בדיוק סימן האיסוף השקט שמבקשים לאתר.
     day_range = (df["High"] - df["Low"]).replace(0, np.nan)
-    clv = ((df["Close"] - df["Low"]) - (df["High"] - df["Close"])) / day_range  # טווח -1 עד 1
+    clv = ((df["Close"] - df["Low"]) - (df["High"] - df["Close"])) / day_range
     df["CLV"] = clv
     df["CLV_DownDays"] = clv.where(down_day)
     df["AbsorptionScore"] = df["CLV_DownDays"].rolling(30, min_periods=5).mean()
 
-    # --- תנועה "הצידה" בפועל: שיפוע EMA50 מנורמל ב-ATR. ערך קרוב ל-0 = טווח אמיתי
-    # (לא טרנד), בניגוד לכיווץ שקורה בתוך טרנד עולה חד (שגם הוא לגיטימי אבל שונה) ---
     ema50_change_15d = df["EMA50"] - df["EMA50"].shift(15)
     df["SidewaysSlope"] = safe_div_series(ema50_change_15d, df["ATR"])
 
-    # --- משך ה-Squeeze (כמה ימים רצופים הרצועות בתוך הערוץ) ---
     squeeze_active = (df["UpperBB"] < df["UpperKC"]) & (df["LowerBB"] > df["LowerKC"])
     grp = (~squeeze_active).cumsum()
     df["SqueezeActive"] = squeeze_active
     df["SqueezeStreak"] = squeeze_active.groupby(grp).cumsum()
 
-    # --- "התנגדות ישנה" (Base High) — שיא הבסיס *לפני* הריצה האחרונה ---
-    # שימוש בשיא 20 יום גולמי ("High20") גורם למניה שכבר פרצה להראות תמיד
-    # "קרובה לשיא" כי החלון הנע פשוט רודף אחרי המחיר החדש. כאן משתמשים בשיא
-    # של חלון ישן יותר (BASE_WINDOW) שמוזז אחורה (RECENT_EXCLUDE) כדי לשקף
-    # את רמת ההתנגדות שנוצרה *לפני* תנועת המחיר האחרונה.
     BASE_WINDOW, RECENT_EXCLUDE = 50, 12
     df["BaseHigh"] = df["High"].rolling(BASE_WINDOW).max().shift(RECENT_EXCLUDE)
 
-    # --- מדד "התרחקות" (Extension) ממוצע נע 20 יום, ביחידות ATR ---
-    # מניה שכבר עשתה תנועה חדה ורחוקה מה-EMA20 שלה (במונחי ATR) כבר "רצה" -
-    # זה ההפך מתבנית קדם-פריצה שבה המחיר מהודק ליד הממוצעים.
     df["ExtensionATR"] = safe_div_series(df["Close"] - df["EMA20"], df["ATR"])
 
-    # --- תשואת 20 יום — אם המניה כבר עלתה חזק לאחרונה, כנראה שהפריצה כבר קרתה ---
     df["Return20D"] = df["Close"] / df["Close"].shift(20) - 1
 
-    # --- חוזק יחסי מול מדד ייחוס (RS Line) ---
     if benchmark_df is not None and not benchmark_df.empty:
         bench = benchmark_df["Close"].reindex(df.index).ffill()
         rs_line = df["Close"] / bench.replace(0, np.nan)
@@ -1063,7 +1034,6 @@ def add_indicators(df, benchmark_df=None):
         df["RS_Line"] = np.nan
         df["RS_MA20"] = np.nan
 
-    # --- ADX (Average Directional Index, 14) — עוצמת המגמה (לא כיוונה) ---
     up_move = df["High"].diff()
     down_move = -df["Low"].diff()
     plus_dm = pd.Series(np.where((up_move > down_move) & (up_move > 0), up_move, 0.0), index=df.index)
@@ -1074,31 +1044,17 @@ def add_indicators(df, benchmark_df=None):
     dx = 100 * safe_div_series((plus_di - minus_di).abs(), (plus_di + minus_di))
     df["ADX"] = dx.ewm(alpha=1/14, adjust=False).mean()
 
-    # --- שיא/שפל 52 שבועות (~252 ימי מסחר) ושינוי יומי באחוזים - לשורת הכרטיס ---
     df["High52W"] = df["High"].rolling(252, min_periods=20).max()
     df["Low52W"] = df["Low"].rolling(252, min_periods=20).min()
     df["DailyChangePct"] = df["Close"].pct_change() * 100
 
     return df
 
-
-
 # ============================
 # מנוע החלטה לפני פריצה
 # ============================
 
 def days_since_last_breakout(df, base_window=60, threshold=0.03, search_window=130):
-    """
-    סורק אחורה עד search_window ימים ומאתר את הפעם האחרונה שבה המחיר חצה
-    מעל השיא של base_window הימים שלפניו ביותר מ-threshold. מחזיר כמה ימי מסחר
-    עברו מאז (0 = פרצה היום). זהו האיתור הישיר והאמין ביותר ל"כבר פרצה לפני זמן",
-    בניגוד למדדים רגעיים (extension/proximity) שיכולים "לפספס" פריצה ישנה אם
-    המניה ממשיכה לזחול מעלה בהדרגה בלי לתקן.
-
-    הערה טכנית: החישוב הגלגלי (rolling) מתבצע על כל ההיסטוריה הזמינה ולא רק על
-    חלון חתוך, כדי שלכל יום בטווח החיפוש תמיד יהיה מספיק היסטוריה מאחוריו לחישוב
-    השיא הקודם - חיתוך מוקדם מדי היה עלול "לפספס" בדיוק פריצות שקרו קרוב לקצה החלון.
-    """
     try:
         if len(df) < base_window + 5:
             return None
@@ -1164,7 +1120,6 @@ def compute_breakout_decision(df):
     ad_gain = 1 if (not is_bad(ad_now) and not is_bad(ad_prev) and ad_now > ad_prev) else 0
     comps["institutional"] = int(round(((obv_gain + ad_gain) / 2) * 100))
 
-    # --- קרבה לפריצה מול "התנגדות ישנה" (BaseHigh), לא מול שיא 20 יום שרודף אחרי המחיר ---
     base_high = safe_last(df["BaseHigh"]) if "BaseHigh" in df.columns else np.nan
     prox = safe_div(safe_last(df["Close"]), base_high, default=0.0)
     if is_bad(prox) or prox <= 0:
@@ -1172,7 +1127,6 @@ def compute_breakout_decision(df):
     elif prox <= 1.00:
         comps["proximity"] = score_component(prox, 0.85, 1.00)
     else:
-        # מעל ההתנגדות הישנה: 100 מיד מעל, יורד לינארית ל-0 ב-15%+ מעליה (כבר פרצה משמעותית)
         comps["proximity"] = max(0, int(round(100 - ((prox - 1.00) / 0.15) * 100)))
 
     atr_pct = safe_div(safe_last(df["ATR"]), safe_last(df["Close"]), default=0.0)
@@ -1183,11 +1137,9 @@ def compute_breakout_decision(df):
           and ubb < ukc and lbb > lkc)
     comps["squeeze"] = 100 if sq else 0
 
-    # --- משך ה-Squeeze: כמה זמן רצוף המניה בכיווץ (ככל שיותר, יותר אנרגיה לפריצה) ---
     streak = safe_last(df["SqueezeStreak"]) if "SqueezeStreak" in df.columns else 0
     comps["squeeze_duration"] = score_component(streak, 0, 15)
 
-    # --- Stage 2 (Weinstein/Minervini): מחיר מעל SMA150/200 עולה = מגמת-על בריאה ---
     close_now = safe_last(df["Close"])
     sma150 = safe_last(df["SMA150"]) if "SMA150" in df.columns else np.nan
     sma200 = safe_last(df["SMA200"]) if "SMA200" in df.columns else np.nan
@@ -1196,27 +1148,20 @@ def compute_breakout_decision(df):
                  and close_now > sma150 > sma200 and (is_bad(sma200_slope) or sma200_slope > 0))
     comps["stage2"] = 100 if stage2_ok else (40 if (not is_bad(close_now) and not is_bad(sma150) and close_now > sma150) else 0)
 
-    # --- חוזק יחסי מול מדד ייחוס (RS Line) ---
     rs_now = safe_last(df["RS_Line"]) if "RS_Line" in df.columns else np.nan
     rs_prev = safe_last(df["RS_Line"].shift(20)) if "RS_Line" in df.columns else np.nan
     rs_change = safe_div(rs_now - rs_prev, abs(rs_prev) if not is_bad(rs_prev) else np.nan, default=np.nan) if not is_bad(rs_now) else np.nan
     comps["relative_strength"] = score_component(rs_change, -0.05, 0.10) if not is_bad(rs_change) else 50
 
-    # --- איכות נפח: יחס נפח-עולה/נפח-יורד ---
     updown = safe_last(df["UpDownVolRatio"]) if "UpDownVolRatio" in df.columns else np.nan
     comps["volume_quality"] = score_component(updown, 0.6, 2.0) if not is_bad(updown) else 50
 
-    # --- מדד התרחקות (Extension): כמה ATR המחיר רחוק מ-EMA20 ---
     extension = safe_last(df["ExtensionATR"]) if "ExtensionATR" in df.columns else np.nan
     comps["extension"] = score_component(extension, 0.5, 4.0, invert=True) if not is_bad(extension) else 50
 
-    # --- איסוף/ספיגה בזמן ירידה (Wyckoff absorption) - הרכיב המרכזי המבוקש:
-    # CLV ממוצע חיובי בימי ירידה = המחיר נסגר קרוב לשיא הטווח היומי למרות יום אדום,
-    # כלומר יש קונים שסופגים היצע בזמן חולשה - זהו איתות איסוף שקט אמיתי. ---
     absorption = safe_last(df["AbsorptionScore"]) if "AbsorptionScore" in df.columns else np.nan
     comps["absorption"] = score_component(absorption, -0.3, 0.3) if not is_bad(absorption) else 50
 
-    # --- תנועה "הצידה" בפועל (לא טרנד) - שיפוע EMA50 מנורמל ב-ATR קרוב ל-0 ---
     sideways_slope = safe_last(df["SidewaysSlope"]) if "SidewaysSlope" in df.columns else np.nan
     comps["sideways"] = score_component(abs(sideways_slope) if not is_bad(sideways_slope) else np.nan, 0, 2.5, invert=True) if not is_bad(sideways_slope) else 50
 
@@ -1230,15 +1175,11 @@ def compute_breakout_decision(df):
     final_score = sum(comps.get(k, 0) * w for k, w in weights.items())
     final_score = int(round(final_score))
 
-    # וטו קשיח #1: מגמת-על שבורה (מתחת ל-SMA200 יורד)
     hard_downtrend = (not is_bad(close_now) and not is_bad(sma200) and not is_bad(sma200_slope)
                        and close_now < sma200 and sma200_slope < 0)
     if hard_downtrend:
         final_score = min(final_score, 35)
 
-    # וטו קשיח #2: המניה כבר פרצה משמעותית מעל ההתנגדות הישנה ו/או רחוקה מדי מהממוצעים,
-    # ו/או שהפריצה בפועל כבר קרתה לפני יותר מ-2 שבועות (גם אם היא ממשיכה לזחול מעלה בהדרגה) -
-    # זו כבר לא "קדם-פריצה", היא פריצה שכבר קרתה.
     ret20 = safe_last(df["Return20D"]) if "Return20D" in df.columns else np.nan
     days_since_bo = days_since_last_breakout(df, base_window=60, threshold=0.03, search_window=130)
     already_broken_out = (
@@ -1295,7 +1236,6 @@ def compute_features_for_ml(df, window=20):
         ema20 = w["Close"].ewm(span=20, adjust=False).mean().iloc[-1]
         ema50 = w["Close"].ewm(span=50, adjust=False).mean().iloc[-1]
 
-        # RSI אמיתי (14 תקופות) - תוקן, קודם לכן חושב רק על עליות בלי ירידות
         delta = w["Close"].diff()
         gain = delta.where(delta > 0, 0).rolling(14).mean().iloc[-1] if len(w) >= 14 else np.nan
         loss = (-delta.where(delta < 0, 0)).rolling(14).mean().iloc[-1] if len(w) >= 14 else np.nan
@@ -1363,13 +1303,6 @@ def logistic_predict_probability(model, df):
         return None
 
 def backtest_score_calibration(df_full, lookahead=5, step=3, min_history=250):
-    """
-    Backtest פשוט לכיול הציון: מריץ את מנוע ההחלטה (compute_breakout_decision)
-    על כל נקודה היסטורית (בצעדים של 'step' ימים כדי לחסוך זמן ריצה), ובודק אם
-    בפועל התרחשה פריצה מעל שיא 20 הימים הקודמים תוך 'lookahead' ימי מסחר.
-    מחזיר טבלת סיכום לפי דלי-ציון (score bucket) עם שיעור ההצלחה בפועל.
-    שימו לב: זהו backtest פשוט (ללא עמלות/סליפג'), נועד לכיול הציון בלבד ולא לבדיקת אסטרטגיית מסחר מלאה.
-    """
     try:
         n = len(df_full)
         if n < min_history + lookahead + 10:
@@ -1410,11 +1343,6 @@ def backtest_score_calibration(df_full, lookahead=5, step=3, min_history=250):
         return None, None
 
 def statistical_similarity_prediction(df, tolerance=0.15, lookahead=5):
-    """
-    מחפש חלונות היסטוריים 'דומים' להיום ובודק כמה מהם פרצו בעבר.
-    שימוש בנרמול z-score (במקום השוואת % גולמי) כדי שהמדדים לא יוטו
-    ע"י סקאלת המחיר של המניה (macd_diff, std20 בדולרים משתנים לפי מחיר המניה).
-    """
     try:
         feats = compute_features_for_ml(df, window=20)
         if feats.empty:
@@ -1437,10 +1365,8 @@ def statistical_similarity_prediction(df, tolerance=0.15, lookahead=5):
         target_z = (target[feature_keys] - means) / stds
         cand_z = (candidates[feature_keys] - means) / stds
 
-        # מרחק אוקלידי מנורמל בין כל חלון היסטורי לבין המצב הנוכחי
         dist = np.sqrt(((cand_z - target_z) ** 2).sum(axis=1))
 
-        # סף מרחק נגזר מסליידר הטולרנס (0.05-0.5) → סקאלת z-score סבירה
         distance_threshold = tolerance * np.sqrt(len(feature_keys)) * 2.5
 
         sim_mask = dist <= distance_threshold
@@ -1453,11 +1379,6 @@ def statistical_similarity_prediction(df, tolerance=0.15, lookahead=5):
         return {"count": 0, "successes": 0, "rate": 0.0}
 
 def find_swing_points(df, order=3, window=60):
-    """
-    זיהוי נקודות תפנית אמיתיות (fractals) - נקודה נחשבת שיא/שפל מקומי
-    אם היא הגבוהה/הנמוכה ביותר ב-'order' ימים לפני ואחריה משני הצדדים.
-    מחזיר רשימות של (אינדקס, מחיר) לשיאים ולשפלים בטווח האחרון.
-    """
     w = df.tail(window)
     highs = w["High"].values
     lows = w["Low"].values
@@ -1473,11 +1394,6 @@ def find_swing_points(df, order=3, window=60):
     return swing_highs, swing_lows
 
 def pattern_detection_vcp_like(df):
-    """
-    זיהוי VCP (Volatility Contraction Pattern) מבוסס נקודות תפנית אמיתיות,
-    במקום דגימה גסה כל שליש מהחלון. בודק: שיאים יורדים, שפלים עולים,
-    וכיווץ מתקדם (כל תנודה קטנה מקודמתה - התבנית האמיתית של VCP).
-    """
     try:
         window = 60
         if len(df) < window:
@@ -1498,8 +1414,6 @@ def pattern_detection_vcp_like(df):
             recent_lows[i] <= recent_lows[i + 1] for i in range(len(recent_lows) - 1)
         )
 
-        # מדידת כיווץ אמיתי: טווח (high-low) של כל "גל" בין שיא לשפל עוקבים,
-        # ובודקים שהטווחים הולכים ומצטמצמים - זהו הליבה של VCP אמיתי.
         swings = sorted(swing_highs + swing_lows, key=lambda x: x[0])
         wave_ranges = []
         for i in range(1, len(swings)):
@@ -1676,10 +1590,6 @@ def score_ring_big_html(score):
     </div>"""
 
 def sparkline_svg(values, color, width=280, height=44):
-    """
-    ספארקליין קליל מבוסס SVG טהור (בלי Plotly) - עלות רינדור זניחה גם בפיד עם עשרות כרטיסים.
-    מקבל רשימת מספרים (למשל 20 מחירי סגירה אחרונים) ומצייר קו פוליליין מנורמל.
-    """
     vals = [v for v in values if not is_bad(v)]
     if len(vals) < 2:
         return f'<svg width="{width}" height="{height}"></svg>'
@@ -1700,7 +1610,6 @@ def sparkline_svg(values, color, width=280, height=44):
     </svg>"""
 
 def fmt_compact_number(v):
-    """פורמט קומפקטי למספרים גדולים (וולום וכו') - 4300000 -> '4.3M'."""
     try:
         v = float(v)
     except Exception:
@@ -1716,7 +1625,6 @@ def fmt_compact_number(v):
     return f"{v:.0f}"
 
 def classify_signal(score):
-    """מסווג ציון לתגית קנייה/מכירה/המתן + רמת עוצמה, לתצוגת הכרטיס."""
     if score >= 70:
         return "buy", "קנייה", ("גבוהה" if score >= 85 else "בינונית")
     if score <= 35:
@@ -1724,10 +1632,6 @@ def classify_signal(score):
     return "neutral", "המתן", "נמוכה"
 
 def compute_trade_levels(df_tail):
-    """
-    מחשב הערכת כניסה/סטופ/יעד/יחס סיכוי-סיכון להצגה בכרטיס.
-    ⚠️ זוהי הערכה טכנית גסה (מבוססת ATR + שפל אחרון), לא המלצת מסחר.
-    """
     try:
         entry = float(safe_last(df_tail["Close"]))
         atr = float(safe_last(df_tail["ATR"])) if "ATR" in df_tail.columns else np.nan
@@ -1746,11 +1650,6 @@ def compute_trade_levels(df_tail):
         return None
 
 def render_stock_card(ticker, res, df_tail):
-    """
-    מציג כרטיס מניה מעודכן: ספארקליין, מחיר + שינוי יומי, טבעת ציון גדולה,
-    שורת סטטיסטיקות (וולום/ADX/MFI/RVOL/שיא 52 שבועות), הערות מנוע ההחלטה,
-    ורמות כניסה/סטופ/יעד/R:R. בהשראת עיצוב אפליקציית סורק מניות רפרנס.
-    """
     score = res.get("score", 0)
     sig_class, sig_label, strength_label = classify_signal(score)
     tag_class = f"tag-{sig_class}"
@@ -1758,7 +1657,6 @@ def render_stock_card(ticker, res, df_tail):
     notes_list = [n.strip() for n in res.get("note", "").split(",") if n.strip()]
     notes_html = "".join(f"<div>• {n}</div>" for n in notes_list[:4])
 
-    # --- נתוני מחיר/שינוי/ספארקליין מתוך df_tail (אם קיים) ---
     price_html, chg_html, spark_html, stat_row_html = "", "", "", ""
     if df_tail is not None and not df_tail.empty:
         last_price = safe_last(df_tail["Close"])
@@ -1822,10 +1720,6 @@ def render_stock_card(ticker, res, df_tail):
     st.markdown(card_html, unsafe_allow_html=True)
 
 def render_top_stat_cards(df_res, details):
-    """
-    שורת 4 כרטיסי סיכום עליונים (בהשראת עיצוב הרפרנס): עולות/יורדות/פריצה חזקה/ציון ממוצע.
-    'עולות'/'יורדות' נספרים לפי השינוי היומי האחרון של כל טיקר (מתוך df_tail בפירוט הסריקה).
-    """
     rising = falling = 0
     for t in df_res["Ticker"]:
         info = details.get(t)
@@ -1867,12 +1761,6 @@ def render_top_stat_cards(df_res, details):
     </div>""", unsafe_allow_html=True)
 
 def generate_rule_based_explanation(ticker, res):
-    """
-    הסבר מורחב וטבעי בעברית, מבוסס אך ורק על לוגיקת מנוע ההחלטה הקיים
-    (compute_breakout_decision) - ללא קריאה לשום API חיצוני בתשלום.
-    ממיר את רכיבי הניקוד הגולמיים למשפטים קריאים שמסבירים "למה" המניה קיבלה
-    את הציון שקיבלה, כולל הרכיבים החזקים, החלשים, ואזהרות וטו אם הופעלו.
-    """
     comps = res.get("components", {})
     score = res.get("score", 0)
     confidence = res.get("confidence", 0)
@@ -1934,7 +1822,6 @@ def generate_rule_based_explanation(ticker, res):
     return "\n".join(lines)
 
 def render_stat_pills(df_res):
-    """שורת פילים סטטיסטית מעל הפיד (קנייה/מכירה/סה"כ), בסגנון SwingAI."""
     buy_count = int((df_res["Score"] >= 70).sum())
     sell_count = int((df_res["Score"] <= 35).sum())
     total = len(df_res)
@@ -1957,11 +1844,6 @@ def show_buttons(ticker):
 # ============================
 
 def plot_advanced(df, ticker, show_macd=False, show_obv=False, show_bands=False, days=90):
-    """
-    גרף נקי בברירת מחדל: מחיר + MA20 + נפח בלבד.
-    MACD / OBV / רצועות בולינגר הם אופציונליים כדי למנוע עומס ויזואלי.
-    days: כמות ימי המסחר האחרונים שיוצגו (זום פנימי - מונע גרף "דחוס").
-    """
     df = df.tail(days).copy()
 
     panels = ["price", "volume"]
@@ -1978,7 +1860,6 @@ def plot_advanced(df, ticker, show_macd=False, show_obv=False, show_bands=False,
                          vertical_spacing=0.04, row_heights=row_heights)
     row_of = {p: i + 1 for i, p in enumerate(panels)}
 
-    # --- מחיר ---
     fig.add_trace(go.Candlestick(
         x=df.index, open=df["Open"], high=df["High"], low=df["Low"], close=df["Close"],
         name="מחיר", increasing_line_color="#1fc46a", decreasing_line_color="#e2543b",
@@ -1996,19 +1877,16 @@ def plot_advanced(df, ticker, show_macd=False, show_obv=False, show_bands=False,
                                   name="רצועות בולינגר", fill='tonexty', fillcolor='rgba(108,140,255,0.06)'),
                       row=row_of["price"], col=1)
 
-    # --- נפח ---
     vol_colors = np.where(df["Close"] >= df["Open"], "rgba(31,196,106,0.55)", "rgba(226,84,59,0.55)")
     fig.add_trace(go.Bar(x=df.index, y=df["Volume"], name="נפח", marker_color=vol_colors, showlegend=False),
                   row=row_of["volume"], col=1)
 
-    # --- MACD (אופציונלי) ---
     if show_macd and "MACD" in df.columns:
         fig.add_trace(go.Scatter(x=df.index, y=df["MACD"], name="MACD", line=dict(color="#6c8cff", width=1.4)),
                       row=row_of["macd"], col=1)
         fig.add_trace(go.Scatter(x=df.index, y=df["Signal"], name="Signal", line=dict(color="#e2b93b", width=1.4)),
                       row=row_of["macd"], col=1)
 
-    # --- OBV (אופציונלי) ---
     if show_obv and "OBV" in df.columns:
         fig.add_trace(go.Scatter(x=df.index, y=df["OBV"], name="OBV", line=dict(color="#c88cff", width=1.4)),
                       row=row_of["obv"], col=1)
@@ -2031,664 +1909,366 @@ def plot_advanced(df, ticker, show_macd=False, show_obv=False, show_bands=False,
     return fig
 
 # ============================
-# ממשק משתמש — טאבים
+# שווי הוגן (Fair Value) — מודל רב-שיטתי ברמה אנליטית
 # ============================
+EQUITY_RISK_PREMIUM = 0.045
+DEFAULT_CREDIT_SPREAD = 0.02
+DEFAULT_TAX_RATE = 0.21
 
-render_market_ticker()
-render_fear_greed_gauge()
+@st.cache_data(ttl=3600, show_spinner=False)
+def fetch_risk_free_rate():
+    """שולף תשואת אג\"ח ממשלת ארה\"ב ל-10 שנים (^TNX) כריבית חסרת סיכון ל-CAPM/WACC."""
+    try:
+        hist = yf.Ticker("^TNX").history(period="5d")
+        if hist is None or hist.empty:
+            return 0.045
+        last = float(hist["Close"].iloc[-1])
+        rate = last / 10.0 / 100.0
+        if rate <= 0 or rate > 0.20:
+            return 0.045
+        return rate
+    except Exception:
+        return 0.045
 
-tab1, tab2, tab3, tab4 = st.tabs(["📊 סורק פריצה משופר", "💼 תיק השקעות", "🔮 תחזיות שמורות", "🗂️ ניהול סריקות שמורות"])
+@st.cache_data(ttl=3600, show_spinner=False)
+def fetch_fundamentals(ticker):
+    """שולף נתוני יסוד (Fundamentals) מ-Yahoo Finance עבור מודל השווי ההוגן."""
+    try:
+        info = yf.Ticker(ticker).info or {}
+        return {
+            "trailingPE": info.get("trailingPE"),
+            "forwardPE": info.get("forwardPE"),
+            "trailingEps": info.get("trailingEps"),
+            "forwardEps": info.get("forwardEps"),
+            "bookValue": info.get("bookValue"),
+            "priceToBook": info.get("priceToBook"),
+            "earningsGrowth": info.get("earningsGrowth"),
+            "revenueGrowth": info.get("revenueGrowth"),
+            "earningsQuarterlyGrowth": info.get("earningsQuarterlyGrowth"),
+            "freeCashflow": info.get("freeCashflow"),
+            "operatingCashflow": info.get("operatingCashflow"),
+            "totalDebt": info.get("totalDebt"),
+            "totalCash": info.get("totalCash"),
+            "sharesOutstanding": info.get("sharesOutstanding"),
+            "currentPrice": info.get("currentPrice") or info.get("regularMarketPrice"),
+            "sector": info.get("sector"),
+            "industry": info.get("industry"),
+            "marketCap": info.get("marketCap"),
+            "beta": info.get("beta"),
+            "returnOnEquity": info.get("returnOnEquity"),
+            "payoutRatio": info.get("payoutRatio"),
+            "dividendYield": info.get("dividendYield"),
+        }
+    except Exception:
+        return {}
 
-# --- טאב הסורק ---
-with tab1:
-    st.sidebar.header("⚙️ מקורות טיקרים לסורק")
-    mode = st.sidebar.radio(
-        "בחר מקור:",
-        ["קובץ CSV בודד", "תיקיית CSV", "רשימת CSV בתיקייה הנוכחית", "הקלדה ידנית"]
+def compute_capm_cost_of_equity(beta, risk_free, erp=EQUITY_RISK_PREMIUM):
+    b = beta if (not is_bad(beta) and beta > 0) else 1.0
+    b = max(0.3, min(b, 3.0))
+    return risk_free + b * erp
+
+def compute_wacc(market_cap, total_debt, cost_of_equity, cost_of_debt, tax_rate=DEFAULT_TAX_RATE):
+    try:
+        E = market_cap if not is_bad(market_cap) and market_cap > 0 else 0.0
+        D = total_debt if not is_bad(total_debt) and total_debt > 0 else 0.0
+        if E + D <= 0:
+            return cost_of_equity
+        wacc = (E / (E + D)) * cost_of_equity + (D / (E + D)) * cost_of_debt * (1 - tax_rate)
+        return max(0.03, min(wacc, 0.25))
+    except Exception:
+        return cost_of_equity
+
+def compute_graham_revised(eps, growth_pct, aaa_yield_decimal):
+    """נוסחת גרהם המתוקנת: V = [EPS × (8.5 + 2g) × 4.4] / Y."""
+    try:
+        if is_bad(eps) or eps <= 0 or is_bad(growth_pct):
+            return None
+        g = max(0.0, min(growth_pct, 30.0))
+        y_pct = (aaa_yield_decimal * 100.0) if (not is_bad(aaa_yield_decimal) and aaa_yield_decimal > 0) else 4.4
+        fair = (eps * (8.5 + 2 * g) * 4.4) / y_pct
+        return fair if fair > 0 else None
+    except Exception:
+        return None
+
+def compute_pe_relative(df_price, eps, current_pe):
+    """P/E יחסי-היסטורי עם winsorization לפי IQR."""
+    try:
+        if is_bad(eps) or eps <= 0 or df_price is None or df_price.empty:
+            return None
+        hist_pe = (df_price["Close"] / eps).dropna()
+        hist_pe = hist_pe[hist_pe > 0]
+        if len(hist_pe) < 30:
+            return None
+        q1, q3 = hist_pe.quantile(0.25), hist_pe.quantile(0.75)
+        iqr = q3 - q1
+        lo, hi = q1 - 1.5 * iqr, q3 + 1.5 * iqr
+        clean_pe = hist_pe[(hist_pe >= lo) & (hist_pe <= hi)]
+        if clean_pe.empty:
+            clean_pe = hist_pe
+        median_pe = clean_pe.median()
+        fair_price = median_pe * eps
+        return {"fair_price": fair_price, "median_pe": median_pe}
+    except Exception:
+        return None
+
+def compute_peg_valuation_lynch(eps, growth_pct, dividend_yield_pct):
+    """כלל ה-PEGY של פיטר לינץ': PE הוגן = קצב צמיחה + תשואת דיבידנד."""
+    try:
+        if is_bad(eps) or eps <= 0 or is_bad(growth_pct) or growth_pct <= 0:
+            return None
+        div_y = dividend_yield_pct if not is_bad(dividend_yield_pct) and dividend_yield_pct > 0 else 0.0
+        fair_pe = growth_pct + div_y
+        fair_price = eps * fair_pe
+        return {"fair_price": fair_price, "fair_pe": fair_pe}
+    except Exception:
+        return None
+
+def compute_justified_pb(roe, payout_ratio, cost_of_equity, bvps):
+    """P/B מוצדק לפי מודל גורדון (Damodaran): Justified P/B = (ROE − g) / (r − g)."""
+    try:
+        if is_bad(roe) or is_bad(bvps) or bvps <= 0:
+            return None
+        payout = payout_ratio if (not is_bad(payout_ratio) and 0 <= payout_ratio <= 1) else 0.30
+        g = roe * (1 - payout)
+        g = max(0.0, min(g, cost_of_equity - 0.005))
+        if cost_of_equity - g <= 0.001:
+            return None
+        justified_pb = (roe - g) / (cost_of_equity - g)
+        if justified_pb <= 0 or justified_pb > 30:
+            return None
+        fair_price = justified_pb * bvps
+        return {"fair_price": fair_price, "justified_pb": justified_pb, "sustainable_growth": g}
+    except Exception:
+        return None
+
+def compute_dcf_valuation(fcf, growth_rate, discount_rate, terminal_growth, years, shares_outstanding, net_debt=0.0):
+    """DCF דו-שלבי: דעיכה לינארית של קצב הצמיחה לכיוון הקצב הטרמינלי + ערך טרמינלי מהוון."""
+    try:
+        if is_bad(fcf) or fcf <= 0 or is_bad(shares_outstanding) or shares_outstanding <= 0:
+            return None
+        if discount_rate <= terminal_growth:
+            return None
+        pv_sum = 0.0
+        cash_flow = fcf
+        for yr in range(1, years + 1):
+            g = growth_rate + (terminal_growth - growth_rate) * (yr / years)
+            cash_flow = cash_flow * (1 + g)
+            pv = cash_flow / ((1 + discount_rate) ** yr)
+            pv_sum += pv
+        terminal_value = cash_flow * (1 + terminal_growth) / (discount_rate - terminal_growth)
+        pv_terminal = terminal_value / ((1 + discount_rate) ** years)
+        enterprise_value = pv_sum + pv_terminal
+        equity_value = enterprise_value - net_debt
+        if equity_value <= 0:
+            return None
+        fair_price = equity_value / shares_outstanding
+        return {"fair_price": fair_price, "enterprise_value": enterprise_value, "equity_value": equity_value}
+    except Exception:
+        return None
+
+def compute_fair_value_report(ticker, df_price=None, growth_rate_override=None,
+                               discount_rate_override=None, terminal_growth=0.025, dcf_years=10):
+    """מריץ את כל 5 שיטות השווי ההוגן ומחזיר דוח מרוכז עם ממוצע משוקלל, חציון, ואזהרת פיזור."""
+    fund = fetch_fundamentals(ticker)
+    if not fund:
+        return None
+
+    current_price = fund.get("currentPrice")
+    if is_bad(current_price) and df_price is not None and not df_price.empty:
+        current_price = safe_last(df_price["Close"])
+    if is_bad(current_price):
+        return None
+
+    eps = fund.get("trailingEps")
+    bvps = fund.get("bookValue")
+    current_pe = fund.get("trailingPE")
+    if is_bad(current_pe) and not is_bad(eps) and eps > 0:
+        current_pe = current_price / eps
+
+    growth_pct = growth_rate_override
+    if growth_pct is None:
+        g = fund.get("earningsGrowth")
+        if is_bad(g):
+            g = fund.get("revenueGrowth")
+        growth_pct = (g * 100) if not is_bad(g) else 10.0
+    growth_pct = max(1.0, min(40.0, growth_pct))
+
+    risk_free = fetch_risk_free_rate()
+    beta = fund.get("beta")
+    cost_of_equity = compute_capm_cost_of_equity(beta, risk_free)
+    cost_of_debt = risk_free + DEFAULT_CREDIT_SPREAD
+    market_cap = fund.get("marketCap")
+    total_debt = fund.get("totalDebt") or 0.0
+    total_cash = fund.get("totalCash") or 0.0
+    net_debt = total_debt - total_cash
+
+    wacc = compute_wacc(market_cap, total_debt, cost_of_equity, cost_of_debt)
+    discount_rate = discount_rate_override if not is_bad(discount_rate_override) else wacc
+
+    methods = {}
+
+    graham = compute_graham_revised(eps, growth_pct, risk_free)
+    if graham:
+        methods["Graham מתוקן (EPS+צמיחה+תשואת אג\"ח)"] = {"fair_price": graham, "weight": 0.18}
+
+    if df_price is not None and not df_price.empty:
+        pe_rel = compute_pe_relative(df_price, eps, current_pe)
+        if pe_rel:
+            methods["P/E יחסי-היסטורי (IQR)"] = {"fair_price": pe_rel["fair_price"], "weight": 0.15}
+
+    div_yield_pct = (fund.get("dividendYield") or 0.0) * 100 if not is_bad(fund.get("dividendYield")) else 0.0
+    peg = compute_peg_valuation_lynch(eps, growth_pct, div_yield_pct)
+    if peg:
+        methods["PEGY (כלל פיטר לינץ')"] = {"fair_price": peg["fair_price"], "weight": 0.14}
+
+    pb = compute_justified_pb(fund.get("returnOnEquity"), fund.get("payoutRatio"), cost_of_equity, bvps)
+    if pb:
+        methods["P/B מוצדק (CAPM · Damodaran)"] = {"fair_price": pb["fair_price"], "weight": 0.20}
+
+    fcf = fund.get("freeCashflow") or fund.get("operatingCashflow")
+    shares = fund.get("sharesOutstanding")
+    dcf = compute_dcf_valuation(fcf, growth_pct / 100.0, discount_rate, terminal_growth, dcf_years, shares, net_debt)
+    if dcf:
+        methods["DCF דו-שלבי (WACC)"] = {"fair_price": dcf["fair_price"], "weight": 0.33}
+
+    if not methods:
+        return None
+
+    for name, m in methods.items():
+        fp = m["fair_price"]
+        m["upside_pct"] = ((fp - current_price) / current_price) * 100 if current_price else None
+
+    fair_prices = [m["fair_price"] for m in methods.values() if not is_bad(m["fair_price"]) and m["fair_price"] > 0]
+    weights_sum = sum(m["weight"] for m in methods.values())
+    weighted_avg = sum(m["fair_price"] * m["weight"] for m in methods.values()) / weights_sum if weights_sum > 0 else np.mean(fair_prices)
+    median_fp = float(np.median(fair_prices)) if fair_prices else None
+
+    dispersion_pct = None
+    if len(fair_prices) >= 2 and weighted_avg:
+        dispersion_pct = (float(np.std(fair_prices)) / weighted_avg) * 100
+
+    avg_upside = ((weighted_avg - current_price) / current_price) * 100 if current_price and weighted_avg else None
+    median_upside = ((median_fp - current_price) / current_price) * 100 if current_price and median_fp else None
+
+    return {
+        "ticker": ticker, "current_price": current_price, "eps": eps, "bvps": bvps,
+        "current_pe": current_pe, "growth_pct": growth_pct, "methods": methods,
+        "weighted_fair_price": weighted_avg, "avg_upside_pct": avg_upside,
+        "median_fair_price": median_fp, "median_upside_pct": median_upside,
+        "dispersion_pct": dispersion_pct,
+        "risk_free": risk_free, "cost_of_equity": cost_of_equity, "wacc": wacc,
+        "discount_rate_used": discount_rate, "fundamentals": fund,
+    }
+
+def render_fair_value_screen():
+    """מסך שווי הוגן נפרד — 5 שיטות (Graham מתוקן, P/E יחסי, PEGY, P/B מוצדק-CAPM, DCF-WACC)."""
+    st.subheader("💰 מסך שווי הוגן (Fair Value)")
+    st.caption(
+        "הערכת שווי הוגן משולבת מ-5 מודלים פיננסיים קלאסיים: Graham המתוקן, P/E יחסי-היסטורי, "
+        "PEGY (פיטר לינץ'), P/B מוצדק לפי CAPM (Damodaran), ו-DCF דו-שלבי מהוון ב-WACC. "
+        "⚠️ כלי תמיכה בהחלטה בלבד ואינו ייעוץ השקעות — כל הערכת שווי תלויה בהנחות (קצב צמיחה, ריבית היוון) "
+        "שיכולות להשתנות ולסתור זו את זו."
     )
 
-    tickers = []
-
-    if mode == "קובץ CSV בודד":
-        uploaded = st.sidebar.file_uploader("העלה קובץ CSV עם עמודת Ticker או Symbol", type=["csv"])
-        if uploaded:
-            try:
-                dfu = pd.read_csv(uploaded)
-                cols = [c.strip().lower() for c in dfu.columns]
-                if 'ticker' in cols:
-                    col = [c for c in dfu.columns if c.strip().lower() == 'ticker'][0]
-                    tickers = dfu[col].dropna().astype(str).str.upper().str.strip().tolist()
-                elif 'symbol' in cols:
-                    col = [c for c in dfu.columns if c.strip().lower() == 'symbol'][0]
-                    tickers = dfu[col].dropna().astype(str).str.upper().str.strip().tolist()
-                else:
-                    st.sidebar.error("לא נמצאה עמודת Ticker/Symbol בקובץ")
-            except Exception as e:
-                st.sidebar.error(f"שגיאה בקריאת הקובץ: {e}")
-
-    elif mode == "תיקיית CSV":
-        folder = st.sidebar.text_input("נתיב לתיקיה:", ".")
-        if folder and os.path.isdir(folder):
-            tickers = load_tickers_from_folder(folder)
-            st.sidebar.success(f"נטענו {len(tickers)} טיקרים מהתיקיה")
-        elif folder:
-            st.sidebar.error("התיקיה לא קיימת")
-
-    elif mode == "רשימת CSV בתיקייה הנוכחית":
-        available_lists = get_csv_files_in_cwd()
-        if available_lists:
-            selected_file = st.sidebar.selectbox("בחר קובץ מהרשימה:", available_lists)
-            tickers = tickers_from_csv_file(selected_file)
-            st.sidebar.success(f"נטענו {len(tickers)} טיקרים מהקובץ")
-        else:
-            st.sidebar.info("אין קבצי CSV בתיקייה הנוכחית")
-
-    else:  # הקלדה ידנית
-        txt = st.sidebar.text_area("טיקרים (מופרדים בפסיק):", "AAPL, MSFT, NVDA")
-        tickers = [t.strip().upper() for t in txt.split(",") if t.strip()]
-
-    with st.sidebar.expander("🎯 סינון ציון בסיסי", expanded=True):
-        score_range = st.slider(
-            "טווח ציון להצגה:", 0, 100, (60, 100),
-            help="רק מניות עם ציון בטווח הזה יוצגו בתוצאות. הגבל את המקסימום כדי לסנן ציונים 'חשודים' גבוהים מדי, "
-                 "או צמצם את המינימום כדי לראות גם מועמדים חלשים יותר."
-        )
-        min_score, max_score = score_range
-
-        min_confidence = st.slider(
-            "ביטחון מינימלי (%):", 0, 100, 0,
-            help="אחוז הרכיבים בציון שהגיעו לרף 'חזק' (70+). מסנן איתותים עם ציון גבוה אך נתמכים ברכיב יחיד בלבד."
-        )
-
-    with st.sidebar.expander("🧪 סינוני איכות מתקדמים", expanded=False):
-        exclude_broken_out = st.checkbox(
-            "הסתר מניות שכבר פרצו (already broken out)", value=True,
-            help="מסנן מניות שקיבלו את דגל הוטו 'כבר פרצה משמעותית' — למניעת False positives כמו CCO."
-        )
-        exclude_downtrend = st.checkbox(
-            "הסתר מגמת-על יורדת (SMA200 יורד)", value=True,
-            help="מסנן מניות עם מגמת-על שבורה (מתחת ל-SMA200 יורד) - סיכון גבוה גם אם רכיבים אחרים נראים טוב."
-        )
-        require_stage2 = st.checkbox(
-            "דרוש Stage 2 מלא (Weinstein/Minervini)", value=False,
-            help="מציג רק מניות שנמצאות במגמת-על בריאה מלאה: Close > SMA150 > SMA200 עולה."
-        )
-        rsi_range = st.slider(
-            "טווח RSI:", 0, 100, (0, 100),
-            help="סנן לפי RSI הנוכחי - לדוגמה 40-70 כדי להימנע ממניות overbought/oversold קיצוניות."
-        )
-        rvol_min = st.number_input(
-            "נפח יחסי מינימלי (RVOL):", min_value=0.0, max_value=10.0, value=0.0, step=0.1,
-            help="דורש שהנפח האחרון יהיה לפחות פי X מהממוצע ל-20 יום. 0 = ללא סינון."
-        )
-        atr_pct_range = st.slider(
-            "טווח תנודתיות (ATR% מהמחיר):", 0.0, 15.0, (0.0, 15.0), step=0.5,
-            help="מסנן מניות תנודתיות מדי (סיכון גבוה) או שקטות מדי (חסרות פוטנציאל תנועה)."
-        )
-        price_range = st.slider(
-            "טווח מחיר ($):", 0, 1000, (0, 1000), step=5,
-            help="הגבל לפי טווח מחיר המניה - לדוגמה כדי להימנע מ-penny stocks או ממניות יקרות מדי."
-        )
-
-    with st.sidebar.expander("⚙️ הגדרות סריקה", expanded=False):
-        max_tickers = st.number_input("מקסימום טיקרים לסריקה:", min_value=10, max_value=1000, value=200, step=10)
-        min_dollar_vol = st.number_input(
-            "מינימום מחזור מסחר יומי ($):", min_value=0, max_value=100_000_000,
-            value=2_000_000, step=500_000,
-            help="מניות עם מחזור מסחר דולרי (מחיר × נפח ממוצע) נמוך מהסף יסוננו — נמנע מנזילות דלה שמעוותת אותות."
-        )
-        if st.button("🗑️ נקה מטמון (מחירים + SEC + CIK)", use_container_width=True):
-            load_history.clear()
-            load_benchmark.clear()
-            load_market_indices.clear()
-            load_sec_ticker_cik_map.clear()
-            fetch_insider_transactions.clear()
-            fetch_fear_greed_index.clear()
-            fetch_stock_news.clear()
-            fetch_analyst_data.clear()
-            st.success("המטמון נוקה — הריצה הבאה תביא נתונים עדכניים")
-
-    st.sidebar.markdown("---")
-    run_scan = st.sidebar.button("🚀 הרץ סריקת פריצה", use_container_width=True, type="primary")
-
-    if run_scan:
-        if not tickers:
-            st.error("לא נבחרו טיקרים")
-        else:
-            tickers = list(dict.fromkeys(tickers))[:int(max_tickers)]  # ייחודיים בלבד + הגבלה
-            results = []
-            details = {}
-            progress = st.progress(0, text="מתחיל סריקה...")
-            total = len(tickers)
-            errors = []
-            skipped_liquidity = []
-
-            benchmark_df = load_benchmark(period="12mo")
-
-            for i, ticker in enumerate(tickers):
-                progress.progress((i + 1) / total, text=f"בודק {ticker} ({i+1}/{total})")
-                try:
-                    df = load_history(ticker, period="12mo")
-                    if df.empty:
-                        results.append({"Ticker": ticker, "Score": 0, "Confidence": 0, "Risk": 100,
-                                         "Price": np.nan, "Note": "אין נתונים", "SavedAt": ""})
-                        continue
-
-                    # --- סינון נזילות: מחזור מסחר דולרי ממוצע מתחת לסף לא ייכלל בתוצאות ---
-                    avg_vol_20 = df["Volume"].tail(20).mean()
-                    last_price_raw = safe_last(df["Close"])
-                    dollar_vol = (avg_vol_20 * last_price_raw) if not is_bad(last_price_raw) else 0
-                    if min_dollar_vol > 0 and dollar_vol < min_dollar_vol:
-                        skipped_liquidity.append(ticker)
-                        continue
-
-                    # --- סינון טווח מחיר מוקדם, לפני חישוב אינדיקטורים כבד ---
-                    if not is_bad(last_price_raw) and not (price_range[0] <= last_price_raw <= price_range[1]):
-                        continue
-
-                    df = add_indicators(df, benchmark_df=benchmark_df)
-                    res = compute_breakout_decision(df)
-
-                    # --- סינוני איכות נוספים על תוצאת המנוע ---
-                    if exclude_broken_out and res.get("already_broken_out"):
-                        continue
-                    if exclude_downtrend and res.get("hard_downtrend"):
-                        continue
-                    if require_stage2 and not res.get("stage2_ok"):
-                        continue
-                    rsi_last = res.get("rsi_last")
-                    if not is_bad(rsi_last) and not (rsi_range[0] <= rsi_last <= rsi_range[1]):
-                        continue
-                    rvol_last = res.get("rvol_last")
-                    if rvol_min > 0 and (is_bad(rvol_last) or rvol_last < rvol_min):
-                        continue
-                    atr_pct_last = res.get("atr_pct")
-                    atr_pct_display = atr_pct_last * 100 if not is_bad(atr_pct_last) else np.nan
-                    if not is_bad(atr_pct_display) and not (atr_pct_range[0] <= atr_pct_display <= atr_pct_range[1]):
-                        continue
-                    if res["confidence"] < min_confidence:
-                        continue
-
-                    last_close = safe_last(df["Close"])
-                    results.append({
-                        "Ticker": ticker,
-                        "Score": res["score"],
-                        "Confidence": res["confidence"],
-                        "Risk": res["risk"],
-                        "Price": round(float(last_close), 2) if not is_bad(last_close) else np.nan,
-                        "Note": res["note"],
-                        "SavedAt": ""
-                    })
-                    details[ticker] = {"res": res, "df_tail": df.tail(120)}
-                except Exception as e:
-                    results.append({"Ticker": ticker, "Score": 0, "Confidence": 0, "Risk": 100,
-                                     "Price": np.nan, "Note": "שגיאה", "SavedAt": ""})
-                    errors.append(f"{ticker}: {e}")
-
-            progress.empty()
-            if skipped_liquidity:
-                st.caption(f"💧 {len(skipped_liquidity)} טיקרים סוננו בשל נזילות נמוכה מהסף שהוגדר: "
-                            f"{', '.join(skipped_liquidity[:15])}{' ...' if len(skipped_liquidity) > 15 else ''}")
-            if errors:
-                with st.expander(f"⚠️ {len(errors)} טיקרים נכשלו בסריקה — לחץ לפרטים"):
-                    for e in errors:
-                        st.caption(e)
-
-            st.session_state["scan_results"] = results
-            st.session_state["scan_details"] = details
-            # שומרים את סף הציון האחרון בשימוש כדי שתצוגת session_state הישנה תישאר עקבית אחרי ריענון
-            st.session_state["last_min_score"] = min_score
-            st.session_state["last_max_score"] = max_score
-
-    # --- הצגת תוצאות אחרונות (נשמר ב-session_state כדי לשרוד ריענונים) ---
-    if "scan_results" in st.session_state and st.session_state["scan_results"]:
-        df_res_full = pd.DataFrame(st.session_state["scan_results"]).sort_values("Score", ascending=False).reset_index(drop=True)
-        df_res = df_res_full[(df_res_full["Score"] >= min_score) & (df_res_full["Score"] <= max_score)]
-        details = st.session_state.get("scan_details", {})
-
-        if df_res.empty:
-            st.info("לא נמצאו מניות מתאימות לפי הקריטריונים. נסה להרחיב את טווח הציון או להקל בסינוני האיכות בסיידבר.")
-        else:
-            df_res = df_res.copy()
-
-            def _get_daily_chg(t):
-                info = details.get(t)
-                if info and not info["df_tail"].empty and "DailyChangePct" in info["df_tail"].columns:
-                    v = safe_last(info["df_tail"]["DailyChangePct"])
-                    return v if not is_bad(v) else 0.0
-                return 0.0
-            df_res["ChgPct"] = df_res["Ticker"].apply(_get_daily_chg)
-
-            st.caption(f"נסרקו {len(df_res_full)} טיקרים · {len(df_res)} עומדים בסף הנוכחי")
-            render_top_stat_cards(df_res, details)
-
-            sort_choice = st.radio("מיין לפי:", ["ניקוד", "מחיר", "שינוי%"], horizontal=True, label_visibility="collapsed")
-            if sort_choice == "מחיר":
-                df_res = df_res.sort_values("Price", ascending=False)
-            elif sort_choice == "שינוי%":
-                df_res = df_res.sort_values("ChgPct", ascending=False)
-            else:
-                df_res = df_res.sort_values("Score", ascending=False)
-
-            view_mode = st.radio("תצוגה:", ["🗂️ פיד", "📋 טבלה"], horizontal=True, label_visibility="collapsed")
-
-            if view_mode == "🗂️ פיד":
-                for _, row in df_res.iterrows():
-                    t = row["Ticker"]
-                    info = details.get(t)
-                    if info:
-                        render_stock_card(t, info["res"], info["df_tail"])
-                    else:
-                        # טיקר בלי נתונים מפורטים (למשל "אין נתונים") - כרטיס מינימלי
-                        render_stock_card(t, {"score": int(row["Score"]), "note": str(row["Note"])}, pd.DataFrame())
-            else:
-                st.dataframe(
-                    df_res,
-                    use_container_width=True,
-                    hide_index=True,
-                    column_config={
-                        "Score": st.column_config.ProgressColumn("ציון", min_value=0, max_value=100, format="%d"),
-                        "Confidence": st.column_config.ProgressColumn("ביטחון", min_value=0, max_value=100, format="%d"),
-                        "Risk": st.column_config.ProgressColumn("סיכון (נמוך=טוב)", min_value=0, max_value=100, format="%d"),
-                        "Price": st.column_config.NumberColumn("מחיר", format="$%.2f"),
-                    }
-                )
-
-            st.divider()
-            col_save1, col_save2 = st.columns([3, 1])
-            with col_save1:
-                save_note = st.text_input("הערה לשמירה (אופציונלי):", "")
-            with col_save2:
-                st.write("")
-                if st.button("💾 שמור תוצאות", use_container_width=True):
-                    df_to_save = df_res.copy()
-                    df_to_save["SavedAt"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-                    if save_note:
-                        df_to_save["Note"] = df_to_save["Note"].astype(str) + " | " + save_note
-                    header = not os.path.exists(SCAN_RESULTS_FILE)
-                    df_to_save.to_csv(SCAN_RESULTS_FILE, mode='a', header=header, index=False)
-                    st.success("תוצאות נשמרו בהצלחה")
-
-            st.divider()
-            col_select, col_buttons = st.columns([2, 1])
-            with col_select:
-                to_view = st.selectbox("בחר מניה לניתוח:", df_res['Ticker'].tolist())
-            with col_buttons:
-                st.write("")
-                if st.button("➕ הוסף לתיק ההשקעות", use_container_width=True):
-                    try:
-                        price = df_res[df_res['Ticker'] == to_view]['Price'].values[0]
-                    except Exception:
-                        price = None
-                    ok, msg = add_to_portfolio(to_view, price)
-                    (st.success if ok else st.warning)(f"{to_view}: {msg}")
-
-            # דוח מפורט לטיקר הנבחר
-            st.subheader(f"🔎 דוח מפורט — {to_view}")
-            info = details.get(to_view)
-            if info:
-                res = info["res"]
-                m1, m2, m3 = st.columns(3)
-                m1.metric("ציון פריצה", res["score"])
-                m2.metric("ביטחון", f'{res["confidence"]}%')
-                m3.metric("מדד סיכון", res["risk"])
-
-                st.markdown(f"**סטטוס:** {score_badge_html(res['score'])}", unsafe_allow_html=True)
-
-                with st.expander("📊 רכיבי ניקוד מפורטים"):
-                    comp_labels = {
-                        "compression": "דחיסת מחיר (Squeeze)",
-                        "rvol": "נפח יחסי (RVOL)",
-                        "trend": "טרנד EMA20/50",
-                        "macd": "MACD",
-                        "rsi": "RSI",
-                        "institutional": "כסף מוסדי (OBV/AD)",
-                        "proximity": "קרבה להתנגדות ישנה (לפני הריצה)",
-                        "squeeze": "Squeeze פעיל כרגע",
-                        "squeeze_duration": "משך ה-Squeeze",
-                        "risk": "ניקוד סיכון (נמוך=טוב)",
-                        "stage2": "מגמת-על (Stage 2)",
-                        "relative_strength": "חוזק יחסי מול SPY",
-                        "volume_quality": "איכות נפח (קונים/מוכרים)",
-                        "extension": "התרחקות מהממוצע (Extension)",
-                        "absorption": "איסוף בזמן ירידה (Wyckoff Absorption)",
-                        "sideways": "תנועה הצידה (טווח, לא טרנד)",
-                    }
-                    comps_named = {comp_labels.get(k, k): v for k, v in res["components"].items()}
-                    comp_df = pd.DataFrame.from_dict(comps_named, orient="index", columns=["ערך"]).sort_values("ערך", ascending=False)
-                    st.dataframe(comp_df, use_container_width=True,
-                                 column_config={"ערך": st.column_config.ProgressColumn("ערך", min_value=0, max_value=100, format="%d")})
-
-                st.info(f"**הערות:** {res['note']}")
-
-                with st.expander("🧠 הסבר מורחב — למה המניה קיבלה את הציון הזה? (חינמי, ללא AI בתשלום)", expanded=False):
-                    st.caption("ההסבר נכתב אוטומטית מתוך רכיבי מנוע ההחלטה עצמו - בלי קריאה לשום שירות AI חיצוני/בתשלום.")
-                    st.markdown(generate_rule_based_explanation(to_view, res))
-
-                df_plot = info["df_tail"].copy()
-                gc1, gc2, gc3, gc4 = st.columns(4)
-                days_view = gc1.select_slider("טווח ימים בגרף", options=[30, 60, 90, 120], value=90, key=f"days_{to_view}")
-                show_bands = gc2.checkbox("רצועות בולינגר", value=False, key=f"bands_{to_view}")
-                show_macd = gc3.checkbox("MACD", value=False, key=f"macd_{to_view}")
-                show_obv = gc4.checkbox("OBV", value=False, key=f"obv_{to_view}")
-                st.plotly_chart(
-                    plot_advanced(df_plot, to_view, show_macd=show_macd, show_obv=show_obv,
-                                  show_bands=show_bands, days=days_view),
-                    use_container_width=True
-                )
-
-                show_buttons(to_view)
-
-                # ---------- חדשות ודירוגי אנליסטים ----------
-                st.markdown("---")
-                render_news_and_analysts(to_view)
-
-                # ---------- חיזוי ----------
-                st.markdown("---")
-                st.markdown("### 🔮 חיזוי תנועות עבר")
-                colp1, colp2 = st.columns([3, 1])
-                with colp1:
-                    lookahead = st.selectbox("חלון חיזוי (ימים):", [3, 5, 7], index=1, key=f"look_{to_view}")
-                    stat_tol = st.slider("סף דמיון סטטיסטי (אחוזי שונות):", 5, 50, 15, key=f"tol_{to_view}")
-                with colp2:
-                    st.write("")
-                    run_pred = st.button("הרץ חיזוי", key=f"pred_btn_{to_view}", use_container_width=True)
-
-                if run_pred:
-                    with st.spinner("מריץ חיזוי..."):
-                        try:
-                            hist_full = load_history(to_view, period="24mo")
-                            if hist_full.empty:
-                                st.error("אין היסטוריית מחירים מספקת לחיזוי")
-                            else:
-                                bench_full = load_benchmark(period="24mo")
-                                hist_full = add_indicators(hist_full, benchmark_df=bench_full)
-                                stat = statistical_similarity_prediction(hist_full, tolerance=stat_tol / 100.0, lookahead=lookahead)
-                                pat = pattern_detection_vcp_like(hist_full)
-                                model = train_logistic_model(hist_full)
-                                ml_prob = logistic_predict_probability(model, hist_full)
-
-                                if ml_prob is None:
-                                    comps = res["components"]
-                                    heur_weights = {"compression": 0.25, "rvol": 0.25, "trend": 0.2, "macd": 0.15, "proximity": 0.15}
-                                    wsum = sum(comps.get(k, 0) * w for k, w in heur_weights.items())
-                                    wtot = sum(heur_weights.values())
-                                    ml_prob = float(min(0.99, max(0.01, wsum / (wtot * 100))))
-
-                                st.success("חיזוי הושלם")
-                                pc1, pc2, pc3 = st.columns(3)
-                                pc1.metric("שיעור הצלחה סטטיסטי", f"{round(stat['rate']*100,1)}%", f"{stat['count']} מקרים דומים")
-                                pc2.metric("תבנית VCP", "✅ נמצאה" if pat["match"] else "❌ לא נמצאה")
-                                pc3.metric(f"הסתברות פריצה ({lookahead} ימים)", f"{round(ml_prob*100,1)}%")
-                                st.caption(f"תבנית: {pat['desc']}")
-
-                                rec = {
-                                    "Ticker": to_view,
-                                    "SavedAt": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                                    "stat_count": stat["count"], "stat_successes": stat["successes"], "stat_rate": stat["rate"],
-                                    "pattern_match": pat["match"], "pattern_desc": pat["desc"], "ml_prob": ml_prob
-                                }
-                                if save_prediction_record(rec):
-                                    st.caption("✅ תחזית נשמרה ב-predictions.csv")
-
-                                last_close_full = safe_last(hist_full["Close"])
-                                scan_row = {
-                                    "Ticker": to_view, "Score": res["score"], "Confidence": res["confidence"], "Risk": res["risk"],
-                                    "Price": round(float(last_close_full), 2) if not is_bad(last_close_full) else np.nan,
-                                    "Note": res["note"] + " | prediction",
-                                    "SavedAt": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-                                }
-                                save_single_scan_result(scan_row)
-                        except Exception as e:
-                            st.error(f"שגיאה בהרצת חיזוי: {e}")
-
-                # ---------- Backtest לכיול הציון ----------
-                st.markdown("---")
-                st.markdown("### 🧪 Backtest — האם הציון באמת עובד?")
-                st.caption("בודק היסטורית: כשהמניה קיבלה ציון מסוים, כמה פעמים היא באמת פרצה תוך כמה ימים. "
-                           "עוזר לכייל את 'טווח ציון להצגה' בסיידבר לספי ציון שבאמת מתאמים להצלחה.")
-                bt_col1, bt_col2 = st.columns([3, 1])
-                with bt_col1:
-                    bt_lookahead = st.select_slider("חלון בדיקת פריצה (ימים):", options=[3, 5, 7, 10], value=5, key=f"bt_look_{to_view}")
-                with bt_col2:
-                    st.write("")
-                    run_bt = st.button("הרץ Backtest", key=f"bt_btn_{to_view}", use_container_width=True)
-
-                if run_bt:
-                    with st.spinner("מריץ Backtest היסטורי... (עשוי לקחת כמה שניות)"):
-                        bt_hist = load_history(to_view, period="5y")
-                        if bt_hist.empty or len(bt_hist) < 300:
-                            st.warning("אין מספיק היסטוריה (נדרשים לפחות ~300 ימי מסחר) להרצת Backtest אמין.")
-                        else:
-                            bt_bench = load_benchmark(period="5y")
-                            bt_hist_full = add_indicators(bt_hist, benchmark_df=bt_bench)
-                            summary, raw_bt = backtest_score_calibration(bt_hist_full, lookahead=bt_lookahead, step=3)
-                            if summary is None or summary.empty:
-                                st.warning("לא הצלחנו להריץ Backtest עבור טיקר זה (ייתכן חוסר בנתונים).")
-                            else:
-                                st.dataframe(
-                                    summary, use_container_width=True, hide_index=True,
-                                    column_config={
-                                        "שיעור_הצלחה": st.column_config.ProgressColumn("שיעור הצלחה (%)", min_value=0, max_value=100, format="%.1f%%"),
-                                        "מקרים": st.column_config.NumberColumn("מס' מקרים היסטוריים"),
-                                    }
-                                )
-                                overall_rate = round(raw_bt["outcome"].mean() * 100, 1)
-                                st.caption(f"שיעור פריצה כללי (בסיס להשוואה, ללא תלות בציון): **{overall_rate}%** "
-                                           f"מתוך {len(raw_bt)} נקודות היסטוריות שנבדקו.")
-                                st.info("💡 אם שיעור ההצלחה בדליים הגבוהים (70+) גבוה משמעותית מהשיעור הכללי — "
-                                        "סימן שהציון אכן מוסיף ערך חיזוי עבור המניה הזו.")
-
-                # ---------- אימות Insider Buying (SEC EDGAR) ----------
-                st.markdown("---")
-                st.markdown("### 🕵️ אימות קניות/מכירות Insider (SEC EDGAR)")
-                st.caption("Form 4 הוא גילוי רגולטורי מחייב על עסקאות דירקטורים/מנהלים בכירים - "
-                           "האות הכי 'חד משמעי' שאפשר לקבל בחינם על מישהו שקונה בכסף אמיתי משלו. "
-                           "לא מבוצע אוטומטית בסריקה (כדי לא להעמיס על שרתי SEC) - רק לפי דרישה כאן.")
-                ins_lookback = st.slider("טווח ימים לבדיקה:", 30, 365, 90, step=15, key=f"ins_look_{to_view}")
-                run_insider = st.button("בדוק עסקאות Insider", key=f"insider_btn_{to_view}")
-
-                if run_insider:
-                    with st.spinner("שולף נתונים מ-SEC EDGAR..."):
-                        ins = fetch_insider_transactions(to_view, lookback_days=ins_lookback, max_filings=25)
-
-                    if ins.get("error"):
-                        st.warning(f"⚠️ {ins['error']}")
-                    elif ins["buys"] == 0 and ins["sells"] == 0:
-                        st.info(f"לא נמצאו עסקאות Insider בשוק הפתוח ב-{ins_lookback} הימים האחרונים עבור טיקר זה.")
-                    else:
-                        ic1, ic2, ic3 = st.columns(3)
-                        ic1.metric("קניות Insider", ins["buys"], f"${ins['buy_value']:,.0f}")
-                        ic2.metric("מכירות Insider", ins["sells"], f"${ins['sell_value']:,.0f}")
-                        net = ins["buy_value"] - ins["sell_value"]
-                        ic3.metric("נטו (קנייה מינוס מכירה)", f"${net:,.0f}")
-
-                        if ins["buys"] > 0 and ins["buy_value"] > ins["sell_value"]:
-                            st.success("✅ קנייה נטו ע\"י אנשי פנים ב-90 הימים האחרונים — אישוש חיובי לתזה.")
-                        elif ins["sells"] > ins["buys"] * 2:
-                            st.caption("ℹ️ יש יותר מכירות מקניות - שים לב שמכירות insider הן לרוב שגרתיות "
-                                       "(תוכניות 10b5-1, מימוש אופציות) ולא בהכרח סימן שלילי, בניגוד לקנייה "
-                                       "בשוק הפתוח שהיא כמעט תמיד יזומה ומכוונת.")
-
-                        tx_df = pd.DataFrame(ins["transactions"]).sort_values("date", ascending=False)
-                        st.dataframe(
-                            tx_df, use_container_width=True, hide_index=True,
-                            column_config={
-                                "date": "תאריך", "owner": "שם", "role": "תפקיד", "type": "סוג עסקה",
-                                "shares": st.column_config.NumberColumn("מניות", format="%d"),
-                                "value": st.column_config.NumberColumn("שווי ($)", format="$%.0f"),
-                            }
-                        )
-
-            else:
-                st.warning("אין פרטים לטיקר זה")
-
-            st.divider()
-            csv_data = df_res.to_csv(index=False).encode('utf-8')
-            st.download_button("⬇️ הורד תוצאות כ-CSV", csv_data, file_name="decision_scan_results.csv", mime="text/csv")
-    else:
-        st.info("👈 בחר מקור טיקרים בסרגל הצד ולחץ על 'הרץ סריקת פריצה' כדי להתחיל.")
-
-# --- טאב תיק ההשקעות ---
-with tab2:
-    st.subheader("💼 תיק ההשקעות שלי")
-    portfolio = get_portfolio_df()
-
-    with st.expander("➕ הוסף מניה ידנית לתיק"):
-        with st.form("add_manual_stock_form", clear_on_submit=True):
-            fc1, fc2, fc3 = st.columns(3)
-            new_ticker = fc1.text_input("טיקר").strip().upper()
-            new_date = fc2.date_input("תאריך כניסה", value=datetime.now())
-            new_price = fc3.number_input("מחיר כניסה", min_value=0.0, step=0.01, format="%.2f")
-            submitted = st.form_submit_button("הוסף לתיק", use_container_width=True)
-            if submitted:
-                if not new_ticker:
-                    st.warning("נא להזין טיקר")
-                else:
-                    new_row = pd.DataFrame({'Ticker': [new_ticker], 'Date': [new_date.strftime('%Y-%m-%d')], 'EntryPrice': [new_price]})
-                    new_row.to_csv(PORTFOLIO_FILE, mode='a', header=not os.path.exists(PORTFOLIO_FILE) or os.path.getsize(PORTFOLIO_FILE) == 0, index=False)
-                    st.success(f"{new_ticker} נוספה בהצלחה לתיק!")
-                    st.rerun()
-
-    if not portfolio.empty:
-        with st.spinner("מעדכן מחירים נוכחיים..."):
-            for i, row in portfolio.iterrows():
-                try:
-                    hist = yf.Ticker(row['Ticker']).history(period="1d")
-                    if hist.empty:
-                        raise ValueError("no data")
-                    curr = float(hist['Close'].iloc[-1])
-                    portfolio.loc[i, 'CurrentPrice'] = round(curr, 2)
-                    entry = row['EntryPrice']
-                    if not is_bad(entry) and float(entry) != 0:
-                        portfolio.loc[i, 'Performance'] = round(((curr - float(entry)) / float(entry)) * 100, 2)
-                    else:
-                        portfolio.loc[i, 'Performance'] = np.nan
-                except Exception:
-                    portfolio.loc[i, 'CurrentPrice'] = np.nan
-                    portfolio.loc[i, 'Performance'] = np.nan
-
-        total_perf = portfolio['Performance'].dropna()
-        if not total_perf.empty:
-            pc1, pc2 = st.columns(2)
-            pc1.metric("מספר החזקות", len(portfolio))
-            pc2.metric("ביצוע ממוצע", f"{round(total_perf.mean(), 2)}%")
-
-        st.dataframe(
-            portfolio, use_container_width=True, hide_index=True,
-            column_config={
-                "EntryPrice": st.column_config.NumberColumn("מחיר כניסה", format="$%.2f"),
-                "CurrentPrice": st.column_config.NumberColumn("מחיר נוכחי", format="$%.2f"),
-                "Performance": st.column_config.NumberColumn("ביצוע %", format="%.2f%%"),
-            }
-        )
-
-        st.divider()
-        to_manage = st.selectbox("בחר מניה לניהול:", portfolio['Ticker'].tolist())
-        show_buttons(to_manage)
-
-        if st.button("🗑️ מחק מניה מהתיק"):
-            portfolio_raw = get_portfolio_df()
-            portfolio_raw = portfolio_raw[portfolio_raw['Ticker'] != to_manage]
-            portfolio_raw.to_csv(PORTFOLIO_FILE, index=False)
-            st.success(f"{to_manage} הוסר מהתיק")
-            st.rerun()
-    else:
-        st.info("התיק ריק. הוסף מניות מהסורק או ידנית למעלה.")
-
-# --- טאב תחזיות שמורות ---
-with tab3:
-    st.subheader("🔮 תחזיות שמורות")
-    preds = load_predictions()
-    if preds.empty:
-        st.info("אין תחזיות שמורות כרגע.")
-    else:
-        st.dataframe(
-            preds, use_container_width=True, hide_index=True,
-            column_config={
-                "stat_rate": st.column_config.ProgressColumn("שיעור הצלחה סטטיסטי", min_value=0, max_value=1, format="%.2f"),
-                "ml_prob": st.column_config.ProgressColumn("הסתברות מודל", min_value=0, max_value=1, format="%.2f"),
-            }
-        )
-        st.divider()
-        col_del1, col_del2 = st.columns([3, 1])
-        with col_del1:
-            to_delete = st.multiselect("בחר טיקרים למחיקה מהתחזיות השמורות:", options=sorted(preds['Ticker'].unique().tolist()))
-        with col_del2:
-            st.write("")
-            if st.button("מחק נבחרים", use_container_width=True):
-                if not to_delete:
-                    st.warning("לא נבחרו טיקרים למחיקה")
-                elif delete_prediction_tickers(to_delete):
-                    st.success("התחזיות נמחקו")
-                    st.rerun()
-                else:
-                    st.error("שגיאה במחיקה")
-
-        if st.button("נקה את כל התחזיות השמורות"):
-            if clear_all_predictions():
-                st.success("כל התחזיות נמחקו")
-                st.rerun()
-            else:
-                st.error("שגיאה בניקוי הקובץ")
-
-        csv_all = preds.to_csv(index=False).encode('utf-8')
-        st.download_button("⬇️ הורד את כל התחזיות כ-CSV", csv_all, file_name="saved_predictions.csv", mime="text/csv")
-
-        st.markdown("---")
-        st.subheader("➕ הוספה מהתחזיות לתיק ההשקעות")
-        saved_preds = sorted(preds['Ticker'].unique().tolist())
-        pcol1, pcol2 = st.columns([3, 1])
-        with pcol1:
-            pick = st.selectbox("בחר טיקר להוספה לתיק:", saved_preds)
-        with pcol2:
-            st.write("")
-            if st.button("הוסף לתיק", key="add_from_preds", use_container_width=True):
-                try:
-                    hist_full = load_history(pick, period="12mo")
-                    last_close = safe_last(hist_full["Close"]) if not hist_full.empty else np.nan
-                    price = round(float(last_close), 2) if not is_bad(last_close) else None
-                    ok, msg = add_to_portfolio(pick, price)
-                    (st.success if ok else st.warning)(f"{pick}: {msg}")
-                except Exception as e:
-                    st.error(f"שגיאה בהוספה לתיק: {e}")
-
-# --- טאב ניהול תוצאות סריקה שמורות ---
-with tab4:
-    st.subheader("🗂️ ניהול תוצאות סריקה שמורות")
-    saved_scans = load_saved_scan_results()
-    if saved_scans.empty:
-        st.info("אין תוצאות סריקה שמורות.")
-    else:
-        st.dataframe(
-            saved_scans, use_container_width=True, hide_index=True,
-            column_config={
-                "Score": st.column_config.ProgressColumn("ציון", min_value=0, max_value=100, format="%d"),
-                "Confidence": st.column_config.ProgressColumn("ביטחון", min_value=0, max_value=100, format="%d"),
-                "Price": st.column_config.NumberColumn("מחיר", format="$%.2f"),
-            }
-        )
-        st.divider()
-        col_del1, col_del2 = st.columns([3, 1])
-        with col_del1:
-            to_del = st.multiselect("בחר טיקרים למחיקה מקובץ הסריקות:", options=sorted(saved_scans['Ticker'].unique().tolist()))
-        with col_del2:
-            st.write("")
-            if st.button("מחק נבחרים מסריקות", use_container_width=True):
-                if not to_del:
-                    st.warning("לא נבחרו טיקרים")
-                elif delete_saved_scan_tickers(to_del):
-                    st.success("הפריטים נמחקו מקובץ הסריקות")
-                    st.rerun()
-                else:
-                    st.error("שגיאה במחיקה")
-
-        if st.button("נקה את כל קובץ הסריקות"):
-            if clear_all_saved_scans():
-                st.success("קובץ הסריקות נוקה")
-                st.rerun()
-            else:
-                st.error("שגיאה בניקוי הקובץ")
-
-        csv_all_scans = saved_scans.to_csv(index=False).encode('utf-8')
-        st.download_button("⬇️ הורד את כל הסריקות כ-CSV", csv_all_scans, file_name="saved_scans.csv", mime="text/csv")
+    default_ticker = st.session_state.get("fv_selected_ticker", "")
+    fv_ticker = st.text_input("הזן טיקר לניתוח שווי הוגן:", value=default_ticker, key="fv_ticker_input").strip().upper()
+
+    with st.expander("⚙️ הנחות מודל (ניתן לשנות — ברירת המחדל מבוססת CAPM/WACC אמיתיים)", expanded=False):
+        rf_live = fetch_risk_free_rate()
+        st.caption(f"ריבית חסרת סיכון נוכחית (תשואת אג\"ח ממשלת ארה\"ב ל-10 שנים, ^TNX): **{rf_live*100:.2f}%**")
+        dc1, dc2, dc3 = st.columns(3)
+        override_discount = dc1.checkbox("דרוס ריבית היוון (במקום WACC אוטומטי)", value=False)
+        discount_rate_manual = dc1.slider("ריבית היוון ידנית %:", 5.0, 18.0, 10.0, step=0.5) / 100.0
+        terminal_growth = dc2.slider("קצב צמיחה טרמינלי %:", 1.0, 4.0, 2.5, step=0.25) / 100.0
+        dcf_years = dc3.select_slider("שנות תחזית DCF:", options=[5, 7, 10], value=10)
+        use_auto_growth = st.checkbox("קצב צמיחה אוטומטי (מהערכת אנליסטים ב-Yahoo)", value=True)
+        growth_override = st.slider("קצב צמיחת רווחים שנתי משוער % (אם לא אוטומטי):", 1.0, 40.0, 10.0, step=1.0)
+
+    if not fv_ticker:
+        st.info("הזן טיקר כדי להתחיל בניתוח שווי הוגן.")
+        return
+
+    run_clicked = st.button("🔍 חשב שווי הוגן", type="primary", use_container_width=True)
+    auto_run = st.session_state.get("fv_auto_run", False) and fv_ticker == st.session_state.get("fv_selected_ticker")
+
+    if run_clicked or auto_run:
+        st.session_state["fv_auto_run"] = False
+        with st.spinner(f"מחשב שווי הוגן עבור {fv_ticker}..."):
+            df_price = load_history(fv_ticker, period="5y")
+            report = compute_fair_value_report(
+                fv_ticker, df_price=df_price,
+                growth_rate_override=(None if use_auto_growth else growth_override),
+                discount_rate_override=(discount_rate_manual if override_discount else None),
+                terminal_growth=terminal_growth, dcf_years=dcf_years
+            )
+        st.session_state["fv_report"] = report
+        st.session_state["fv_selected_ticker"] = fv_ticker
+
+    report = st.session_state.get("fv_report")
+    if not report or report.get("ticker") != fv_ticker:
+        return
+
+    cur_price = report["current_price"]
+    w_fp = report["weighted_fair_price"]
+    med_fp = report["median_fair_price"]
+    avg_up = report["avg_upside_pct"]
+
+    m1, m2, m3 = st.columns(3)
+    m1.metric("מחיר נוכחי", f"${cur_price:,.2f}")
+    m2.metric("שווי הוגן משוקלל", f"${w_fp:,.2f}" if not is_bad(w_fp) else "—")
+    m3.metric("שווי הוגן — חציון", f"${med_fp:,.2f}" if not is_bad(med_fp) else "—")
+
+    if not is_bad(avg_up):
+        badge_color = BUY_COLOR if avg_up > 10 else (ACCENT if avg_up > -10 else SELL_COLOR)
+        badge_text = f"{'מוערך בחסר ב-' if avg_up > 0 else 'מוערך ביתר ב-'}{abs(avg_up):.1f}%"
+        st.markdown(f'<div style="text-align:center; margin: 10px 0;"><span class="score-badge" '
+                    f'style="background:{badge_color}22; color:{badge_color}; border:1px solid {badge_color}55; font-size:16px;">{badge_text}</span></div>',
+                    unsafe_allow_html=True)
+
+    disp = report.get("dispersion_pct")
+    if not is_bad(disp) and disp > 35:
+        st.warning(f"⚠️ פיזור גבוה בין השיטות ({disp:.0f}%) — המודלים השונים לא מסכימים ביניהם משמעותית. "
+                   f"התייחס לשווי ההוגן כאן בזהירות רבה יותר, ובדוק את הפירוט לפי שיטה למטה.")
+
+    st.markdown("#### 📊 פירוט לפי שיטה")
+    rows = []
+    for name, m in report["methods"].items():
+        rows.append({"שיטה": name, "משקל": f"{m['weight']*100:.0f}%",
+                     "שווי הוגן": m["fair_price"], "פער מהמחיר הנוכחי %": m.get("upside_pct")})
+    method_df = pd.DataFrame(rows)
+    st.dataframe(
+        method_df, use_container_width=True, hide_index=True,
+        column_config={
+            "שווי הוגן": st.column_config.NumberColumn(format="$%.2f"),
+            "פער מהמחיר הנוכחי %": st.column_config.NumberColumn(format="%.1f%%"),
+        }
+    )
+
+    fig = go.Figure()
+    names = list(report["methods"].keys())
+    vals = [m["fair_price"] for m in report["methods"].values()]
+    colors_bars = [BUY_COLOR if v >= cur_price else SELL_COLOR for v in vals]
+    fig.add_trace(go.Bar(x=names, y=vals, marker_color=colors_bars, name="שווי הוגן"))
+    fig.add_hline(y=cur_price, line_dash="dash", line_color=ACCENT, annotation_text="מחיר נוכחי")
+    fig.update_layout(height=340, template="plotly_dark", paper_bgcolor=PANEL, plot_bgcolor=PANEL,
+                      font=dict(color="#e6e9f0"), margin=dict(t=20, b=10, l=10, r=10))
+    st.plotly_chart(fig, use_container_width=True)
+
+    with st.expander("🔎 נתוני יסוד והנחות מודל ששימשו לחישוב"):
+        fund = report["fundamentals"]
+        fc1, fc2, fc3, fc4 = st.columns(4)
+        fc1.metric("EPS (מייצג)", f"${report['eps']:.2f}" if not is_bad(report['eps']) else "—")
+        fc2.metric("שווי נכסי למניה (BVPS)", f"${report['bvps']:.2f}" if not is_bad(report['bvps']) else "—")
+        fc3.metric("P/E נוכחי", f"{report['current_pe']:.1f}" if not is_bad(report['current_pe']) else "—")
+        fc4.metric("קצב צמיחה משוער", f"{report['growth_pct']:.1f}%")
+
+        fc5, fc6, fc7 = st.columns(3)
+        fc5.metric("ריבית חסרת סיכון (10Y)", f"{report['risk_free']*100:.2f}%")
+        fc6.metric("עלות הון (CAPM)", f"{report['cost_of_equity']*100:.2f}%")
+        fc7.metric("ריבית היוון בפועל", f"{report['discount_rate_used']*100:.2f}%",
+                   help="WACC אוטומטי (משוקלל לפי חוב/הון), אלא אם נדרס ידנית בהגדרות למעלה.")
+        st.caption("הנחות נוספות: פרמיית סיכון שוק (ERP) 4.5%, מרווח אשראי גנרי 2.0% מעל הריבית חסרת הסיכון, "
+                   "שיעור מס חברות 21%, יחס אצירה שמרני של 30% אם לא ידוע מ-Yahoo Finance.")
+
+    st.markdown(
+        '<div class="top-banner">⚠️ הערכת שווי הוגן מבוססת על הנחות (קצב צמיחה, ריבית היוון, 
