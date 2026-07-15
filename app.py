@@ -1914,7 +1914,6 @@ def plot_advanced(df, ticker, show_macd=False, show_obv=False, show_bands=False,
  EQUITY_RISK_PREMIUM = 0.045
 DEFAULT_CREDIT_SPREAD = 0.02
 DEFAULT_TAX_RATE = 0.21
-
 @st.cache_data(ttl=3600, show_spinner=False)
 def fetch_risk_free_rate():
     """שולף תשואת אג\"ח ממשלת ארה\"ב ל-10 שנים (^TNX) כריבית חסרת סיכון ל-CAPM/WACC."""
