@@ -103,14 +103,16 @@ def render_stock_card(ticker, res, df_tail):
     # במקום להשאיר את כל שאר הכרטיס (ספארקליין, מחיר, שורת סטטיסטיקות, טבעת ציון)
     # עם divים ריקים שיכולים לגרום לפריסה שבורה במסכים צרים.
     if df_tail is None or df_tail.empty:
-        st.markdown(f"""
+        nodata_html = f"""
         <div class="stock-card-v2">
             <div class="stock-card-v2-top">
                 <span class="stock-card-v2-ticker">{ticker}</span>
                 <span class="tag tag-neutral">אין נתונים</span>
             </div>
             <div class="stock-note" style="margin-top:8px;">{notes_html if notes_html else "לא ניתן היה לטעון נתונים לטיקר זה"}</div>
-        </div>""", unsafe_allow_html=True)
+        </div>"""
+        nodata_html = "".join(line.strip() for line in nodata_html.split("\n"))
+        st.markdown(nodata_html, unsafe_allow_html=True)
         return
 
     price_html, chg_html, spark_html, stat_row_html = "", "", "", ""
@@ -173,6 +175,10 @@ def render_stock_card(ticker, res, df_tail):
         <div class="stock-note">{notes_html if notes_html else "אין אותות חזקים"}</div>
         {trade_html}
     </div>"""
+    # שיטוח ל-HTML רציף בלי ירידות שורה/הזחות: מנוע ה-Markdown של Streamlit
+    # מפרש שורה ריקה בתוך HTML גולמי כסוף "בלוק HTML" ועובר למצב Markdown רגיל -
+    # ואז שורות מוזחות (4+ רווחים) הופכות בטעות לבלוק קוד. שיטוח מונע את זה לחלוטין.
+    card_html = "".join(line.strip() for line in card_html.split("\n"))
     st.markdown(card_html, unsafe_allow_html=True)
 
 def render_top_stat_cards(df_res, details):
