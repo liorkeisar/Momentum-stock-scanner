@@ -12,7 +12,7 @@ from plotly.subplots import make_subplots
 import plotly.graph_objects as go
 
 from modules.utils import is_bad, safe_last, fmt_compact_number
-from modules.styles import ACCENT, BUY_COLOR, SELL_COLOR, PANEL, PANEL_ALT, BORDER, TEXT_MUTED
+from modules.styles import ACCENT, BUY_COLOR, SELL_COLOR, PANEL, PANEL_ALT, BORDER, TEXT_MUTED, get_theme
 
 def score_color(score):
     if score >= 75:
@@ -349,10 +349,15 @@ def plot_advanced(df, ticker, show_macd=False, show_obv=False, show_bands=False,
         fig.add_trace(go.Scatter(x=df.index, y=df["OBV"], name="OBV", line=dict(color="#c88cff", width=1.4)),
                       row=row_of["obv"], col=1)
 
+    t = get_theme()
+    is_dark = t["bg"].lower() == "#0b0f17"  # True רק ב-theme הכהה - ראה THEMES ב-styles.py
+    plotly_template = "plotly_dark" if is_dark else "plotly_white"
+    grid_color = "rgba(255,255,255,0.05)" if is_dark else "rgba(15,23,42,0.08)"
+
     fig.update_layout(
         height=460 + 130 * (len(panels) - 2),
-        template="plotly_dark", paper_bgcolor="#131722", plot_bgcolor="#131722",
-        font=dict(size=12, color="#c7cede"),
+        template=plotly_template, paper_bgcolor=t["panel"], plot_bgcolor=t["panel"],
+        font=dict(size=12, color=t["text_secondary"]),
         legend=dict(orientation="h", y=1.05, x=0, bgcolor="rgba(0,0,0,0)"),
         margin=dict(t=30, b=10, l=10, r=10),
         xaxis_rangeslider_visible=False,
@@ -360,7 +365,7 @@ def plot_advanced(df, ticker, show_macd=False, show_obv=False, show_bands=False,
         bargap=0.15,
     )
     fig.update_xaxes(showgrid=False)
-    fig.update_yaxes(showgrid=True, gridcolor="rgba(255,255,255,0.05)", zeroline=False)
+    fig.update_yaxes(showgrid=True, gridcolor=grid_color, zeroline=False)
     fig.update_yaxes(title_text="מחיר", row=row_of["price"], col=1)
     fig.update_yaxes(title_text="נפח", row=row_of["volume"], col=1)
 
