@@ -16,7 +16,7 @@ from datetime import datetime, timedelta
 import plotly.graph_objects as go
 
 from modules.utils import is_bad
-from modules.styles import ACCENT, PANEL, PANEL_ALT, BORDER, TEXT_MUTED, BUY_COLOR, SELL_COLOR
+from modules.styles import ACCENT, PANEL, PANEL_ALT, BORDER, TEXT_MUTED, BUY_COLOR, SELL_COLOR, get_theme
 
 @st.cache_data(ttl=300, show_spinner=False)
 def load_history(ticker, period="12mo"):
@@ -139,6 +139,7 @@ def render_fear_greed_gauge():
         st.info("⚠️ לא ניתן לטעון כרגע את מדד הפחד/תאוות הבצע (CNN) — ייתכן חסימת רשת זמנית. נסה 'נקה מטמון' בסיידבר.")
         return
 
+    t = get_theme()
     score = fng["score"]
     rating = fng["rating"]
     rating_he = FNG_RATING_HE.get(rating, rating or "—")
@@ -172,7 +173,7 @@ def render_fear_greed_gauge():
         margin=dict(t=10, b=0, l=20, r=20),
         paper_bgcolor="rgba(0,0,0,0)",
         plot_bgcolor="rgba(0,0,0,0)",
-        font=dict(color="#e6e9f0"),
+        font=dict(color=t["text_secondary"]),
     )
 
     ago_txt = ""
@@ -194,29 +195,31 @@ def render_fear_greed_gauge():
         arrow = "▲" if delta >= 0 else "▼"
         delta_html = f'<span style="color:{d_color}; font-weight:700;">{arrow} {abs(delta):.1f} נקודות</span>'
 
-    st.markdown(f"""
-    <div style="background:{PANEL}; border:1px solid {BORDER}; border-radius:16px 16px 0 0;
+    top_html = f"""
+    <div style="background:{t['panel']}; border:1px solid {t['border']}; border-radius:16px 16px 0 0;
                 padding:14px 18px 0 18px; margin-top:2px;">
         <div style="display:flex; justify-content:space-between; align-items:center;">
-            <div style="font-weight:800; font-size:15px; color:#f2f4f8;">😨 מדד פחד ותאוות בצע — שוק המניות</div>
-            <div style="font-size:11.5px; color:{TEXT_MUTED};">מקור: CNN</div>
+            <div style="font-weight:800; font-size:15px; color:{t['text_main']};">😨 מדד פחד ותאוות בצע — שוק המניות</div>
+            <div style="font-size:11.5px; color:{t['text_muted']};">מקור: CNN</div>
         </div>
     </div>
-    """, unsafe_allow_html=True)
+    """
+    st.markdown("".join(line.strip() for line in top_html.split("\n")), unsafe_allow_html=True)
 
     st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False})
 
-    st.markdown(f"""
-    <div style="background:{PANEL}; border:1px solid {BORDER}; border-top:none; border-radius:0 0 16px 16px;
+    bottom_html = f"""
+    <div style="background:{t['panel']}; border:1px solid {t['border']}; border-top:none; border-radius:0 0 16px 16px;
                 text-align:center; padding:0 18px 16px 18px; margin-top:-28px; margin-bottom:18px;">
-        <div style="font-size:42px; font-weight:800; color:#f2f4f8; line-height:1;">{score:.0f}</div>
+        <div style="font-size:42px; font-weight:800; color:{t['text_main']}; line-height:1;">{score:.0f}</div>
         <div style="font-size:18px; font-weight:700; color:{color}; margin-top:2px;">{rating_he}</div>
-        <div style="display:flex; justify-content:center; gap:14px; margin-top:8px; font-size:12.5px; color:{TEXT_MUTED};">
+        <div style="display:flex; justify-content:center; gap:14px; margin-top:8px; font-size:12.5px; color:{t['text_muted']};">
             <span>{ago_txt}</span>
             {delta_html}
         </div>
     </div>
-    """, unsafe_allow_html=True)
+    """
+    st.markdown("".join(line.strip() for line in bottom_html.split("\n")), unsafe_allow_html=True)
 
     with st.expander("📊 השוואה לתקופות קודמות"):
         cols = st.columns(3)
@@ -318,17 +321,20 @@ def render_news_and_analysts(ticker):
             news_items = fetch_stock_news(ticker)
             analyst = fetch_analyst_data(ticker)
 
+        t = get_theme()
+
         st.markdown("#### 📰 כותרות אחרונות")
         if not news_items:
             st.info("לא נמצאו כותרות חדשות עדכניות עבור טיקר זה.")
         else:
             for it in news_items:
                 ago = _news_time_ago(it.get("pub_raw"))
-                st.markdown(f"""
-                <div style="background:{PANEL_ALT}; border:1px solid {BORDER}; border-radius:10px; padding:10px 14px; margin-bottom:8px;">
-                    <a href="{it['link']}" target="_blank" style="color:#e6e9f0; font-weight:700; font-size:13.5px; text-decoration:none;">{it['title']}</a>
-                    <div style="color:{TEXT_MUTED}; font-size:11.5px; margin-top:4px;">{it['publisher']}{' · ' + ago if ago else ''}</div>
-                </div>""", unsafe_allow_html=True)
+                item_html = f"""
+                <div style="background:{t['panel_alt']}; border:1px solid {t['border']}; border-radius:10px; padding:10px 14px; margin-bottom:8px;">
+                    <a href="{it['link']}" target="_blank" style="color:{t['text_secondary']}; font-weight:700; font-size:13.5px; text-decoration:none;">{it['title']}</a>
+                    <div style="color:{t['text_muted']}; font-size:11.5px; margin-top:4px;">{it['publisher']}{' · ' + ago if ago else ''}</div>
+                </div>"""
+                st.markdown("".join(line.strip() for line in item_html.split("\n")), unsafe_allow_html=True)
 
         st.markdown("#### 🎯 המלצות אנליסטים")
         if analyst.get("error") and not analyst.get("recs") and not analyst.get("targets"):
@@ -346,14 +352,14 @@ def render_news_and_analysts(ticker):
                     pct = (val / total) * 100
                     bars_html += f"""
                     <div style="margin-bottom:6px;">
-                        <div style="display:flex; justify-content:space-between; font-size:11.5px; color:{TEXT_MUTED};">
+                        <div style="display:flex; justify-content:space-between; font-size:11.5px; color:{t['text_muted']};">
                             <span>{label}</span><span>{val}</span>
                         </div>
-                        <div style="background:{BORDER}; border-radius:6px; height:8px; overflow:hidden;">
+                        <div style="background:{t['border']}; border-radius:6px; height:8px; overflow:hidden;">
                             <div style="background:{color}; width:{pct:.0f}%; height:100%;"></div>
                         </div>
                     </div>"""
-                st.markdown(bars_html, unsafe_allow_html=True)
+                st.markdown("".join(line.strip() for line in bars_html.split("\n")), unsafe_allow_html=True)
             else:
                 st.caption("אין נתוני המלצות (Buy/Hold/Sell) זמינים למניה זו.")
 
