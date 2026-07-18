@@ -13,7 +13,7 @@ import pandas as pd
 import plotly.graph_objects as go
 
 from modules.utils import is_bad, safe_last
-from modules.styles import PANEL, ACCENT, BUY_COLOR, SELL_COLOR
+from modules.styles import PANEL, ACCENT, BUY_COLOR, SELL_COLOR, get_theme
 from modules.data_sources import load_history
 
 EQUITY_RISK_PREMIUM = 0.045
@@ -357,8 +357,11 @@ def render_fair_value_screen():
     colors_bars = [BUY_COLOR if v >= cur_price else SELL_COLOR for v in vals]
     fig.add_trace(go.Bar(x=names, y=vals, marker_color=colors_bars, name="שווי הוגן"))
     fig.add_hline(y=cur_price, line_dash="dash", line_color=ACCENT, annotation_text="מחיר נוכחי")
-    fig.update_layout(height=340, template="plotly_dark", paper_bgcolor=PANEL, plot_bgcolor=PANEL,
-                      font=dict(color="#e6e9f0"), margin=dict(t=20, b=10, l=10, r=10))
+    t = get_theme()
+    is_dark = t["bg"].lower() == "#0b0f17"
+    fig.update_layout(height=340, template=("plotly_dark" if is_dark else "plotly_white"),
+                      paper_bgcolor=t["panel"], plot_bgcolor=t["panel"],
+                      font=dict(color=t["text_secondary"]), margin=dict(t=20, b=10, l=10, r=10))
     st.plotly_chart(fig, use_container_width=True)
 
     with st.expander("🔎 נתוני יסוד והנחות מודל ששימשו לחישוב"):
