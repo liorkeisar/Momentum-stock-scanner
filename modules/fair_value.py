@@ -131,17 +131,26 @@ def compute_peg_valuation_lynch(eps, growth_pct, dividend_yield_pct):
         return None
 
 def compute_justified_pb(roe, payout_ratio, cost_of_equity, bvps):
-    """P/B מוצדק לפי מודל גורדון (Damodaran): Justified P/B = (ROE − g) / (r − g)."""
+    """
+    P/B מוצדק לפי מודל גורדון (Damodaran): Justified P/B = (ROE − g) / (r − g).
+    הרצפה על (r−g) הורחבה ל-1.5 נקודות אחוז (במקום 0.5) כדי למנוע "התפוצצות"
+    מתמטית של הנוסחה כשהפער בין תשואת ההון לקצב הצמיחה מצטמצם כמעט לאפס -
+    תופעה שפוגעת במיוחד במניות פיננסיות/בנקים עם שווי נכסי גבוה למניה, שבהן
+    אפילו מכפיל מנופח במעט מייצר "שווי הוגן" הזוי בדולרים בגלל הבסיס הגדול.
+    התקרה על המכפיל עצמו הורדה מ-30x ל-12x - מכפיל P/B מעל זה כמעט ולא קיים
+    בשוק גם עבור החברות האיכותיות ביותר, אז ערך גבוה יותר הוא כמעט תמיד סימן
+    לנתוני קלט לא סבירים (בטא נמוך מדי, ROE לא אמין) ולא שווי אמיתי.
+    """
     try:
         if is_bad(roe) or is_bad(bvps) or bvps <= 0:
             return None
         payout = payout_ratio if (not is_bad(payout_ratio) and 0 <= payout_ratio <= 1) else 0.30
         g = roe * (1 - payout)
-        g = max(0.0, min(g, cost_of_equity - 0.005))
-        if cost_of_equity - g <= 0.001:
+        g = max(0.0, min(g, cost_of_equity - 0.015))
+        if cost_of_equity - g <= 0.01:
             return None
         justified_pb = (roe - g) / (cost_of_equity - g)
-        if justified_pb <= 0 or justified_pb > 30:
+        if justified_pb <= 0 or justified_pb > 12:
             return None
         fair_price = justified_pb * bvps
         return {"fair_price": fair_price, "justified_pb": justified_pb, "sustainable_growth": g}
@@ -198,7 +207,14 @@ def compute_fair_value_report(ticker, df_price=None, growth_rate_override=None,
         if is_bad(g):
             g = fund.get("revenueGrowth")
         growth_pct = (g * 100) if not is_bad(g) else 10.0
-    growth_pct = max(1.0, min(40.0, growth_pct))
+        # תקרה שמרנית של 20% (במקום 40%) - רק על ההערכה האוטומטית. שדה
+        # earningsGrowth של Yahoo מבוסס שנה אחת אחורה ויכול להראות קפיצות חדות
+        # (למשל התאוששות מרווח חלש) שלא מייצגות קצב צמיחה בר-קיימא ל-7-10 שנים
+        # (Graham) או ל-10 שנות DCF - ובוודאי לא לחברה פיננסית/בנק בוגרים.
+        growth_pct = max(1.0, min(20.0, growth_pct))
+    else:
+        # דריסה ידנית: מכבדים את הבחירה המפורשת של המשתמש, רק מוודאים טווח סביר בסיסי
+        growth_pct = max(1.0, min(40.0, growth_pct))
 
     risk_free = fetch_risk_free_rate()
     beta = fund.get("beta")
@@ -244,10 +260,19 @@ def compute_fair_value_report(ticker, df_price=None, growth_rate_override=None,
     for name, m in methods.items():
         fp = m["fair_price"]
         m["upside_pct"] = ((fp - current_price) / current_price) * 100 if current_price else None
+        # דגל חריג (outlier): שיטה שמפיקה ערך מנופח/מדוכא באופן קיצוני (מעל פי 4
+        # מהמחיר הנוכחי, או מתחת ל-15% ממנו) כמעט תמיד נובעת מקלט לא אמין
+        # (למשל קצב צמיחה לא סביר, או נתוני יסוד חריגים לחברות פיננסיות/בנקים) -
+        # ולא משווי אמיתי. השיטה עדיין מוצגת בטבלת הפירוט לשקיפות מלאה, אבל לא
+        # משתתפת בממוצע המשוקלל/בחציון כדי שלא "תשתלט" על המספר הראשי.
+        m["is_outlier"] = bool(current_price and not is_bad(fp) and fp > 0 and (fp > current_price * 4 or fp < current_price * 0.15))
 
-    fair_prices = [m["fair_price"] for m in methods.values() if not is_bad(m["fair_price"]) and m["fair_price"] > 0]
-    weights_sum = sum(m["weight"] for m in methods.values())
-    weighted_avg = sum(m["fair_price"] * m["weight"] for m in methods.values()) / weights_sum if weights_sum > 0 else np.mean(fair_prices)
+    reliable_methods = {k: m for k, m in methods.items() if not m.get("is_outlier")}
+    calc_methods = reliable_methods if reliable_methods else methods
+
+    fair_prices = [m["fair_price"] for m in calc_methods.values() if not is_bad(m["fair_price"]) and m["fair_price"] > 0]
+    weights_sum = sum(m["weight"] for m in calc_methods.values())
+    weighted_avg = sum(m["fair_price"] * m["weight"] for m in calc_methods.values()) / weights_sum if weights_sum > 0 else (np.mean(fair_prices) if fair_prices else None)
     median_fp = float(np.median(fair_prices)) if fair_prices else None
 
     dispersion_pct = None
@@ -257,12 +282,14 @@ def compute_fair_value_report(ticker, df_price=None, growth_rate_override=None,
     avg_upside = ((weighted_avg - current_price) / current_price) * 100 if current_price and weighted_avg else None
     median_upside = ((median_fp - current_price) / current_price) * 100 if current_price and median_fp else None
 
+    excluded_count = len(methods) - len(reliable_methods)
+
     return {
         "ticker": ticker, "current_price": current_price, "eps": eps, "bvps": bvps,
         "current_pe": current_pe, "growth_pct": growth_pct, "methods": methods,
         "weighted_fair_price": weighted_avg, "avg_upside_pct": avg_upside,
         "median_fair_price": median_fp, "median_upside_pct": median_upside,
-        "dispersion_pct": dispersion_pct,
+        "dispersion_pct": dispersion_pct, "excluded_outliers": excluded_count,
         "risk_free": risk_free, "cost_of_equity": cost_of_equity, "wacc": wacc,
         "discount_rate_used": discount_rate, "fundamentals": fund,
     }
@@ -337,10 +364,18 @@ def render_fair_value_screen():
         st.warning(f"⚠️ פיזור גבוה בין השיטות ({disp:.0f}%) — המודלים השונים לא מסכימים ביניהם משמעותית. "
                    f"התייחס לשווי ההוגן כאן בזהירות רבה יותר, ובדוק את הפירוט לפי שיטה למטה.")
 
+    excluded = report.get("excluded_outliers", 0)
+    if excluded > 0:
+        st.warning(f"⚠️ {excluded} שיטה/שיטות הפיקו ערך קיצוני (מעל פי 4 מהמחיר הנוכחי, או פחות מ-15% ממנו) - "
+                   f"סימן שכנראה נתוני היסוד לא אמינים עבור המניה הזו (למשל חברה פיננסית/בנק שבה קצב הצמיחה "
+                   f"או ה-ROE מוזנים בצורה שלא מתאימה למודל). השיטה/שיטות האלה **לא נכללו** בממוצע המשוקלל "
+                   f"ובחציון למעלה, אבל מוצגות בטבלה למטה מסומנות ⚠️ לשקיפות מלאה.")
+
     st.markdown("#### 📊 פירוט לפי שיטה")
     rows = []
     for name, m in report["methods"].items():
-        rows.append({"שיטה": name, "משקל": f"{m['weight']*100:.0f}%",
+        label = f"⚠️ {name} (חריג - לא נכלל)" if m.get("is_outlier") else name
+        rows.append({"שיטה": label, "משקל": f"{m['weight']*100:.0f}%",
                      "שווי הוגן": m["fair_price"], "פער מהמחיר הנוכחי %": m.get("upside_pct")})
     method_df = pd.DataFrame(rows)
     st.dataframe(
