@@ -132,7 +132,7 @@ if _active == "scanner":
         score_range = st.slider(
             "טווח ציון להצגה:", 0, 100, (65, 95),
             help="ברירת מחדל 65-95: ציון 96+ לרוב מרמז על קיצון/באג בנתונים, לא איתות אמיתי. "
-                 "הגבל את המקסימום כדי לסנן ציונים 'חשודים' גבוהים מדי, או צמצם את המינימום כדי לראות מועמדים חלשים יותר."
+                 "הגבל את המקסימום כדי לסנן ציונים 'חשודים' גבוהים מדי, או צמצם את המינימום כדי לראות מועמדים חלשים טכנית."
         )
         min_score, max_score = score_range
 
@@ -283,6 +283,15 @@ if _active == "scanner":
 
     if "scan_results" in st.session_state and st.session_state["scan_results"]:
         df_res_full = pd.DataFrame(st.session_state["scan_results"]).sort_values("Score", ascending=False).reset_index(drop=True)
+        
+        # FIX: שימוש בערכים השמורים מהסריקה הקודמת, או ערכי ברירת המחדל של ה-slider אם לא הרצנו סריקה עדיין
+        last_min_score = st.session_state.get("last_min_score", min_score)
+        last_max_score = st.session_state.get("last_max_score", max_score)
+        
+        # עדכון הערכים לפי הערכים השמורים
+        min_score = last_min_score
+        max_score = last_max_score
+        
         df_res = df_res_full[(df_res_full["Score"] >= min_score) & (df_res_full["Score"] <= max_score)]
         details = st.session_state.get("scan_details", {})
 
