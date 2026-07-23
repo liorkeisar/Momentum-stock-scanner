@@ -114,7 +114,80 @@ def add_indicators(df, benchmark_df=None):
     df["Low52W"] = df["Low"].rolling(252, min_periods=20).min()
     df["DailyChangePct"] = df["Close"].pct_change() * 100
 
+    # ============ NEW: Consolidation + Strong Absorption Detection ============
+    # בודקת התכנסות עם איסוף מסיבי במשך חודש (תבנית Wyckoff עמוקה)
+    cons_data = detect_consolidation_and_absorption(df, consolidation_days=30, absorption_strength=0.50)
+    df["ConsolidationStrength"] = cons_data["consolidation_strength"]
+    df["AbsorptionMomentum"] = cons_data["absorption_momentum"]
+    df["ConsAbsPattern"] = cons_data["pattern_detected"]
+
     return df
+
+def detect_consolidation_and_absorption(df, consolidation_days=30, absorption_strength=0.50):
+    """
+    בודקת התכנסות + איסוף מסיבי בו-זמנית (דפוס Wyckoff אמיתי).
+    
+    מחזיר dict עם:
+    - consolidation_strength: ציון 0-100 כמה זמן המניה בהתכנסות קרובה
+    - absorption_momentum: ציון 0-100 כמה הקונים ספגו היצע בימי ירידה
+    - pattern_detected: bool - האם שני התנאים חזקים דיים
+    """
+    result = {
+        "consolidation_strength": pd.Series(0, index=df.index),
+        "absorption_momentum": pd.Series(0, index=df.index),
+        "pattern_detected": pd.Series(False, index=df.index)
+    }
+    
+    if len(df) < consolidation_days:
+        return result
+    
+    try:
+        # חלק 1: בדיקת התכנסות - טווח מחיר קרוב למשך תקופה
+        lookback = consolidation_days
+        close = df["Close"]
+        high_lookback = df["High"].rolling(lookback).max()
+        low_lookback = df["Low"].rolling(lookback).min()
+        price_range = high_lookback - low_lookback
+        
+        # ניירות בהתכנסות: טווח היומי בתוך 2% מטווח התקופה
+        daily_range = df["High"] - df["Low"]
+        daily_range_pct = daily_range / close * 100
+        
+        # בימים בהתכנסות: טווח יומי קטן וטווח החודש קטן
+        is_consolidating = (daily_range_pct < 2.5) & (price_range < close * 0.06)
+        consolidation_days_count = is_consolidating.rolling(lookback).sum()
+        consolidation_strength = (consolidation_days_count / lookback * 100).fillna(0).astype(int)
+        result["consolidation_strength"] = consolidation_strength
+        
+        # חלק 2: בדיקת איסוף מסיבי (Absorption)
+        # כמה הקונים ספגו היצע בימי ירידה (יותר קניות בימי ירידה = איסוף טוב)
+        down_day = close < close.shift(1)
+        down_vol = df["Volume"].where(down_day, 0).rolling(lookback).sum()
+        total_vol = df["Volume"].rolling(lookback).sum()
+        
+        # CLV: מדד כמה המחיר סגר קרוב לשיא הטווח (1=שיא, -1=תחתית)
+        day_range = (df["High"] - df["Low"]).replace(0, 1)
+        clv = ((close - df["Low"]) - (df["High"] - close)) / day_range
+        
+        # בימי ירידה, אנו רוצים CLV גבוה = המחיר סגר בחלק העליון למרות הירידה
+        # זה אומר שקונים "ספגו" את ההיצע (absorption)
+        down_day_clv = clv.where(down_day, np.nan)
+        absorption_clv_mean = down_day_clv.rolling(lookback, min_periods=5).mean()
+        
+        # ציון 0-100: תרגום CLV (-1 עד 1) לציון
+        absorption_momentum = (((absorption_clv_mean + 1) / 2) * 100).fillna(0).astype(int)
+        result["absorption_momentum"] = absorption_momentum
+        
+        # חלק 3: זיהוי דפוס
+        # שניהם צריכים להיות חזקים:
+        # - התכנסות חזקה: לפחות 60% מימי התקופה בהתכנסות
+        # - איסוף: CLV בימי ירידה חיובי (מעל 0)
+        pattern_detected = (consolidation_strength >= 60) & (absorption_momentum >= 55)
+        result["pattern_detected"] = pattern_detected
+        
+        return result
+    except Exception:
+        return result
 
 def days_since_last_breakout(df, base_window=60, threshold=0.03, search_window=130):
     try:
@@ -227,11 +300,19 @@ def compute_breakout_decision(df):
     sideways_slope = safe_last(df["SidewaysSlope"]) if "SidewaysSlope" in df.columns else np.nan
     comps["sideways"] = score_component(abs(sideways_slope) if not is_bad(sideways_slope) else np.nan, 0, 2.5, invert=True) if not is_bad(sideways_slope) else 50
 
+    # ============ NEW: Consolidation + Absorption Pattern ============
+    cons_strength = safe_last(df["ConsolidationStrength"]) if "ConsolidationStrength" in df.columns else 0
+    abs_momentum = safe_last(df["AbsorptionMomentum"]) if "AbsorptionMomentum" in df.columns else 0
+    cons_abs_detected = safe_last(df["ConsAbsPattern"]) if "ConsAbsPattern" in df.columns else False
+    
+    # ציון קומבו: התכנסות + איסוף = איתות חזק עבור פריצה
+    comps["cons_abs_pattern"] = int(cons_strength * 0.4 + abs_momentum * 0.6) if cons_abs_detected else 0
+
     weights = {
         "compression": 0.08, "rvol": 0.05, "trend": 0.04, "macd": 0.03, "rsi": 0.03,
         "institutional": 0.04, "proximity": 0.06, "squeeze": 0.02, "squeeze_duration": 0.04,
         "risk": 0.03, "stage2": 0.11, "relative_strength": 0.11, "volume_quality": 0.06,
-        "extension": 0.08, "absorption": 0.12, "sideways": 0.10
+        "extension": 0.08, "absorption": 0.10, "sideways": 0.08, "cons_abs_pattern": 0.06
     }
 
     final_score = sum(comps.get(k, 0) * w for k, w in weights.items())
@@ -269,6 +350,7 @@ def compute_breakout_decision(df):
     if comps.get("relative_strength", 0) >= 70: notes.append("חוזק יחסי למדד")
     if comps.get("volume_quality", 0) >= 70: notes.append("נפח קונים דומיננטי")
     if comps.get("absorption", 0) >= 70: notes.append("איסוף שקט בזמן ירידה (ספיגת היצע)")
+    if comps.get("cons_abs_pattern", 0) >= 70: notes.append("✨ התכנסות חזקה עם איסוף מסיבי (דפוס Wyckoff עמוק)")
     if comps.get("sideways", 0) >= 75: notes.append("מגמה הצידה (טווח אמיתי)")
     if hard_downtrend: notes.append("⚠️ מגמת-על יורדת — סיכון גבוה")
     if already_broken_out:
@@ -283,5 +365,4 @@ def compute_breakout_decision(df):
             "rsi_last": safe_last(df["RSI"]) if "RSI" in df.columns else np.nan,
             "rvol_last": rvol, "atr_pct": atr_pct, "stage2_ok": stage2_ok,
             "already_broken_out": already_broken_out, "hard_downtrend": hard_downtrend,
-            "days_since_breakout": days_since_bo}
-
+            "days_since_breakout": days_since_bo, "cons_abs_detected": cons_abs_detected}
