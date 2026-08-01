@@ -19,6 +19,7 @@ try:
 except Exception:
     SKLEARN_AVAILABLE = False
 
+
 def compute_features_for_ml(df, window=20):
     rows = []
     for end in range(window, len(df) - 5):
@@ -38,17 +39,19 @@ def compute_features_for_ml(df, window=20):
 
         true_range = (w["High"] - w["Low"]).rolling(14).mean().iloc[-1]
 
+        # תקון חישוב MACD כאן: שימוש ב-EMA של ה-Close כמו במודול indicators
+        exp1 = w["Close"].ewm(span=12, adjust=False).mean().iloc[-1]
+        exp2 = w["Close"].ewm(span=26, adjust=False).mean().iloc[-1]
+        macd_diff = exp1 - exp2
+
         feat = {
             "close_last": w["Close"].iloc[-1],
             "std20": w["Close"].rolling(20).std().iloc[-1] if len(w) >= 20 else np.nan,
             "std20_pct": safe_div(w["Close"].rolling(20).std().iloc[-1] if len(w) >= 20 else np.nan, w["Close"].iloc[-1], default=np.nan),
             "rvol": safe_div(w["Volume"].iloc[-1], vol_ma, default=1.0),
             "ema20_ema50": safe_div(ema20, ema50, default=1.0),
-            "macd_diff": w["Close"].ewm(span=12, adjust=False).mean().iloc[-1] - w["Close"].ewm(span=26, adjust=False).mean().iloc[-1],
-            "macd_diff_pct": safe_div(
-                w["Close"].ewm(span=12, adjust=False).mean().iloc[-1] - w["Close"].ewm(span=26, adjust=False).mean().iloc[-1],
-                w["Close"].iloc[-1], default=np.nan
-            ),
+            "macd_diff": macd_diff,
+            "macd_diff_pct": safe_div(macd_diff, w["Close"].iloc[-1], default=np.nan),
             "rsi": rsi_val,
             "atr_pct": safe_div(true_range, w["Close"].iloc[-1], default=0.0),
             "obv": (np.sign(w["Close"].diff()) * w["Volume"]).fillna(0).cumsum().iloc[-1]
@@ -61,6 +64,7 @@ def compute_features_for_ml(df, window=20):
         feat["label"] = label
         rows.append(feat)
     return pd.DataFrame(rows)
+
 
 def train_logistic_model(df):
     try:
@@ -78,6 +82,7 @@ def train_logistic_model(df):
     except Exception:
         return None
 
+
 def logistic_predict_probability(model, df):
     try:
         feats = compute_features_for_ml(df, window=20)
@@ -88,11 +93,14 @@ def logistic_predict_probability(model, df):
             return None
         last = clean.iloc[-1].drop(labels=["label"])
         if SKLEARN_AVAILABLE and model is not None:
-            prob = model.predict_proba([last.values])[0][1]
+            # ודא שמערך הקלט הוא בצורת 2D לפני קריאה ל-predict_proba
+            X_last = last.values.reshape(1, -1)
+            prob = model.predict_proba(X_last)[0][1]
             return float(prob)
         return None
     except Exception:
         return None
+
 
 def backtest_score_calibration(df_full, lookahead=5, step=3, min_history=250):
     try:
@@ -134,6 +142,7 @@ def backtest_score_calibration(df_full, lookahead=5, step=3, min_history=250):
     except Exception:
         return None, None
 
+
 def statistical_similarity_prediction(df, tolerance=0.15, lookahead=5):
     try:
         feats = compute_features_for_ml(df, window=20)
@@ -170,6 +179,7 @@ def statistical_similarity_prediction(df, tolerance=0.15, lookahead=5):
     except Exception:
         return {"count": 0, "successes": 0, "rate": 0.0}
 
+
 def find_swing_points(df, order=3, window=60):
     w = df.tail(window)
     highs = w["High"].values
@@ -184,6 +194,7 @@ def find_swing_points(df, order=3, window=60):
         if lows[i] == l_window.min():
             swing_lows.append((i, lows[i]))
     return swing_highs, swing_lows
+
 
 def pattern_detection_vcp_like(df):
     try:
@@ -234,4 +245,3 @@ def pattern_detection_vcp_like(df):
         return {"match": bool(match), "desc": "; ".join(desc), "contractions": contractions}
     except Exception:
         return {"match": False, "desc": "שגיאה בזיהוי תבנית", "contractions": 0}
-
