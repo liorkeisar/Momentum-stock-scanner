@@ -10,6 +10,8 @@ Wyckoff analysis engine:
 - LPS
 - Smart Money Score
 - Wyckoff Score 0-10
+
+FIXED: Relaxed detection thresholds to capture more stocks
 """
 
 import numpy as np
@@ -301,17 +303,20 @@ def detect_accumulation(df):
 
 
 
-    if smart_money_score(df)>50:
+    # FIXED: Lowered threshold from 50 to 40 to capture more accumulation signals
+    if smart_money_score(df) > 40:
         score += 40
 
 
 
-    if compression_score(df)>50:
+    # FIXED: Lowered threshold from 50 to 40 to capture more compression signals
+    if compression_score(df) > 40:
         score += 30
 
 
 
-    return score>=70
+    # FIXED: Lowered threshold from 70 to 60 to allow more stocks to qualify
+    return score >= 60
 
 
 

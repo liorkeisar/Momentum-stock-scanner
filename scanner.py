@@ -7,6 +7,8 @@ Stock scanner engine:
 - Multi-thread scanning
 - Indicators
 - Wyckoff analysis
+
+FIXED: Corrected imports and improved logging
 """
 
 import yfinance as yf
@@ -19,7 +21,8 @@ from settings import (
     MAX_THREADS
 )
 
-from indicators import add_all_indicators
+# FIXED: Import from modules.indicators instead of non-existent indicators module
+from modules.indicators import add_indicators
 from wyckoff import calculate_wyckoff
 from utils import (
     normalize_ticker,
@@ -50,7 +53,8 @@ def download_stock(ticker):
 
 
     if data.empty:
-
+        # FIXED: Added logging to debug why data is empty
+        log_error(f"No data returned from yfinance for {ticker}")
         return pd.DataFrame()
 
 
@@ -94,12 +98,13 @@ def analyze_stock(ticker):
 
 
         if df.empty:
-
+            log_error(f"{ticker}: Empty dataframe after download")
             return None
 
 
 
-        df = add_all_indicators(
+        # FIXED: Now using proper add_indicators from modules
+        df = add_indicators(
             df
         )
 
@@ -184,6 +189,7 @@ def scan_market(
     tickers = [
         normalize_ticker(t)
         for t in tickers
+
     ]
 
 

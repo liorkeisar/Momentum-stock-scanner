@@ -77,7 +77,8 @@ MIN_PRICE = 5.0
 
 MIN_VOLUME = 300000
 
-MIN_MARKET_CAP = 1_000_000_000
+# FIXED: Lowered from $1B to $100M to capture mid-cap growth stocks
+MIN_MARKET_CAP = 100_000_000
 
 
 DEFAULT_MIN_SCORE = 6
